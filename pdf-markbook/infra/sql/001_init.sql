@@ -1,0 +1,3 @@
+-- Logical schema for DB adapters (SQLite/Postgres)
+-- Keep for future; Google Sheets adapter will mirror these tables semantically.
+-- tables: documents, pages, mark_sets, marks

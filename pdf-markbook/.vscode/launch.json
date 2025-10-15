@@ -1,0 +1,27 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Python: API (attach later)",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/services/api/main.py",
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      "name": "Chrome: Editor (attach later)",
+      "type": "pwa-chrome",
+      "request": "launch",
+      "url": "http://localhost:3001",
+      "webRoot": "${workspaceFolder}"
+    },
+    {
+      "name": "Chrome: Viewer (attach later)",
+      "type": "pwa-chrome",
+      "request": "launch",
+      "url": "http://localhost:3002",
+      "webRoot": "${workspaceFolder}"
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+# Postgres/Supabase adapter (future)

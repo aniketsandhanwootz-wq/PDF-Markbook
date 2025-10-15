@@ -1,0 +1,25 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "api: dev",
+      "type": "shell",
+      "command": "echo Run FastAPI dev server here (uvicorn) once code is ready"
+    },
+    {
+      "label": "editor: dev",
+      "type": "shell",
+      "command": "echo Run Next.js editor dev server here once code is ready"
+    },
+    {
+      "label": "viewer: dev",
+      "type": "shell",
+      "command": "echo Run Next.js viewer dev server here once code is ready"
+    },
+    {
+      "label": "dev: all",
+      "type": "shell",
+      "command": "echo Start API + Editor + Viewer (replace with real commands later)"
+    }
+  ]
+}
