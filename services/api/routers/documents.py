@@ -12,10 +12,16 @@ from adapters.base import StorageAdapter
 router = APIRouter(prefix="/documents", tags=["documents"])
 
 
+def get_storage():
+    """Dependency to get storage adapter from app state."""
+    from main import get_storage_adapter, get_settings
+    return get_storage_adapter(get_settings())
+
+
 @router.post("", response_model=DocumentOut, status_code=201)
 async def create_document(
     doc: DocumentCreate,
-    storage: Annotated[StorageAdapter, Depends()]
+    storage: Annotated[StorageAdapter, Depends(get_storage)]
 ):
     """
     Create a new PDF document record.
@@ -34,7 +40,7 @@ async def create_document(
 async def bootstrap_pages(
     doc_id: str,
     pages: PagesBootstrap,
-    storage: Annotated[StorageAdapter, Depends()]
+    storage: Annotated[StorageAdapter, Depends(get_storage)]
 ):
     """
     Bootstrap page dimensions for a document.

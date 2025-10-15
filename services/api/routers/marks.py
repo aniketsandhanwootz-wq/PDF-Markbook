@@ -16,10 +16,16 @@ from adapters.base import StorageAdapter
 router = APIRouter(tags=["marks"])
 
 
+def get_storage():
+    """Dependency to get storage adapter from app state."""
+    from main import get_storage_adapter, get_settings
+    return get_storage_adapter(get_settings())
+
+
 @router.post("/mark-sets", response_model=MarkSetOut, status_code=201)
 async def create_mark_set(
     mark_set: MarkSetCreate,
-    storage: Annotated[StorageAdapter, Depends()]
+    storage: Annotated[StorageAdapter, Depends(get_storage)]
 ):
     """
     Create a new mark set with all its marks.
@@ -62,7 +68,7 @@ async def create_mark_set(
 @router.get("/mark-sets/{mark_set_id}/marks", response_model=List[MarkOut])
 async def list_marks(
     mark_set_id: str,
-    storage: Annotated[StorageAdapter, Depends()]
+    storage: Annotated[StorageAdapter, Depends(get_storage)]
 ):
     """
     Get all marks in a mark set, ordered by navigation sequence.
@@ -78,7 +84,7 @@ async def list_marks(
 async def patch_mark(
     mark_id: str,
     patch: MarkPatch,
-    storage: Annotated[StorageAdapter, Depends()]
+    storage: Annotated[StorageAdapter, Depends(get_storage)]
 ):
     """
     Update display preferences for a mark.
@@ -101,7 +107,7 @@ async def patch_mark(
 @router.post("/mark-sets/{mark_set_id}/activate", status_code=200)
 async def activate_mark_set(
     mark_set_id: str,
-    storage: Annotated[StorageAdapter, Depends()]
+    storage: Annotated[StorageAdapter, Depends(get_storage)]
 ):
     """
     Activate a mark set for its document.
