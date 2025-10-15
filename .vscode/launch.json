@@ -1,0 +1,48 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Python: FastAPI",
+      "type": "python",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": [
+        "main:app",
+        "--reload",
+        "--port",
+        "8000"
+      ],
+      "jinja": true,
+      "justMyCode": true,
+      "cwd": "${workspaceFolder}/services/api"
+    },
+    {
+      "name": "Chrome: Editor",
+      "type": "chrome",
+      "request": "launch",
+      "url": "http://localhost:3001",
+      "webRoot": "${workspaceFolder}/apps/editor",
+      "preLaunchTask": "editor: dev"
+    },
+    {
+      "name": "Chrome: Viewer",
+      "type": "chrome",
+      "request": "launch",
+      "url": "http://localhost:3002",
+      "webRoot": "${workspaceFolder}/apps/viewer",
+      "preLaunchTask": "viewer: dev"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Full Stack",
+      "configurations": [
+        "Python: FastAPI",
+        "Chrome: Editor",
+        "Chrome: Viewer"
+      ],
+      "stopAll": true,
+      "preLaunchTask": "dev: all"
+    }
+  ]
+}
