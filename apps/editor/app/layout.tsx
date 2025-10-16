@@ -1,16 +1,13 @@
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export const metadata = {
+  title: 'PDF Marker',
+  description: 'Draw rectangles to make mark sets',
+};
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <head>
-        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0" />
-      </head>
-      <body style={{ margin: 0, padding: 0, overflow: 'hidden', height: '100vh', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
-        {children}
-      </body>
+      <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+      <body style={{ margin: 0, background: '#fff' }}>{children}</body>
     </html>
   );
 }
