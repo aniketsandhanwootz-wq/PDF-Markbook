@@ -3,6 +3,8 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 
+// ... rest of the file
+
 // Configure PDF.js worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
@@ -76,7 +78,13 @@ export default function EditorPage() {
         setStatus('Loading PDF...');
         
         // Load PDF
-        const pdf = await pdfjsLib.getDocument(pdfUrl).promise;
+        // Load PDF with CORS handling
+        const loadingTask = pdfjsLib.getDocument({
+          url: pdfUrl,
+          withCredentials: false,
+          isEvalSupported: false,
+        });
+        const pdf = await loadingTask.promise;
         setPdfDoc(pdf);
         setTotalPages(pdf.numPages);
         
@@ -273,8 +281,22 @@ export default function EditorPage() {
       setStatus(`Saved! mark_set_id: ${mark_set_id}`);
       
       // Copy to clipboard
-      navigator.clipboard.writeText(mark_set_id);
-      alert(`Mark set saved!\n\nID: ${mark_set_id}\n\n(Copied to clipboard)`);
+// Copy to clipboard
+navigator.clipboard.writeText(mark_set_id);
+
+// Create a better dialog with copyable text
+const copyText = () => {
+  navigator.clipboard.writeText(mark_set_id);
+  alert('ID copied to clipboard!');
+};
+
+// Show the ID in the status and a more user-friendly alert
+setStatus(`Saved! mark_set_id: ${mark_set_id}`);
+alert(`Mark set saved!\n\nClick OK, then use the ID from the status bar to test in viewer.\n\nID has been copied to clipboard.`);
+
+// Also log to console for easy access
+console.log('Mark Set ID:', mark_set_id);
+console.log('Viewer URL:', `http://localhost:3002/?pdf_url=${encodeURIComponent(pdfUrl)}&mark_set_id=${mark_set_id}`);
     } catch (error) {
       console.error('Save error:', error);
       setStatus(`Save error: ${error}`);

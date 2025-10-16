@@ -4,7 +4,7 @@ import { useEffect, useState, useRef } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 
 // Configure PDF.js worker
-pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
 const API_BASE = 'http://localhost:8000';
 
@@ -28,7 +28,7 @@ export default function ViewerPage() {
   const [pdfDoc, setPdfDoc] = useState<any>(null);
   const [marks, setMarks] = useState<Mark[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [scale, setScale] = useState(1.0);
+  const [scale, setScale] = useState(1.2); // Default to 120% for better readability
   const [status, setStatus] = useState('');
   const [listOpen, setListOpen] = useState(false);
   
@@ -63,8 +63,13 @@ export default function ViewerPage() {
         
         setStatus('Loading PDF...');
         
-        // Load PDF
-        const pdf = await pdfjsLib.getDocument(pdfUrl).promise;
+        // Load PDF with CORS handling
+        const loadingTask = pdfjsLib.getDocument({
+          url: pdfUrl,
+          withCredentials: false,
+          isEvalSupported: false,
+        });
+        const pdf = await loadingTask.promise;
         setPdfDoc(pdf);
         
         setStatus('Ready');
@@ -95,25 +100,12 @@ export default function ViewerPage() {
         // Get page dimensions at scale 1
         const baseViewport = page.getViewport({ scale: 1 });
         
-        // Calculate zoom-to-fit scale
+        // Use normal zoom (fit-to-width or custom zoom)
         const containerW = container.clientWidth;
-        const containerH = container.clientHeight;
-        
-        // Account for padding
-        const paddingPct = mark.padding_pct || 0.1;
-        const markW = mark.nw * baseViewport.width;
-        const markH = mark.nh * baseViewport.height;
-        
-        const paddedW = markW * (1 + paddingPct * 2);
-        const paddedH = markH * (1 + paddingPct * 2);
-        
-        // Calculate scale to fit
-        const scaleX = containerW / paddedW;
-        const scaleY = containerH / paddedH;
-        let autoScale = Math.min(scaleX, scaleY);
-        
-        // Apply zoom hint if provided
-        const finalScale = mark.zoom_hint || autoScale;
+        let defaultScale = Math.min(containerW / baseViewport.width, 1.5); // Fit width, max 150%
+
+        // Apply zoom hint if provided, otherwise use current scale
+        const finalScale = mark.zoom_hint || scale || defaultScale;
         setScale(finalScale);
         
         // Render at calculated scale
@@ -137,13 +129,14 @@ export default function ViewerPage() {
         ctx.lineWidth = 3;
         ctx.strokeRect(markX, markY, markWidth, markHeight);
         
-        // Scroll to center the mark
-        const scrollX = markX + markWidth / 2 - containerW / 2;
-        const scrollY = markY + markHeight / 2 - containerH / 2;
-        
+        // Scroll to show the mark (with padding)
+        const padding = 50;
+        const scrollX = Math.max(0, markX - padding);
+        const scrollY = Math.max(0, markY - padding);
+
         container.scrollTo({
-          left: Math.max(0, scrollX),
-          top: Math.max(0, scrollY),
+          left: scrollX,
+          top: scrollY,
           behavior: 'smooth'
         });
         
@@ -154,7 +147,7 @@ export default function ViewerPage() {
     };
 
     renderMark();
-  }, [pdfDoc, marks, currentIndex]);
+  }, [pdfDoc, marks, currentIndex, scale]);
 
   // Navigate
   const goNext = () => {
@@ -238,25 +231,92 @@ export default function ViewerPage() {
         gap: '1rem',
         backgroundColor: '#fff'
       }}>
-        <button onClick={goPrevious} disabled={currentIndex === 0} style={{ padding: '0.5rem 1rem' }}>
+        {/* Left side - List button */}
+        <button onClick={() => setListOpen(!listOpen)} style={{ 
+          padding: '0.5rem 1rem',
+          backgroundColor: listOpen ? '#007bff' : '#f8f9fa',
+          color: listOpen ? 'white' : 'black',
+          border: '1px solid #ccc',
+          borderRadius: '4px',
+          cursor: 'pointer'
+        }}>
+          ☰ {listOpen ? 'Close' : 'List'}
+        </button>
+        
+        {/* Center - Navigation and title */}
+        <button onClick={goPrevious} disabled={currentIndex === 0} style={{ 
+          padding: '0.5rem 1rem',
+          cursor: currentIndex === 0 ? 'not-allowed' : 'pointer',
+          opacity: currentIndex === 0 ? 0.5 : 1
+        }}>
           ← Previous
         </button>
-        <button onClick={goNext} disabled={currentIndex === marks.length - 1} style={{ padding: '0.5rem 1rem' }}>
+        <button onClick={goNext} disabled={currentIndex === marks.length - 1} style={{ 
+          padding: '0.5rem 1rem',
+          cursor: currentIndex === marks.length - 1 ? 'not-allowed' : 'pointer',
+          opacity: currentIndex === marks.length - 1 ? 0.5 : 1
+        }}>
           Next →
         </button>
-        <span style={{ fontWeight: 'bold' }}>
+        <span style={{ fontWeight: 'bold', flex: 1 }}>
           {currentMark?.name} ({currentIndex + 1} / {marks.length})
         </span>
-        <button onClick={() => setListOpen(!listOpen)} style={{ padding: '0.5rem 1rem', marginLeft: 'auto' }}>
-          {listOpen ? '✕ Close' : '☰ List'}
-        </button>
-        <button onClick={zoomOut} style={{ padding: '0.5rem 1rem' }}>−</button>
-        <span style={{ fontSize: '0.9em' }}>{Math.round(scale * 100)}%</span>
-        <button onClick={zoomIn} style={{ padding: '0.5rem 1rem' }}>+</button>
-        <button onClick={saveZoom} style={{ padding: '0.5rem 1rem', fontSize: '0.9em' }}>
-          Save Zoom
-        </button>
-        <span style={{ fontSize: '0.9em', color: '#666' }}>{status}</span>
+        
+        {/* Right side - Zoom controls */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <button onClick={zoomOut} style={{ 
+            padding: '0.3rem 0.8rem', 
+            backgroundColor: '#f8f9fa',
+            border: '1px solid #ccc',
+            borderRadius: '3px',
+            cursor: 'pointer'
+          }}>−</button>
+          
+          <input 
+            type="range" 
+            min="25" 
+            max="300" 
+            value={Math.round(scale * 100)} 
+            onChange={(e) => setScale(parseInt(e.target.value) / 100)}
+            style={{ width: '100px' }}
+          />
+          
+          <input 
+            type="number" 
+            min="25" 
+            max="300" 
+            value={Math.round(scale * 100)} 
+            onChange={(e) => setScale(parseInt(e.target.value) / 100)}
+            style={{ 
+              width: '60px', 
+              padding: '0.2rem',
+              border: '1px solid #ccc',
+              borderRadius: '3px'
+            }}
+          />%
+          
+          <button onClick={zoomIn} style={{ 
+            padding: '0.3rem 0.8rem',
+            backgroundColor: '#f8f9fa',
+            border: '1px solid #ccc',
+            borderRadius: '3px',
+            cursor: 'pointer'
+          }}>+</button>
+          
+          <button onClick={saveZoom} style={{ 
+            padding: '0.4rem 0.8rem', 
+            fontSize: '0.85em',
+            backgroundColor: '#28a745',
+            color: 'white',
+            border: 'none',
+            borderRadius: '3px',
+            cursor: 'pointer'
+          }}>
+            Save Zoom
+          </button>
+        </div>
+        
+        <span style={{ fontSize: '0.9em', color: '#666', marginLeft: '1rem' }}>{status}</span>
       </div>
 
       {/* Main area */}
@@ -269,12 +329,15 @@ export default function ViewerPage() {
             height: '100%', 
             overflow: 'auto',
             backgroundColor: '#f5f5f5',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center'
+            padding: '20px'
           }}
         >
-          <canvas ref={canvasRef} style={{ display: 'block' }} />
+          <canvas ref={canvasRef} style={{ 
+            display: 'block', 
+            margin: '0 auto',
+            boxShadow: '0 4px 8px rgba(0,0,0,0.1)',
+            backgroundColor: 'white'
+          }} />
         </div>
 
         {/* Marks list (collapsible) */}
