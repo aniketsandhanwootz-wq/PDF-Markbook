@@ -1,8 +1,3 @@
-export const metadata = {
-  title: 'PDF Markbook Editor',
-  description: 'Create mark sets for PDF documents',
-};
-
 export default function RootLayout({
   children,
 }: {
@@ -10,7 +5,12 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body style={{ margin: 0, padding: 0 }}>{children}</body>
+      <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+      </head>
+      <body style={{ margin: 0, padding: 0, overflow: 'hidden', height: '100vh' }}>
+        {children}
+      </body>
     </html>
   );
 }

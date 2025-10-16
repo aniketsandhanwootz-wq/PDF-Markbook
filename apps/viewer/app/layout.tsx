@@ -1,24 +1,14 @@
-export const metadata = {
-  title: 'PDF Markbook Viewer',
-  description: 'Mobile-friendly viewer for marked PDF regions',
-};
-
-export default function RootLayout({ children }: { children: React.ReactNode }) {
-  // Body never scrolls; only the PDF pane inside the app scrolls.
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
     <html lang="en">
-      <body
-        style={{
-          margin: 0,
-          padding: 0,
-          height: '100vh',
-          overflow: 'hidden',
-          background: '#f6f7f9',
-          WebkitFontSmoothing: 'antialiased',
-          fontFamily:
-            'Inter, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, "Helvetica Neue", Arial, sans-serif',
-        }}
-      >
+      <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+      </head>
+      <body style={{ margin: 0, padding: 0, overflow: 'hidden', height: '100vh' }}>
         {children}
       </body>
     </html>
