@@ -7,6 +7,7 @@ import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
 pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
 const SAMPLE_PDF = 'https://mozilla.github.io/pdf.js/web/compressed.tracemonkey-pldi-09.pdf';
+const API_BASE = 'http://localhost:8000';
 
 interface Mark {
   id: string;
@@ -19,55 +20,7 @@ interface Mark {
   order_index: number;
 }
 
-// Single-flight rendering
-let currentRenderTask: any = null;
-
-// Rotation-aware coordinate mapping
-function mapRectToRotation(
-  W: number,
-  H: number,
-  rect: { x: number; y: number; w: number; h: number },
-  rotation: number
-): { rx: number; ry: number; rw: number; rh: number; RW: number; RH: number } {
-  const { x, y, w, h } = rect;
-  let rx: number, ry: number, rw: number, rh: number, RW: number, RH: number;
-
-  switch (rotation) {
-    case 90:
-      rx = y;
-      ry = W - (x + w);
-      rw = h;
-      rh = w;
-      RW = H;
-      RH = W;
-      break;
-    case 180:
-      rx = W - (x + w);
-      ry = H - (y + h);
-      rw = w;
-      rh = h;
-      RW = W;
-      RH = H;
-      break;
-    case 270:
-      rx = H - (y + h);
-      ry = x;
-      rw = h;
-      rh = w;
-      RW = H;
-      RH = W;
-      break;
-    default: // 0
-      rx = x;
-      ry = y;
-      rw = w;
-      rh = h;
-      RW = W;
-      RH = H;
-  }
-
-  return { rx, ry, rw, rh, RW, RH };
-}
+let currentRenderTasks: Map<number, any> = new Map();
 
 export default function Viewer() {
   const [pdfUrl, setPdfUrl] = useState<string>('');
@@ -75,17 +28,17 @@ export default function Viewer() {
   const [marks, setMarks] = useState<Mark[]>([]);
   const [currentMarkIndex, setCurrentMarkIndex] = useState<number>(0);
   const [pdfDoc, setPdfDoc] = useState<PDFDocumentProxy | null>(null);
-  const [currentPage, setCurrentPage] = useState<PDFPageProxy | null>(null);
-  const [scale, setScale] = useState<number>(1.5);
+  const [scale, setScale] = useState<number>(1.2);
   const [loading, setLoading] = useState<boolean>(false);
   const [showMarksList, setShowMarksList] = useState<boolean>(true);
   const [demoMode, setDemoMode] = useState<boolean>(false);
+  const [status, setStatus] = useState<string>('Initializing...');
+  const [numPages, setNumPages] = useState<number>(0);
 
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   const pdfPaneRef = useRef<HTMLDivElement>(null);
-  const renderTokenRef = useRef<number>(0);
+  const canvasRefs = useRef<Map<number, HTMLCanvasElement>>(new Map());
+  const pageContainerRefs = useRef<Map<number, HTMLDivElement>>(new Map());
 
-  // Parse URL parameters
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const url = params.get('pdf_url') || SAMPLE_PDF;
@@ -97,10 +50,8 @@ export default function Viewer() {
     setDemoMode(demo);
   }, []);
 
-  // Fetch marks from API or use demo marks
   useEffect(() => {
     if (demoMode) {
-      // Demo marks on pages 1 and 6
       setMarks([
         {
           id: 'demo-1',
@@ -109,7 +60,7 @@ export default function Viewer() {
           y0: 0.3,
           x1: 0.5,
           y1: 0.5,
-          label: 'Demo Mark 1',
+          label: 'Demo Mark on Page 1',
           order_index: 0,
         },
         {
@@ -119,98 +70,78 @@ export default function Viewer() {
           y0: 0.2,
           x1: 0.6,
           y1: 0.4,
-          label: 'Demo Mark 2',
+          label: 'Demo Mark on Page 6',
           order_index: 1,
         },
       ]);
+      setStatus('Demo mode');
       return;
     }
 
     if (!markSetId) return;
 
-    fetch(`http://localhost:8000/mark-sets/${markSetId}/marks`)
+    setStatus('Fetching marks...');
+    fetch(`${API_BASE}/mark-sets/${markSetId}/marks`)
       .then((res) => res.json())
       .then((data) => {
         setMarks(data.marks || []);
+        setStatus(`${data.marks?.length || 0} marks loaded`);
       })
-      .catch((err) => console.error('Failed to fetch marks:', err));
+      .catch((err) => {
+        console.error('Failed to fetch marks:', err);
+        setStatus('Error loading marks');
+      });
   }, [markSetId, demoMode]);
 
-  // Load PDF
   useEffect(() => {
     if (!pdfUrl) return;
 
     setLoading(true);
+    setStatus('Loading PDF...');
     pdfjsLib.getDocument(pdfUrl).promise
       .then((pdf) => {
         setPdfDoc(pdf);
+        setNumPages(pdf.numPages);
         setLoading(false);
+        setStatus('Ready');
       })
       .catch((err) => {
         console.error('Failed to load PDF:', err);
         setLoading(false);
+        setStatus('Error loading PDF');
       });
   }, [pdfUrl]);
 
-  // Render current mark's page
+  // Render all pages when PDF loads or scale changes
   useEffect(() => {
-    if (!pdfDoc || marks.length === 0) return;
+    if (!pdfDoc || numPages === 0) return;
 
-    const currentMark = marks[currentMarkIndex];
-    if (!currentMark) return;
+    const renderAllPages = async () => {
+      for (let pageNum = 1; pageNum <= numPages; pageNum++) {
+        await renderPage(pageNum);
+      }
+    };
 
-    renderMarkPage(currentMark);
-  }, [pdfDoc, marks, currentMarkIndex, scale]);
+    renderAllPages();
+  }, [pdfDoc, numPages, scale]);
 
-  const renderMarkPage = async (mark: Mark) => {
-    if (!pdfDoc || !canvasRef.current || !pdfPaneRef.current) return;
+  const renderPage = async (pageNum: number) => {
+    if (!pdfDoc) return;
 
-    // Cancel any ongoing render
-    if (currentRenderTask) {
-      currentRenderTask.cancel();
-      currentRenderTask = null;
+    const canvas = canvasRefs.current.get(pageNum);
+    if (!canvas) return;
+
+    // Cancel existing render for this page
+    const existingTask = currentRenderTasks.get(pageNum);
+    if (existingTask) {
+      existingTask.cancel();
+      currentRenderTasks.delete(pageNum);
     }
 
-    // Increment render token
-    const thisToken = ++renderTokenRef.current;
-
     try {
-      const page = await pdfDoc.getPage(mark.page_number);
-      setCurrentPage(page);
-
-      // Check if this render is still valid
-      if (thisToken !== renderTokenRef.current) return;
-
-      const rotation = page.rotate || 0;
-      const unrotatedViewport = page.getViewport({ scale: 1, rotation: 0 });
-      const W = unrotatedViewport.width;
-      const H = unrotatedViewport.height;
-
-      // Map mark rect to rotated space
-      const markRect = {
-        x: mark.x0 * W,
-        y: mark.y0 * H,
-        w: (mark.x1 - mark.x0) * W,
-        h: (mark.y1 - mark.y0) * H,
-      };
-
-      const { rx, ry, rw, rh, RW, RH } = mapRectToRotation(W, H, markRect, rotation);
-
-      // Calculate auto-scale to fit mark with 150% boost
-      const paneWidth = pdfPaneRef.current.clientWidth;
-      const paneHeight = pdfPaneRef.current.clientHeight;
-      const padding = Math.max(rw, rh) * 0.1;
-      const fitScale = Math.min(
-        paneWidth / (rw + 2 * padding),
-        paneHeight / (rh + 2 * padding)
-      );
-      const targetScale = Math.max(0.25, Math.min(8, fitScale * 1.5));
-      setScale(targetScale);
-
-      // Hi-DPI rendering
+      const page = await pdfDoc.getPage(pageNum);
       const dpr = window.devicePixelRatio || 1;
-      const viewport = page.getViewport({ scale: targetScale });
-      const canvas = canvasRef.current;
+      const viewport = page.getViewport({ scale });
       const context = canvas.getContext('2d');
 
       if (!context) return;
@@ -219,46 +150,68 @@ export default function Viewer() {
       canvas.style.height = `${viewport.height}px`;
       canvas.width = viewport.width * dpr;
       canvas.height = viewport.height * dpr;
-
       context.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-      // Start render
-      currentRenderTask = page.render({
+      const renderTask = page.render({
         canvasContext: context,
         viewport: viewport,
       });
 
-      await currentRenderTask.promise;
-      currentRenderTask = null;
+      currentRenderTasks.set(pageNum, renderTask);
 
-      // Check again if still valid
-      if (thisToken !== renderTokenRef.current) return;
+      await renderTask.promise;
+      currentRenderTasks.delete(pageNum);
+    } catch (err: any) {
+      if (err.name !== 'RenderingCancelledException') {
+        console.error(`Render error page ${pageNum}:`, err);
+      }
+    }
+  };
 
-      // Center the mark in the pane
-      const centerX = rx * targetScale + (rw * targetScale) / 2;
-      const centerY = ry * targetScale + (rh * targetScale) / 2;
+  // Scroll to current mark when it changes
+  useEffect(() => {
+    if (!pdfDoc || marks.length === 0 || !pdfPaneRef.current) return;
 
-      const maxLeft = Math.max(0, viewport.width - paneWidth);
-      const maxTop = Math.max(0, viewport.height - paneHeight);
+    const currentMark = marks[currentMarkIndex];
+    if (!currentMark) return;
 
-      const targetLeft = Math.max(0, Math.min(maxLeft, centerX - paneWidth / 2));
-      const targetTop = Math.max(0, Math.min(maxTop, centerY - paneHeight / 2));
+    scrollToMark(currentMark);
+  }, [currentMarkIndex, marks, pdfDoc]);
+
+  const scrollToMark = async (mark: Mark) => {
+    if (!pdfDoc || !pdfPaneRef.current) return;
+
+    try {
+      const page = await pdfDoc.getPage(mark.page_number);
+      const viewport = page.getViewport({ scale });
+
+      // Calculate mark center in page coordinates
+      const markCenterX = ((mark.x0 + mark.x1) / 2) * viewport.width;
+      const markCenterY = ((mark.y0 + mark.y1) / 2) * viewport.height;
+
+      // Calculate total offset from top (accounting for previous pages)
+      let offsetTop = 0;
+      for (let i = 1; i < mark.page_number; i++) {
+        const prevCanvas = canvasRefs.current.get(i);
+        if (prevCanvas) {
+          offsetTop += prevCanvas.offsetHeight + 20; // 20px gap
+        }
+      }
+
+      offsetTop += markCenterY;
+
+      // Center the mark in the viewport
+      const paneHeight = pdfPaneRef.current.clientHeight;
+      const scrollTop = offsetTop - (paneHeight / 2);
 
       pdfPaneRef.current.scrollTo({
-        left: targetLeft,
-        top: targetTop,
+        top: Math.max(0, scrollTop),
         behavior: 'smooth',
       });
 
-      // Preload next page for snappy navigation
-      if (currentMarkIndex < marks.length - 1) {
-        const nextMark = marks[currentMarkIndex + 1];
-        pdfDoc.getPage(nextMark.page_number).catch(() => {});
-      }
-    } catch (err: any) {
-      if (err.name !== 'RenderingCancelledException') {
-        console.error('Render error:', err);
-      }
+      setStatus(`Viewing mark ${currentMarkIndex + 1} of ${marks.length}`);
+    } catch (err) {
+      console.error('Scroll error:', err);
     }
   };
 
@@ -274,45 +227,16 @@ export default function Viewer() {
     }
   };
 
-  const handleWheel = (e: React.WheelEvent) => {
-    if (!e.ctrlKey || !canvasRef.current || !pdfPaneRef.current) return;
-
-    e.preventDefault();
-
-    const delta = e.deltaY;
-    const zoomFactor = delta > 0 ? 0.9 : 1.1;
-    const newScale = Math.max(0.25, Math.min(8, scale * zoomFactor));
-
-    // Zoom at cursor point
-    const rect = pdfPaneRef.current.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-
-    const scrollX = pdfPaneRef.current.scrollLeft;
-    const scrollY = pdfPaneRef.current.scrollTop;
-
-    const pointX = x + scrollX;
-    const pointY = y + scrollY;
-
-    const ratioX = pointX / (canvasRef.current.offsetWidth || 1);
-    const ratioY = pointY / (canvasRef.current.offsetHeight || 1);
-
-    setScale(newScale);
-
-    // Adjust scroll to keep point stable
-    setTimeout(() => {
-      if (canvasRef.current && pdfPaneRef.current) {
-        const newPointX = ratioX * canvasRef.current.offsetWidth;
-        const newPointY = ratioY * canvasRef.current.offsetHeight;
-
-        pdfPaneRef.current.scrollLeft = newPointX - x;
-        pdfPaneRef.current.scrollTop = newPointY - y;
-      }
-    }, 0);
-  };
-
   const jumpToMark = (index: number) => {
     setCurrentMarkIndex(index);
+  };
+
+  const handleZoomIn = () => {
+    setScale((prev) => Math.min(3, prev + 0.2));
+  };
+
+  const handleZoomOut = () => {
+    setScale((prev) => Math.max(0.5, prev - 0.2));
   };
 
   if (loading) {
@@ -326,165 +250,181 @@ export default function Viewer() {
   const currentMark = marks[currentMarkIndex];
 
   return (
-    <div style={{ display: 'flex', height: '100vh', backgroundColor: '#f3f4f6', overflow: 'hidden' }}>
-      {/* Marks Sidebar */}
-      {showMarksList && (
-        <div style={{ width: '320px', backgroundColor: 'white', borderRight: '1px solid #d1d5db', overflowY: 'auto', flexShrink: 0 }}>
-          <div style={{ padding: '16px', borderBottom: '1px solid #d1d5db', backgroundColor: '#f9fafb' }}>
-            <h2 style={{ fontSize: '1.125rem', fontWeight: 'bold', margin: 0 }}>Marks</h2>
-            <p style={{ fontSize: '0.875rem', color: '#6b7280', margin: '4px 0 0 0' }}>
-              {marks.length} total {demoMode && '(Demo)'}
-            </p>
-          </div>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', backgroundColor: '#f3f4f6', overflow: 'hidden' }}>
+      {/* Header */}
+      <div style={{ height: '56px', backgroundColor: 'white', borderBottom: '1px solid #d1d5db', padding: '0 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <button
+            onClick={() => setShowMarksList(!showMarksList)}
+            style={{
+              padding: '8px 12px',
+              backgroundColor: '#e5e7eb',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontSize: '0.875rem',
+              fontWeight: '500',
+            }}
+          >
+            {showMarksList ? '◀ Hide' : '▶ Show'} List
+          </button>
 
-          <div>
-            {marks.map((mark, idx) => (
-              <div
-                key={mark.id}
-                onClick={() => jumpToMark(idx)}
-                style={{
-                  padding: '12px',
-                  cursor: 'pointer',
-                  backgroundColor: idx === currentMarkIndex ? '#dbeafe' : 'white',
-                  borderLeft: idx === currentMarkIndex ? '4px solid #3b82f6' : '4px solid transparent',
-                  borderBottom: '1px solid #e5e7eb',
-                }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: '600', fontSize: '0.875rem' }}>Mark {idx + 1}</div>
-                    {mark.label && (
-                      <div style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '4px' }}>{mark.label}</div>
-                    )}
-                    <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: '4px' }}>Page {mark.page_number}</div>
-                  </div>
-                  {idx === currentMarkIndex && (
-                    <div style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#3b82f6' }}>CURRENT</div>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Main Content */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
-        {/* Toolbar */}
-        <div style={{ backgroundColor: 'white', borderBottom: '1px solid #d1d5db', padding: '12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-            <button
-              onClick={() => setShowMarksList(!showMarksList)}
-              style={{
-                padding: '8px 12px',
-                backgroundColor: '#e5e7eb',
-                border: 'none',
-                borderRadius: '4px',
-                cursor: 'pointer',
-                fontSize: '0.875rem',
-                fontWeight: '500',
-              }}
-            >
-              {showMarksList ? '◀ Hide' : '▶ Show'} List
-            </button>
-
-            {currentMark && (
-              <div style={{ fontSize: '0.875rem' }}>
-                <span style={{ fontWeight: '600' }}>Mark {currentMarkIndex + 1}</span>
-                <span style={{ color: '#6b7280' }}> of {marks.length}</span>
-                {currentMark.label && <span style={{ marginLeft: '8px', color: '#6b7280' }}>({currentMark.label})</span>}
-              </div>
-            )}
-          </div>
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <button
-              onClick={handlePrevious}
-              disabled={currentMarkIndex === 0}
-              style={{
-                padding: '8px 16px',
-                backgroundColor: currentMarkIndex === 0 ? '#d1d5db' : '#3b82f6',
-                color: 'white',
-                border: 'none',
-                borderRadius: '4px',
-                cursor: currentMarkIndex === 0 ? 'not-allowed' : 'pointer',
-                fontWeight: '500',
-              }}
-            >
-              ← Previous
-            </button>
-            <button
-              onClick={handleNext}
-              disabled={currentMarkIndex >= marks.length - 1}
-              style={{
-                padding: '8px 16px',
-                backgroundColor: currentMarkIndex >= marks.length - 1 ? '#d1d5db' : '#3b82f6',
-                color: 'white',
-                border: 'none',
-                borderRadius: '4px',
-                cursor: currentMarkIndex >= marks.length - 1 ? 'not-allowed' : 'pointer',
-                fontWeight: '500',
-              }}
-            >
-              Next →
-            </button>
-            <div style={{ marginLeft: '16px', padding: '8px 12px', backgroundColor: '#d1fae5', color: '#065f46', borderRadius: '4px', fontSize: '0.875rem', fontWeight: '600', border: '1px solid #6ee7b7' }}>
-              Zoom: {Math.round(scale * 100)}%
+          {currentMark && (
+            <div style={{ fontSize: '0.875rem' }}>
+              <span style={{ fontWeight: '600' }}>
+                {currentMark.label || `Mark ${currentMarkIndex + 1}`}
+              </span>
+              <span style={{ color: '#6b7280' }}> ({currentMarkIndex + 1}/{marks.length})</span>
             </div>
-          </div>
+          )}
+
+          <div style={{ fontSize: '0.75rem', color: '#9ca3af' }}>{status}</div>
         </div>
 
-        {/* PDF Pane - scrollable */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <button
+            onClick={handlePrevious}
+            disabled={currentMarkIndex === 0}
+            style={{
+              padding: '8px 16px',
+              backgroundColor: currentMarkIndex === 0 ? '#d1d5db' : '#3b82f6',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: currentMarkIndex === 0 ? 'not-allowed' : 'pointer',
+              fontWeight: '500',
+            }}
+          >
+            ← Prev
+          </button>
+          <button
+            onClick={handleNext}
+            disabled={currentMarkIndex >= marks.length - 1}
+            style={{
+              padding: '8px 16px',
+              backgroundColor: currentMarkIndex >= marks.length - 1 ? '#d1d5db' : '#3b82f6',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: currentMarkIndex >= marks.length - 1 ? 'not-allowed' : 'pointer',
+              fontWeight: '500',
+            }}
+          >
+            Next →
+          </button>
+          <div style={{ display: 'flex', gap: '4px', marginLeft: '12px' }}>
+            <button onClick={handleZoomOut} style={{ padding: '6px 12px', backgroundColor: '#e5e7eb', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
+              −
+            </button>
+            <div style={{ padding: '6px 12px', backgroundColor: '#dbeafe', color: '#1e40af', borderRadius: '4px', fontSize: '0.875rem', fontWeight: '600', minWidth: '60px', textAlign: 'center' }}>
+              {Math.round(scale * 100)}%
+            </div>
+            <button onClick={handleZoomIn} style={{ padding: '6px 12px', backgroundColor: '#e5e7eb', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
+              +
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Main area */}
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0 }}>
+        {/* PDF Pane - scrollable, shows ALL pages */}
         <div
           ref={pdfPaneRef}
-          onWheel={handleWheel}
           style={{
             flex: 1,
             overflow: 'auto',
             backgroundColor: '#525252',
-            display: 'flex',
-            alignItems: 'flex-start',
-            justifyContent: 'center',
             padding: '20px',
           }}
         >
-          <div style={{ position: 'relative' }}>
-            <canvas ref={canvasRef} style={{ display: 'block', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' }} />
-            
-            {/* Highlight overlay */}
-            {currentMark && currentPage && (() => {
-              const rotation = currentPage.rotate || 0;
-              const unrotatedViewport = currentPage.getViewport({ scale: 1, rotation: 0 });
-              const W = unrotatedViewport.width;
-              const H = unrotatedViewport.height;
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '20px' }}>
+            {Array.from({ length: numPages }, (_, i) => i + 1).map((pageNum) => (
+              <div
+                key={pageNum}
+                ref={(el) => {
+                  if (el) pageContainerRefs.current.set(pageNum, el);
+                }}
+                style={{ position: 'relative', backgroundColor: 'white', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' }}
+              >
+                <div style={{ position: 'absolute', top: '-24px', left: '0', fontSize: '0.875rem', color: '#e5e7eb', fontWeight: '600' }}>
+                  Page {pageNum}
+                </div>
 
-              const markRect = {
-                x: currentMark.x0 * W,
-                y: currentMark.y0 * H,
-                w: (currentMark.x1 - currentMark.x0) * W,
-                h: (currentMark.y1 - currentMark.y0) * H,
-              };
-
-              const { rx, ry, rw, rh } = mapRectToRotation(W, H, markRect, rotation);
-
-              return (
-                <div
-                  style={{
-                    position: 'absolute',
-                    left: `${rx * scale}px`,
-                    top: `${ry * scale}px`,
-                    width: `${rw * scale}px`,
-                    height: `${rh * scale}px`,
-                    border: '4px solid #ef4444',
-                    backgroundColor: 'rgba(239, 68, 68, 0.2)',
-                    pointerEvents: 'none',
-                    boxSizing: 'border-box',
+                <canvas
+                  ref={(el) => {
+                    if (el) canvasRefs.current.set(pageNum, el);
                   }}
+                  style={{ display: 'block' }}
                 />
-              );
-            })()}
+
+                {/* Highlight marks on this page */}
+                {marks
+                  .filter((mark) => mark.page_number === pageNum)
+                  .map((mark, idx) => {
+                    const isCurrent = marks[currentMarkIndex]?.id === mark.id;
+
+                    return (
+                      <div
+                        key={mark.id}
+                        style={{
+                          position: 'absolute',
+                          left: `${mark.x0 * (canvasRefs.current.get(pageNum)?.offsetWidth || 0)}px`,
+                          top: `${mark.y0 * (canvasRefs.current.get(pageNum)?.offsetHeight || 0)}px`,
+                          width: `${(mark.x1 - mark.x0) * (canvasRefs.current.get(pageNum)?.offsetWidth || 0)}px`,
+                          height: `${(mark.y1 - mark.y0) * (canvasRefs.current.get(pageNum)?.offsetHeight || 0)}px`,
+                          border: isCurrent ? '4px solid #ef4444' : '2px solid #3b82f6',
+                          backgroundColor: isCurrent ? 'rgba(239, 68, 68, 0.2)' : 'rgba(59, 130, 246, 0.1)',
+                          pointerEvents: 'none',
+                          boxSizing: 'border-box',
+                          transition: 'all 0.2s',
+                        }}
+                      />
+                    );
+                  })}
+              </div>
+            ))}
           </div>
         </div>
+
+        {/* Marks List */}
+        {showMarksList && (
+          <div style={{ width: '300px', backgroundColor: 'white', borderLeft: '1px solid #d1d5db', overflowY: 'auto', flexShrink: 0 }}>
+            <div style={{ padding: '12px', borderBottom: '1px solid #e5e7eb', backgroundColor: '#f9fafb' }}>
+              <h3 style={{ fontSize: '0.875rem', fontWeight: '600', margin: 0 }}>
+                Marks ({marks.length})
+              </h3>
+            </div>
+
+            <div>
+              {marks.map((mark, idx) => (
+                <div
+                  key={mark.id}
+                  onClick={() => jumpToMark(idx)}
+                  style={{
+                    padding: '12px',
+                    cursor: 'pointer',
+                    backgroundColor: idx === currentMarkIndex ? '#dbeafe' : 'white',
+                    borderLeft: idx === currentMarkIndex ? '3px solid #3b82f6' : '3px solid transparent',
+                    borderBottom: '1px solid #e5e7eb',
+                  }}
+                >
+                  <div style={{ fontSize: '0.875rem', fontWeight: '600', marginBottom: '4px' }}>
+                    Mark {idx + 1}
+                  </div>
+                  {mark.label && (
+                    <div style={{ fontSize: '0.75rem', color: '#6b7280', marginBottom: '4px' }}>
+                      {mark.label}
+                    </div>
+                  )}
+                  <div style={{ fontSize: '0.75rem', color: '#9ca3af' }}>
+                    Page {mark.page_number}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
