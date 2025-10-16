@@ -346,7 +346,7 @@ export default function EditorPage() {
           >
             Previous
           </button>
-          <span>Page {currentPage} / {totalPages}</span>
+        <span>Page {currentPage} / {totalPages}</span>
           <button
             onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
             disabled={currentPage >= totalPages}
@@ -354,6 +354,16 @@ export default function EditorPage() {
           >
             Next
           </button>
+
+          {/* Quick dev helpers */}
+          <a
+            href={`/?pdf_url=${encodeURIComponent(SAMPLE_PDF)}&user_id=dev`}
+            style={{ marginLeft: 12, fontSize: 13 }}
+            title="Reload with sample PDF"
+          >
+            use sample
+          </a>
+
           <span style={{ marginLeft: 'auto', fontSize: 13, color: '#666' }}>{status}</span>
         </div>
 

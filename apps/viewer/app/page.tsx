@@ -21,7 +21,7 @@ type Mark = {
 
 const API_BASE = 'http://localhost:8000';
 
-// Fallback sample (keeps viewer working from a blank tab for dev)
+// Fallback sample (keeps viewer working for quick demo)
 const SAMPLE_PDF =
   'https://mozilla.github.io/pdf.js/web/compressed.tracemonkey-pldi-09.pdf';
 
@@ -79,17 +79,46 @@ export default function ViewerPage() {
   useEffect(() => {
     const ps = new URLSearchParams(window.location.search);
     const u = ps.get('pdf_url') || SAMPLE_PDF; // keep working if missing
-    const m = ps.get('mark_set_id') || '';     // viewer requires this
+    const m = ps.get('mark_set_id') || '';
+    const demo = ps.get('demo') === '1';
+
     setPdfUrl(u);
     setMarkSetId(m);
+
+    // In demo mode, synthesize two marks across different pages (pg 1 & pg 6)
+    if (demo) {
+      setMarks([
+        {
+          mark_id: 'demo-1',
+          page_index: 0,
+          order_index: 0,
+          name: 'Title area',
+          nx: 0.18,
+          ny: 0.09,
+          nw: 0.64,
+          nh: 0.12,
+          padding_pct: 0.12,
+        },
+        {
+          mark_id: 'demo-2',
+          page_index: 5,
+          order_index: 1,
+          name: 'Figure block',
+          nx: 0.08,
+          ny: 0.28,
+          nw: 0.58,
+          nh: 0.36,
+          padding_pct: 0.10,
+        },
+      ]);
+    }
   }, []);
 
-  // Load marks + PDF
+  // Load marks from API if not demo
   useEffect(() => {
-    if (!pdfUrl || !markSetId) {
-      setStatus('Missing mark_set_id in URL.');
-      return;
-    }
+    const ready = pdfUrl && markSetId && marks.length === 0;
+    if (!ready) return;
+
     (async () => {
       try {
         setStatus('Loading marks…');
@@ -98,7 +127,19 @@ export default function ViewerPage() {
         const arr: Mark[] = await r.json();
         if (!arr.length) throw new Error('no marks in mark set');
         setMarks(arr);
+        setStatus('Marks ready');
+      } catch (e: any) {
+        console.error(e);
+        setStatus(`Error: ${e?.message || e}`);
+      }
+    })();
+  }, [pdfUrl, markSetId, marks.length]);
 
+  // Load PDF once we know URL
+  useEffect(() => {
+    if (!pdfUrl) return;
+    (async () => {
+      try {
         setStatus('Loading PDF…');
         const task = pdfjsLib.getDocument({
           url: pdfUrl,
@@ -107,15 +148,13 @@ export default function ViewerPage() {
         });
         const pdf = await task.promise;
         setPdfDoc(pdf);
-
-        setIdx(0);
         setStatus('Ready');
       } catch (e: any) {
         console.error(e);
-        setStatus(`Error: ${e?.message || e}`);
+        setStatus(`Error loading PDF: ${e?.message || e}`);
       }
     })();
-  }, [pdfUrl, markSetId]);
+  }, [pdfUrl]);
 
   /** Core renderer: render page at scale and center the rect inside the scrollable pane */
   const renderAndCenter = async (markIndex: number, explicitScale?: number) => {
@@ -166,13 +205,6 @@ export default function ViewerPage() {
     const renderTask = page.render({ canvasContext: ctx, viewport });
     await renderTask.promise;
     if (renderTokenRef.current !== token) return; // superseded
-
-    // Optional: debug outline of rect
-    // ctx.save();
-    // ctx.strokeStyle = 'rgba(255,0,0,.9)';
-    // ctx.lineWidth = Math.max(1, 2 / dpr);
-    // ctx.strokeRect(rx * scale, ry * scale, rw * scale, rh * scale);
-    // ctx.restore();
 
     // Center scroll on rect
     const centerX = rx * scale + (rw * scale) / 2;
@@ -243,15 +275,6 @@ export default function ViewerPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [idx, pdfDoc, marks]);
 
-  if (!markSetId) {
-    return (
-      <div style={{ padding: 24 }}>
-        <h2>PDF Markbook Viewer</h2>
-        <p>Add <code>?pdf_url=…&mark_set_id=…</code> to the URL.</p>
-      </div>
-    );
-  }
-
   const current = marks[idx];
 
   return (
@@ -279,7 +302,9 @@ export default function ViewerPage() {
         </button>
 
         <div style={{ fontWeight: 600 }}>
-          {current ? `${current.name} (${idx + 1} / ${marks.length})` : status}
+          {current
+            ? `${current.name} (${idx + 1} / ${marks.length})`
+            : status}
         </div>
 
         <div style={{ marginLeft: 'auto', color: '#777', fontSize: 13 }}>{status}</div>
@@ -333,7 +358,7 @@ export default function ViewerPage() {
           <div style={{ padding: 12 }}>
             {marks.map((m, i) => (
               <button
-                key={m.mark_id}
+                key={`${m.mark_id}-${i}`}
                 onClick={() => setIdx(i)}
                 style={{
                   textAlign: 'left',
@@ -350,6 +375,11 @@ export default function ViewerPage() {
                 <div style={{ fontSize: 12, color: '#666' }}>Page {m.page_index + 1}</div>
               </button>
             ))}
+            {!marks.length && (
+              <div style={{ color: '#777', fontSize: 14 }}>
+                {status} &nbsp; Tip: open <code>?demo=1</code> to test quickly.
+              </div>
+            )}
           </div>
         </aside>
       </div>
