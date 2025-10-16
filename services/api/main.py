@@ -16,10 +16,10 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 # ---- Package-local imports (absolute package paths recommended) -------------
-from services.api.settings import get_settings
-from services.api.adapters.base import StorageAdapter
-from services.api.adapters.sqlite import SqliteAdapter  # has .from_url()
-from services.api.routers import documents, marks
+from settings import get_settings
+from adapters.base import StorageAdapter
+from adapters.sqlite import SqliteAdapter  # has .from_url()
+from routers import documents, marks
 
 
 # Global memoized adapter instance
@@ -75,7 +75,7 @@ def get_storage_adapter(settings=Depends(get_settings)) -> StorageAdapter:
 
     if backend == "json":
         # Import here to avoid import cost if unused
-        from services.api.adapters.json import JsonAdapter  # type: ignore
+        from adapters.json import JsonAdapter  # type: ignore
 
         # If you pass a path via DB_URL for json, extract directory; else default data/
         db_url = _resolve_db_url(settings)
@@ -88,13 +88,13 @@ def get_storage_adapter(settings=Depends(get_settings)) -> StorageAdapter:
         return _ADAPTER
 
     if backend in ("pg", "postgres", "postgresql"):
-        from services.api.adapters.pg import PgAdapter  # type: ignore
+        from adapters.pg import PgAdapter  # type: ignore
 
         _ADAPTER = PgAdapter(_resolve_db_url(settings))  # type: ignore
         return _ADAPTER
 
     if backend == "sheets":
-        from services.api.adapters.sheets import SheetsAdapter  # type: ignore
+        from adapters.sheets import SheetsAdapter  # type: ignore
 
         # Settings should provide google_sa_json and sheets_spreadsheet_id
         sa = getattr(settings, "google_sa_json", None)

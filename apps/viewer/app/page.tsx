@@ -131,7 +131,6 @@ export default function Viewer() {
     const canvas = canvasRefs.current.get(pageNum);
     if (!canvas) return;
 
-    // Cancel existing render for this page
     const existingTask = currentRenderTasks.get(pageNum);
     if (existingTask) {
       existingTask.cancel();
@@ -158,7 +157,6 @@ export default function Viewer() {
       });
 
       currentRenderTasks.set(pageNum, renderTask);
-
       await renderTask.promise;
       currentRenderTasks.delete(pageNum);
     } catch (err: any) {
@@ -168,39 +166,75 @@ export default function Viewer() {
     }
   };
 
-  // Scroll to current mark when it changes
+  // Zoom to current mark when it changes
   useEffect(() => {
     if (!pdfDoc || marks.length === 0 || !pdfPaneRef.current) return;
 
     const currentMark = marks[currentMarkIndex];
     if (!currentMark) return;
 
-    scrollToMark(currentMark);
+    zoomToMark(currentMark);
   }, [currentMarkIndex, marks, pdfDoc]);
 
-  const scrollToMark = async (mark: Mark) => {
+  const zoomToMark = async (mark: Mark) => {
     if (!pdfDoc || !pdfPaneRef.current) return;
 
     try {
       const page = await pdfDoc.getPage(mark.page_number);
-      const viewport = page.getViewport({ scale });
+      const viewport = page.getViewport({ scale: 1 });
 
-      // Calculate mark center in page coordinates
+      // Calculate mark dimensions in page coordinates
+      const markWidth = (mark.x1 - mark.x0) * viewport.width;
+      const markHeight = (mark.y1 - mark.y0) * viewport.height;
+
+      // Calculate optimal zoom to fit mark with padding
+      const paneWidth = pdfPaneRef.current.clientWidth - 100; // Leave margin
+      const paneHeight = pdfPaneRef.current.clientHeight - 100;
+      
+      const padding = 0.15; // 15% padding around mark
+      const fitScale = Math.min(
+        paneWidth / (markWidth * (1 + 2 * padding)),
+        paneHeight / (markHeight * (1 + 2 * padding))
+      );
+
+      // Apply 150% boost but cap at reasonable limits
+      const newScale = Math.max(1.0, Math.min(3.5, fitScale * 1.5));
+      
+      setScale(newScale);
+      setStatus(`Zooming to: ${mark.label || `Mark ${currentMarkIndex + 1}`}`);
+
+      // Wait for re-render
+      setTimeout(() => {
+        scrollToMark(mark, newScale);
+      }, 100);
+    } catch (err) {
+      console.error('Zoom error:', err);
+    }
+  };
+
+  const scrollToMark = async (mark: Mark, useScale: number) => {
+    if (!pdfDoc || !pdfPaneRef.current) return;
+
+    try {
+      const page = await pdfDoc.getPage(mark.page_number);
+      const viewport = page.getViewport({ scale: useScale });
+
+      // Calculate mark center
       const markCenterX = ((mark.x0 + mark.x1) / 2) * viewport.width;
       const markCenterY = ((mark.y0 + mark.y1) / 2) * viewport.height;
 
-      // Calculate total offset from top (accounting for previous pages)
+      // Calculate offset from top
       let offsetTop = 0;
       for (let i = 1; i < mark.page_number; i++) {
         const prevCanvas = canvasRefs.current.get(i);
         if (prevCanvas) {
-          offsetTop += prevCanvas.offsetHeight + 20; // 20px gap
+          offsetTop += prevCanvas.offsetHeight + 20;
         }
       }
 
       offsetTop += markCenterY;
 
-      // Center the mark in the viewport
+      // Center in viewport
       const paneHeight = pdfPaneRef.current.clientHeight;
       const scrollTop = offsetTop - (paneHeight / 2);
 
@@ -209,7 +243,7 @@ export default function Viewer() {
         behavior: 'smooth',
       });
 
-      setStatus(`Viewing mark ${currentMarkIndex + 1} of ${marks.length}`);
+      setStatus(`Viewing: ${mark.label || `Mark ${currentMarkIndex + 1}`}`);
     } catch (err) {
       console.error('Scroll error:', err);
     }
@@ -232,11 +266,18 @@ export default function Viewer() {
   };
 
   const handleZoomIn = () => {
-    setScale((prev) => Math.min(3, prev + 0.2));
+    setScale((prev) => Math.min(4, prev + 0.3));
   };
 
   const handleZoomOut = () => {
-    setScale((prev) => Math.max(0.5, prev - 0.2));
+    setScale((prev) => Math.max(0.5, prev - 0.3));
+  };
+
+  const handleResetZoom = () => {
+    const currentMark = marks[currentMarkIndex];
+    if (currentMark) {
+      zoomToMark(currentMark);
+    }
   };
 
   if (loading) {
@@ -252,7 +293,7 @@ export default function Viewer() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', backgroundColor: '#f3f4f6', overflow: 'hidden' }}>
       {/* Header */}
-      <div style={{ height: '56px', backgroundColor: 'white', borderBottom: '1px solid #d1d5db', padding: '0 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+      <div style={{ height: '60px', backgroundColor: 'white', borderBottom: '1px solid #d1d5db', padding: '0 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
           <button
             onClick={() => setShowMarksList(!showMarksList)}
@@ -271,14 +312,14 @@ export default function Viewer() {
 
           {currentMark && (
             <div style={{ fontSize: '0.875rem' }}>
-              <span style={{ fontWeight: '600' }}>
+              <div style={{ fontWeight: '700', fontSize: '1rem', color: '#1f2937' }}>
                 {currentMark.label || `Mark ${currentMarkIndex + 1}`}
-              </span>
-              <span style={{ color: '#6b7280' }}> ({currentMarkIndex + 1}/{marks.length})</span>
+              </div>
+              <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>
+                Page {currentMark.page_number} • {currentMarkIndex + 1} of {marks.length}
+              </div>
             </div>
           )}
-
-          <div style={{ fontSize: '0.75rem', color: '#9ca3af' }}>{status}</div>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -286,49 +327,67 @@ export default function Viewer() {
             onClick={handlePrevious}
             disabled={currentMarkIndex === 0}
             style={{
-              padding: '8px 16px',
+              padding: '10px 20px',
               backgroundColor: currentMarkIndex === 0 ? '#d1d5db' : '#3b82f6',
               color: 'white',
               border: 'none',
               borderRadius: '4px',
               cursor: currentMarkIndex === 0 ? 'not-allowed' : 'pointer',
-              fontWeight: '500',
+              fontWeight: '600',
+              fontSize: '0.875rem',
             }}
           >
-            ← Prev
+            ← Previous
           </button>
           <button
             onClick={handleNext}
             disabled={currentMarkIndex >= marks.length - 1}
             style={{
-              padding: '8px 16px',
+              padding: '10px 20px',
               backgroundColor: currentMarkIndex >= marks.length - 1 ? '#d1d5db' : '#3b82f6',
               color: 'white',
               border: 'none',
               borderRadius: '4px',
               cursor: currentMarkIndex >= marks.length - 1 ? 'not-allowed' : 'pointer',
-              fontWeight: '500',
+              fontWeight: '600',
+              fontSize: '0.875rem',
             }}
           >
             Next →
           </button>
-          <div style={{ display: 'flex', gap: '4px', marginLeft: '12px' }}>
-            <button onClick={handleZoomOut} style={{ padding: '6px 12px', backgroundColor: '#e5e7eb', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
-              −
-            </button>
-            <div style={{ padding: '6px 12px', backgroundColor: '#dbeafe', color: '#1e40af', borderRadius: '4px', fontSize: '0.875rem', fontWeight: '600', minWidth: '60px', textAlign: 'center' }}>
-              {Math.round(scale * 100)}%
-            </div>
-            <button onClick={handleZoomIn} style={{ padding: '6px 12px', backgroundColor: '#e5e7eb', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
-              +
-            </button>
+          
+          <div style={{ width: '1px', height: '30px', backgroundColor: '#d1d5db', margin: '0 8px' }} />
+          
+          <button onClick={handleZoomOut} style={{ padding: '8px 14px', backgroundColor: '#e5e7eb', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '1rem' }}>
+            −
+          </button>
+          <div style={{ padding: '8px 14px', backgroundColor: '#dbeafe', color: '#1e40af', borderRadius: '4px', fontSize: '0.875rem', fontWeight: '700', minWidth: '70px', textAlign: 'center' }}>
+            {Math.round(scale * 100)}%
           </div>
+          <button onClick={handleZoomIn} style={{ padding: '8px 14px', backgroundColor: '#e5e7eb', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '1rem' }}>
+            +
+          </button>
+          <button
+            onClick={handleResetZoom}
+            style={{
+              padding: '8px 12px',
+              backgroundColor: '#10b981',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontWeight: '500',
+              fontSize: '0.75rem',
+            }}
+          >
+            Reset
+          </button>
         </div>
       </div>
 
       {/* Main area */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0 }}>
-        {/* PDF Pane - scrollable, shows ALL pages */}
+        {/* PDF Pane */}
         <div
           ref={pdfPaneRef}
           style={{
@@ -347,7 +406,7 @@ export default function Viewer() {
                 }}
                 style={{ position: 'relative', backgroundColor: 'white', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' }}
               >
-                <div style={{ position: 'absolute', top: '-24px', left: '0', fontSize: '0.875rem', color: '#e5e7eb', fontWeight: '600' }}>
+                <div style={{ position: 'absolute', top: '-28px', left: '0', fontSize: '0.875rem', color: '#e5e7eb', fontWeight: '700', backgroundColor: '#374151', padding: '4px 10px', borderRadius: '4px' }}>
                   Page {pageNum}
                 </div>
 
@@ -361,25 +420,56 @@ export default function Viewer() {
                 {/* Highlight marks on this page */}
                 {marks
                   .filter((mark) => mark.page_number === pageNum)
-                  .map((mark, idx) => {
+                  .map((mark) => {
                     const isCurrent = marks[currentMarkIndex]?.id === mark.id;
+                    const canvas = canvasRefs.current.get(pageNum);
+                    if (!canvas) return null;
+
+                    const left = mark.x0 * canvas.offsetWidth;
+                    const top = mark.y0 * canvas.offsetHeight;
+                    const width = (mark.x1 - mark.x0) * canvas.offsetWidth;
+                    const height = (mark.y1 - mark.y0) * canvas.offsetHeight;
 
                     return (
-                      <div
-                        key={mark.id}
-                        style={{
-                          position: 'absolute',
-                          left: `${mark.x0 * (canvasRefs.current.get(pageNum)?.offsetWidth || 0)}px`,
-                          top: `${mark.y0 * (canvasRefs.current.get(pageNum)?.offsetHeight || 0)}px`,
-                          width: `${(mark.x1 - mark.x0) * (canvasRefs.current.get(pageNum)?.offsetWidth || 0)}px`,
-                          height: `${(mark.y1 - mark.y0) * (canvasRefs.current.get(pageNum)?.offsetHeight || 0)}px`,
-                          border: isCurrent ? '4px solid #ef4444' : '2px solid #3b82f6',
-                          backgroundColor: isCurrent ? 'rgba(239, 68, 68, 0.2)' : 'rgba(59, 130, 246, 0.1)',
-                          pointerEvents: 'none',
-                          boxSizing: 'border-box',
-                          transition: 'all 0.2s',
-                        }}
-                      />
+                      <div key={mark.id}>
+                        {/* Highlight box */}
+                        <div
+                          style={{
+                            position: 'absolute',
+                            left: `${left}px`,
+                            top: `${top}px`,
+                            width: `${width}px`,
+                            height: `${height}px`,
+                            border: isCurrent ? '4px solid #ef4444' : '2px solid #3b82f6',
+                            backgroundColor: isCurrent ? 'rgba(239, 68, 68, 0.2)' : 'rgba(59, 130, 246, 0.08)',
+                            pointerEvents: 'none',
+                            boxSizing: 'border-box',
+                            transition: 'all 0.3s',
+                          }}
+                        />
+                        
+                        {/* Label above mark */}
+                        {isCurrent && mark.label && (
+                          <div
+                            style={{
+                              position: 'absolute',
+                              left: `${left}px`,
+                              top: `${top - 32}px`,
+                              backgroundColor: '#ef4444',
+                              color: 'white',
+                              padding: '6px 12px',
+                              borderRadius: '6px',
+                              fontSize: '0.875rem',
+                              fontWeight: '700',
+                              whiteSpace: 'nowrap',
+                              boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+                              zIndex: 10,
+                            }}
+                          >
+                            📍 {mark.label}
+                          </div>
+                        )}
+                      </div>
                     );
                   })}
               </div>
@@ -389,11 +479,12 @@ export default function Viewer() {
 
         {/* Marks List */}
         {showMarksList && (
-          <div style={{ width: '300px', backgroundColor: 'white', borderLeft: '1px solid #d1d5db', overflowY: 'auto', flexShrink: 0 }}>
-            <div style={{ padding: '12px', borderBottom: '1px solid #e5e7eb', backgroundColor: '#f9fafb' }}>
-              <h3 style={{ fontSize: '0.875rem', fontWeight: '600', margin: 0 }}>
-                Marks ({marks.length})
+          <div style={{ width: '320px', backgroundColor: 'white', borderLeft: '1px solid #d1d5db', overflowY: 'auto', flexShrink: 0 }}>
+            <div style={{ padding: '16px', borderBottom: '1px solid #e5e7eb', backgroundColor: '#f9fafb', position: 'sticky', top: 0, zIndex: 10 }}>
+              <h3 style={{ fontSize: '1rem', fontWeight: '700', margin: 0, color: '#1f2937' }}>
+                All Marks ({marks.length})
               </h3>
+              <p style={{ fontSize: '0.75rem', color: '#6b7280', margin: '4px 0 0 0' }}>{status}</p>
             </div>
 
             <div>
@@ -402,23 +493,38 @@ export default function Viewer() {
                   key={mark.id}
                   onClick={() => jumpToMark(idx)}
                   style={{
-                    padding: '12px',
+                    padding: '14px',
                     cursor: 'pointer',
                     backgroundColor: idx === currentMarkIndex ? '#dbeafe' : 'white',
-                    borderLeft: idx === currentMarkIndex ? '3px solid #3b82f6' : '3px solid transparent',
+                    borderLeft: idx === currentMarkIndex ? '4px solid #3b82f6' : '4px solid transparent',
                     borderBottom: '1px solid #e5e7eb',
+                    transition: 'all 0.2s',
+                  }}
+                  onMouseEnter={(e) => {
+                    if (idx !== currentMarkIndex) {
+                      e.currentTarget.style.backgroundColor = '#f3f4f6';
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (idx !== currentMarkIndex) {
+                      e.currentTarget.style.backgroundColor = 'white';
+                    }
                   }}
                 >
-                  <div style={{ fontSize: '0.875rem', fontWeight: '600', marginBottom: '4px' }}>
-                    Mark {idx + 1}
-                  </div>
-                  {mark.label && (
-                    <div style={{ fontSize: '0.75rem', color: '#6b7280', marginBottom: '4px' }}>
-                      {mark.label}
+                  <div style={{ display: 'flex', alignItems: 'start', justifyContent: 'space-between' }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: '0.875rem', fontWeight: '700', marginBottom: '4px', color: '#1f2937' }}>
+                        {mark.label || `Mark ${idx + 1}`}
+                      </div>
+                      <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>
+                        Page {mark.page_number}
+                      </div>
                     </div>
-                  )}
-                  <div style={{ fontSize: '0.75rem', color: '#9ca3af' }}>
-                    Page {mark.page_number}
+                    {idx === currentMarkIndex && (
+                      <div style={{ fontSize: '1rem', color: '#3b82f6' }}>
+                        ●
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}

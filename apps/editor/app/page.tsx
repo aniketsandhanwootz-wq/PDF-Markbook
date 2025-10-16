@@ -15,7 +15,7 @@ interface Mark {
   y0: number;
   x1: number;
   y1: number;
-  label?: string;
+  label: string;
   order_index: number;
 }
 
@@ -28,6 +28,7 @@ interface DrawnRect {
   pageWidth: number;
   pageHeight: number;
   rotation: 0 | 90 | 180 | 270;
+  label: string;
 }
 
 let currentRenderTask: any = null;
@@ -48,6 +49,8 @@ export default function Editor() {
   const [saving, setSaving] = useState<boolean>(false);
   const [savedMarkSetId, setSavedMarkSetId] = useState<string>('');
   const [status, setStatus] = useState<string>('Initializing...');
+  const [editingMarkIndex, setEditingMarkIndex] = useState<number | null>(null);
+  const [tempLabel, setTempLabel] = useState<string>('');
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
@@ -96,7 +99,7 @@ export default function Editor() {
             created_by: userId,
           }),
         }).catch(err => {
-          console.warn('Document creation failed, continuing anyway:', err);
+          console.warn('Document creation failed:', err);
           return { ok: false, status: 0 };
         });
 
@@ -229,19 +232,19 @@ export default function Editor() {
     if (width > 5 && height > 5) {
       const unrotatedViewport = currentPage.getViewport({ scale: 1, rotation: 0 });
       
-      setMarks([
-        ...marks,
-        {
-          page: currentPageNum,
-          x: left,
-          y: top,
-          width,
-          height,
-          pageWidth: unrotatedViewport.width,
-          pageHeight: unrotatedViewport.height,
-          rotation: (currentPage.rotate || 0) as 0 | 90 | 180 | 270,
-        },
-      ]);
+      const newMark: DrawnRect = {
+        page: currentPageNum,
+        x: left,
+        y: top,
+        width,
+        height,
+        pageWidth: unrotatedViewport.width,
+        pageHeight: unrotatedViewport.height,
+        rotation: (currentPage.rotate || 0) as 0 | 90 | 180 | 270,
+        label: `Mark ${marks.length + 1}`,
+      };
+      
+      setMarks([...marks, newMark]);
     }
 
     setDrawing(false);
@@ -273,7 +276,7 @@ export default function Editor() {
           y0: Math.max(0, Math.min(1, ny0)),
           x1: Math.max(0, Math.min(1, nx1)),
           y1: Math.max(0, Math.min(1, ny1)),
-          label: `Mark ${idx + 1}`,
+          label: rect.label || `Mark ${idx + 1}`,
           order_index: idx,
         };
       });
@@ -296,25 +299,28 @@ export default function Editor() {
 
       const data = await res.json();
       setSavedMarkSetId(data.mark_set_id);
-      setStatus(`✓ Saved ${currentMarks.length} marks successfully!`);
+      setStatus(`✓ Saved ${currentMarks.length} marks!`);
       
     } catch (err: any) {
       console.error('Save error:', err);
-      alert(`Failed to save marks: ${err.message}`);
+      alert(`Failed to save: ${err.message}`);
       setStatus('Save error');
     } finally {
       setSaving(false);
     }
   };
 
-  const getViewerLink = () => {
-    if (!savedMarkSetId) return '';
-    return `http://localhost:3002/?pdf_url=${encodeURIComponent(pdfUrl)}&mark_set_id=${savedMarkSetId}`;
+  const updateMarkLabel = (index: number, newLabel: string) => {
+    const newMarks = [...marks];
+    newMarks[index].label = newLabel;
+    setMarks(newMarks);
+    setEditingMarkIndex(null);
+    setTempLabel('');
   };
 
   return (
     <div style={{ display: 'flex', height: '100vh', backgroundColor: '#f3f4f6', overflow: 'hidden' }}>
-      <div style={{ width: '320px', backgroundColor: 'white', borderRight: '1px solid #d1d5db', overflowY: 'auto', flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
+      <div style={{ width: '340px', backgroundColor: 'white', borderRight: '1px solid #d1d5db', overflowY: 'auto', flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
         <div style={{ padding: '16px', borderBottom: '1px solid #d1d5db', backgroundColor: '#f9fafb', flexShrink: 0 }}>
           <h2 style={{ fontSize: '1.125rem', fontWeight: 'bold', margin: 0 }}>PDF Marker</h2>
           <p style={{ fontSize: '0.75rem', color: '#6b7280', margin: '4px 0 0 0' }}>{status}</p>
@@ -395,7 +401,7 @@ export default function Editor() {
 
           {savedMarkSetId && (
             <a
-              href={getViewerLink()}
+              href={`http://localhost:3002/?pdf_url=${encodeURIComponent(pdfUrl)}&mark_set_id=${savedMarkSetId}`}
               target="_blank"
               rel="noopener noreferrer"
               style={{
@@ -434,10 +440,76 @@ export default function Editor() {
                   border: '1px solid #e5e7eb',
                 }}
               >
-                <div style={{ fontWeight: '600', marginBottom: '6px' }}>
-                  Mark {idx + 1} - Page {rect.page}
-                </div>
-                <div style={{ display: 'flex', gap: '4px' }}>
+                {editingMarkIndex === idx ? (
+                  <div style={{ marginBottom: '8px' }}>
+                    <input
+                      type="text"
+                      value={tempLabel}
+                      onChange={(e) => setTempLabel(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') updateMarkLabel(idx, tempLabel);
+                        if (e.key === 'Escape') { setEditingMarkIndex(null); setTempLabel(''); }
+                      }}
+                      placeholder="Enter title..."
+                      autoFocus
+                      style={{
+                        width: '100%',
+                        padding: '6px',
+                        border: '2px solid #3b82f6',
+                        borderRadius: '3px',
+                        fontSize: '0.875rem',
+                      }}
+                    />
+                    <div style={{ display: 'flex', gap: '4px', marginTop: '4px' }}>
+                      <button
+                        onClick={() => updateMarkLabel(idx, tempLabel)}
+                        style={{
+                          flex: 1,
+                          padding: '4px',
+                          backgroundColor: '#10b981',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '3px',
+                          fontSize: '0.75rem',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        ✓ Save
+                      </button>
+                      <button
+                        onClick={() => { setEditingMarkIndex(null); setTempLabel(''); }}
+                        style={{
+                          flex: 1,
+                          padding: '4px',
+                          backgroundColor: '#6b7280',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '3px',
+                          fontSize: '0.75rem',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div
+                    onClick={() => { setEditingMarkIndex(idx); setTempLabel(rect.label); }}
+                    style={{
+                      fontWeight: '600',
+                      marginBottom: '6px',
+                      fontSize: '0.875rem',
+                      cursor: 'pointer',
+                      color: '#3b82f6',
+                    }}
+                    title="Click to edit title"
+                  >
+                    {rect.label} - Page {rect.page}
+                  </div>
+                )}
+                
+                <div style={{ display: 'flex', gap: '4px', marginTop: '6px' }}>
                   <button
                     onClick={() => {
                       if (idx === 0) return;
@@ -536,7 +608,22 @@ export default function Editor() {
                     backgroundColor: 'rgba(59, 130, 246, 0.15)',
                     pointerEvents: 'none',
                   }}
-                />
+                >
+                  <div style={{
+                    position: 'absolute',
+                    top: '-20px',
+                    left: '0',
+                    backgroundColor: '#3b82f6',
+                    color: 'white',
+                    padding: '2px 6px',
+                    borderRadius: '3px',
+                    fontSize: '0.75rem',
+                    fontWeight: '600',
+                    whiteSpace: 'nowrap',
+                  }}>
+                    {rect.label}
+                  </div>
+                </div>
               ))}
 
             {currentRect && (
