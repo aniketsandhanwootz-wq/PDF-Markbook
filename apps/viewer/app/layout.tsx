@@ -10,7 +10,17 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body style={{ margin: 0, padding: 0 }}>{children}</body>
+      <body
+        style={{
+          margin: 0,
+          padding: 0,
+          // Critical: prevent whole-page scroll; we’ll scroll only the PDF pane
+          overflow: 'hidden',
+          height: '100vh',
+        }}
+      >
+        {children}
+      </body>
     </html>
   );
 }

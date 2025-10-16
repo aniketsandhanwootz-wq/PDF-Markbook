@@ -1,14 +1,13 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 
-// Configure PDF.js worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
 const API_BASE = 'http://localhost:8000';
 
-interface Mark {
+type Mark = {
   mark_id: string;
   page_index: number;
   order_index: number;
@@ -17,308 +16,326 @@ interface Mark {
   ny: number;
   nw: number;
   nh: number;
-  zoom_hint?: number;
   padding_pct: number;
   anchor: string;
+};
+
+const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+
+/** Map a rect from UNROTATED page space to ROTATED page space */
+function mapRectToRotation(
+  W: number,
+  H: number,
+  rect: { x: number; y: number; w: number; h: number },
+  r: number
+) {
+  const { x, y, w, h } = rect;
+  const rot = ((r || 0) % 360 + 360) % 360;
+  if (rot === 0) return { rx: x, ry: y, rw: w, rh: h, RW: W, RH: H };
+  if (rot === 90) return { rx: y, ry: W - (x + w), rw: h, rh: w, RW: H, RH: W };
+  if (rot === 180) return { rx: W - (x + w), ry: H - (y + h), rw: w, rh: h, RW: W, RH: H };
+  // 270
+  return { rx: H - (y + h), ry: x, rw: h, rh: w, RW: H, RH: W };
+}
+
+/** Compute scale and target scroll for a mark (150% of fit-to-region) */
+function computeAutoZoom(
+  containerW: number,
+  containerH: number,
+  rotatedRect: { rw: number; rh: number },
+  paddingPx: number,
+  fitBoost: number // e.g., 1.5
+) {
+  const needW = rotatedRect.rw + 2 * paddingPx;
+  const needH = rotatedRect.rh + 2 * paddingPx;
+  const fitScale = Math.min(containerW / needW, containerH / needH);
+  // 150% of fit, clamped
+  return clamp(fitScale * fitBoost, 0.25, 8);
 }
 
 export default function ViewerPage() {
+  // URL params
   const [pdfUrl, setPdfUrl] = useState('');
   const [markSetId, setMarkSetId] = useState('');
+
+  // Data & state
   const [pdfDoc, setPdfDoc] = useState<any>(null);
   const [marks, setMarks] = useState<Mark[]>([]);
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [scale, setScale] = useState(1.0);
-  const [status, setStatus] = useState('');
-  const [listOpen, setListOpen] = useState(false);
-  
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const [idx, setIdx] = useState(0);
+  const [status, setStatus] = useState('Loading…');
 
-  // Load URL parameters
+  // Refs
+  const paneRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const currentScaleRef = useRef(1); // for gesture zoom
+  const renderTokenRef = useRef(0);
+
+  // Params
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const url = params.get('pdf_url');
-    const setId = params.get('mark_set_id');
-    
-    if (url && setId) {
-      setPdfUrl(url);
-      setMarkSetId(setId);
+    const p = new URLSearchParams(window.location.search);
+    const u = p.get('pdf_url');
+    const m = p.get('mark_set_id');
+    if (u && m) {
+      setPdfUrl(u);
+      setMarkSetId(m);
+    } else {
+      setStatus('Add ?pdf_url=…&mark_set_id=… to the URL');
     }
   }, []);
 
-  // Initialize
+  // Fetch marks & PDF
   useEffect(() => {
     if (!pdfUrl || !markSetId) return;
-
-    const init = async () => {
+    (async () => {
       try {
-        setStatus('Loading marks...');
-        
-        // Fetch marks
-        const res = await fetch(`${API_BASE}/mark-sets/${markSetId}/marks`);
-        if (!res.ok) throw new Error('Failed to fetch marks');
-        const marksData = await res.json();
-        setMarks(marksData);
-        
-        setStatus('Loading PDF...');
-        
-        // Load PDF
-        // Load PDF with CORS handling
-        const loadingTask = pdfjsLib.getDocument({
-        url: pdfUrl,
-        withCredentials: false,
-        isEvalSupported: false,
-        });
-        const pdf = await loadingTask.promise;
-        setPdfDoc(pdf);
-        
-        setStatus('Ready');
-        setCurrentIndex(0);
-      } catch (error) {
-        console.error('Init error:', error);
-        setStatus(`Error: ${error}`);
-      }
-    };
+        setStatus('Loading marks…');
+        const r = await fetch(`${API_BASE}/mark-sets/${markSetId}/marks`);
+        if (!r.ok) throw new Error('marks fetch failed');
+        const arr: Mark[] = await r.json();
+        if (!arr.length) throw new Error('no marks');
+        setMarks(arr);
 
-    init();
+        setStatus('Loading PDF…');
+        const task = pdfjsLib.getDocument({ url: pdfUrl, withCredentials: false, isEvalSupported: false });
+        const pdf = await task.promise;
+        setPdfDoc(pdf);
+
+        setStatus('Ready');
+        setIdx(0);
+      } catch (e: any) {
+        console.error(e);
+        setStatus(`Error: ${e?.message || e}`);
+      }
+    })();
   }, [pdfUrl, markSetId]);
 
-  // Render current mark
-  useEffect(() => {
-    if (!pdfDoc || marks.length === 0) return;
-
-    const renderMark = async () => {
-      try {
-        const mark = marks[currentIndex];
-        if (!mark) return;
-
-        const page = await pdfDoc.getPage(mark.page_index + 1);
-        const canvas = canvasRef.current;
-        const container = containerRef.current;
-        if (!canvas || !container) return;
-
-        // Get page dimensions at scale 1
-        const baseViewport = page.getViewport({ scale: 1 });
-        
-        // Calculate zoom-to-fit scale
-        const containerW = container.clientWidth;
-        const containerH = container.clientHeight;
-        
-        // Account for padding
-        const paddingPct = mark.padding_pct || 0.1;
-        const markW = mark.nw * baseViewport.width;
-        const markH = mark.nh * baseViewport.height;
-        
-        const paddedW = markW * (1 + paddingPct * 2);
-        const paddedH = markH * (1 + paddingPct * 2);
-        
-        // Calculate scale to fit
-        const scaleX = containerW / paddedW;
-        const scaleY = containerH / paddedH;
-        let autoScale = Math.min(scaleX, scaleY);
-        
-        // Apply zoom hint if provided
-        const finalScale = mark.zoom_hint || autoScale;
-        setScale(finalScale);
-        
-        // Render at calculated scale
-        const viewport = page.getViewport({ scale: finalScale });
-        
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
-        
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
-        
-        await page.render({ canvasContext: ctx, viewport }).promise;
-        
-        // Draw highlight rectangle
-        const markX = mark.nx * viewport.width;
-        const markY = mark.ny * viewport.height;
-        const markWidth = mark.nw * viewport.width;
-        const markHeight = mark.nh * viewport.height;
-        
-        ctx.strokeStyle = '#ff0000';
-        ctx.lineWidth = 3;
-        ctx.strokeRect(markX, markY, markWidth, markHeight);
-        
-        // Scroll to center the mark
-        const scrollX = markX + markWidth / 2 - containerW / 2;
-        const scrollY = markY + markHeight / 2 - containerH / 2;
-        
-        container.scrollTo({
-          left: Math.max(0, scrollX),
-          top: Math.max(0, scrollY),
-          behavior: 'smooth'
-        });
-        
-      } catch (error) {
-        console.error('Render error:', error);
-        setStatus(`Render error: ${error}`);
-      }
-    };
-
-    renderMark();
-  }, [pdfDoc, marks, currentIndex]);
-
-  // Navigate
-  const goNext = () => {
-    if (currentIndex < marks.length - 1) {
-      setCurrentIndex(currentIndex + 1);
-    }
-  };
-
-  const goPrevious = () => {
-    if (currentIndex > 0) {
-      setCurrentIndex(currentIndex - 1);
-    }
-  };
-
-  const jumpTo = (index: number) => {
-    setCurrentIndex(index);
-    setListOpen(false);
-  };
-
-  // Zoom controls
-  const zoomIn = () => setScale(s => Math.min(s * 1.2, 6));
-  const zoomOut = () => setScale(s => Math.max(s / 1.2, 0.25));
-
-  // Save zoom preference
-  const saveZoom = async () => {
-    const mark = marks[currentIndex];
+  /** Core renderer: render page at scale and center the rect inside the scrollable pane */
+  const renderAndCenter = async (pageIndex: number, targetScale?: number) => {
+    if (!pdfDoc || !marks.length) return;
+    const mark = marks[pageIndex];
     if (!mark) return;
 
-    try {
-      const res = await fetch(`${API_BASE}/marks/${mark.mark_id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ zoom_hint: scale })
-      });
+    const pane = paneRef.current;
+    const canvas = canvasRef.current;
+    if (!pane || !canvas) return;
 
-      if (!res.ok) throw new Error('Failed to save zoom');
-      
-      // Update local state
-      const updated = [...marks];
-      updated[currentIndex].zoom_hint = scale;
-      setMarks(updated);
-      
-      setStatus('Zoom saved');
-      setTimeout(() => setStatus('Ready'), 2000);
-    } catch (error) {
-      console.error('Save zoom error:', error);
-      setStatus(`Error: ${error}`);
+    const thisToken = ++renderTokenRef.current;
+
+    const page = await pdfDoc.getPage(mark.page_index + 1);
+
+    // Unrotated base dims (rotation: 0) to interpret normalized coords
+    const vp0 = page.getViewport({ scale: 1, rotation: 0 });
+    const W = vp0.width;
+    const H = vp0.height;
+
+    const rotation = (page.rotate || 0) % 360;
+    const { rx, ry, rw, rh, RW, RH } = mapRectToRotation(
+      W,
+      H,
+      { x: mark.nx * W, y: mark.ny * H, w: mark.nw * W, h: mark.nh * H },
+      rotation
+    );
+
+    const pad = (mark.padding_pct ?? 0.1) * Math.max(rw, rh);
+    const containerW = pane.clientWidth;
+    const containerH = pane.clientHeight;
+
+    // If not specified (normal flow), compute 150% of fit
+    const scale = targetScale ?? computeAutoZoom(containerW, containerH, { rw, rh }, pad, 1.5);
+
+    // Build viewport in the page’s rotation at desired scale
+    const viewport = page.getViewport({ scale, rotation });
+
+    // HiDPI canvas
+    const dpr = window.devicePixelRatio || 1;
+    canvas.style.width = `${viewport.width}px`;
+    canvas.style.height = `${viewport.height}px`;
+    canvas.width = Math.floor(viewport.width * dpr);
+    canvas.height = Math.floor(viewport.height * dpr);
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, viewport.width, viewport.height);
+
+    // Abort older renders
+    const renderTask = page.render({ canvasContext: ctx, viewport });
+    await renderTask.promise;
+    if (renderTokenRef.current !== thisToken) return; // superseded
+
+    // Optional: draw a thin highlight (debug)
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,0,0,0.85)';
+    ctx.lineWidth = Math.max(1, 2 / (window.devicePixelRatio || 1));
+    // rect in viewport pixels
+    ctx.strokeRect((rx * scale), (ry * scale), (rw * scale), (rh * scale));
+    ctx.restore();
+
+    // Center scroll on rect’s center
+    const centerX = rx * scale + rw * scale / 2;
+    const centerY = ry * scale + rh * scale / 2;
+
+    const targetLeft = clamp(centerX - containerW / 2, 0, Math.max(0, viewport.width - containerW));
+    const targetTop = clamp(centerY - containerH / 2, 0, Math.max(0, viewport.height - containerH));
+
+    pane.scrollTo({ left: targetLeft, top: targetTop, behavior: 'smooth' });
+
+    currentScaleRef.current = scale;
+
+    // Preload next page to keep Next snappy
+    if (pageIndex + 1 < marks.length) {
+      pdfDoc.getPage(marks[pageIndex + 1].page_index + 1).catch(() => {});
     }
   };
+
+  // Initial & whenever idx changes
+  useEffect(() => {
+    if (!pdfDoc || !marks.length) return;
+    renderAndCenter(idx);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pdfDoc, marks, idx]);
+
+  // Recompute on resize (debounced)
+  useEffect(() => {
+    let t: any;
+    const onResize = () => {
+      clearTimeout(t);
+      t = setTimeout(() => renderAndCenter(idx), 150);
+    };
+    window.addEventListener('resize', onResize, { passive: true });
+    return () => window.removeEventListener('resize', onResize);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pdfDoc, marks, idx]);
+
+  // Natural zoom gestures inside the pane
+  useEffect(() => {
+    const pane = paneRef.current;
+    const canvas = canvasRef.current;
+    if (!pane || !canvas) return;
+
+    const onWheel = (e: WheelEvent) => {
+      // Only zoom when user holds Ctrl/Cmd (trackpad pinch) — do not hijack normal scroll
+      if (!(e.ctrlKey || e.metaKey)) return;
+
+      e.preventDefault();
+
+      const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+      const newScale = clamp(currentScaleRef.current * factor, 0.25, 8);
+
+      // Keep cursor as zoom focal point
+      const rect = canvas.getBoundingClientRect();
+      const cursorXInCanvas = (e.clientX - rect.left) + pane.scrollLeft;
+      const cursorYInCanvas = (e.clientY - rect.top) + pane.scrollTop;
+
+      renderAndCenter(idx, newScale).then(() => {
+        const sRatio = newScale / currentScaleRef.current;
+        pane.scrollTo({
+          left: cursorXInCanvas * sRatio - (e.clientX - rect.left),
+          top: cursorYInCanvas * sRatio - (e.clientY - rect.top),
+        });
+        currentScaleRef.current = newScale;
+      });
+    };
+
+    pane.addEventListener('wheel', onWheel, { passive: false });
+    return () => pane.removeEventListener('wheel', onWheel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idx, pdfDoc, marks]);
 
   if (!pdfUrl || !markSetId) {
     return (
-      <div style={{ padding: '2rem', fontFamily: 'sans-serif' }}>
-        <h1>PDF Markbook Viewer</h1>
-        <p>Add <code>?pdf_url=YOUR_PDF_URL&mark_set_id=MARK_SET_ID</code> to the URL</p>
-        <p><strong>Example:</strong></p>
-        <code>http://localhost:3002/?pdf_url=https://example.com/document.pdf&mark_set_id=abc-123</code>
+      <div style={{ padding: 24, fontFamily: 'Inter, system-ui, sans-serif' }}>
+        <h2>PDF Markbook Viewer</h2>
+        <p>Add <code>?pdf_url=…&mark_set_id=…</code> to the URL.</p>
       </div>
     );
   }
 
-  if (marks.length === 0) {
+  if (!marks.length) {
     return (
-      <div style={{ padding: '2rem', fontFamily: 'sans-serif' }}>
-        <h1>Loading...</h1>
-        <p>{status}</p>
+      <div style={{ padding: 24, fontFamily: 'Inter, system-ui, sans-serif' }}>
+        <h3>{status}</h3>
       </div>
     );
   }
 
-  const currentMark = marks[currentIndex];
+  const current = marks[idx];
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', fontFamily: 'sans-serif' }}>
+    <div style={{ display: 'grid', gridTemplateRows: '56px 1fr', height: '100vh', fontFamily: 'Inter, system-ui, sans-serif' }}>
       {/* Header */}
-      <div style={{ 
-        padding: '1rem', 
-        borderBottom: '1px solid #ccc',
-        display: 'flex',
-        alignItems: 'center',
-        gap: '1rem',
-        backgroundColor: '#fff'
-      }}>
-        <button onClick={goPrevious} disabled={currentIndex === 0} style={{ padding: '0.5rem 1rem' }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          padding: '0 12px',
+          borderBottom: '1px solid #e5e5e5',
+          background: '#fff',
+        }}
+      >
+        <button onClick={() => setIdx(Math.max(0, idx - 1))} disabled={idx === 0} style={{ padding: '6px 10px' }}>
           ← Previous
         </button>
-        <button onClick={goNext} disabled={currentIndex === marks.length - 1} style={{ padding: '0.5rem 1rem' }}>
+        <button
+          onClick={() => setIdx(Math.min(marks.length - 1, idx + 1))}
+          disabled={idx === marks.length - 1}
+          style={{ padding: '6px 10px' }}
+        >
           Next →
         </button>
-        <span style={{ fontWeight: 'bold' }}>
-          {currentMark?.name} ({currentIndex + 1} / {marks.length})
-        </span>
-        <button onClick={() => setListOpen(!listOpen)} style={{ padding: '0.5rem 1rem', marginLeft: 'auto' }}>
-          {listOpen ? '✕ Close' : '☰ List'}
-        </button>
-        <button onClick={zoomOut} style={{ padding: '0.5rem 1rem' }}>−</button>
-        <span style={{ fontSize: '0.9em' }}>{Math.round(scale * 100)}%</span>
-        <button onClick={zoomIn} style={{ padding: '0.5rem 1rem' }}>+</button>
-        <button onClick={saveZoom} style={{ padding: '0.5rem 1rem', fontSize: '0.9em' }}>
-          Save Zoom
-        </button>
-        <span style={{ fontSize: '0.9em', color: '#666' }}>{status}</span>
-      </div>
 
-      {/* Main area */}
-      <div style={{ flex: 1, position: 'relative' }}>
-        {/* Canvas container */}
-        <div 
-          ref={containerRef}
-          style={{ 
-            width: '100%', 
-            height: '100%', 
-            overflow: 'auto',
-            backgroundColor: '#f5f5f5',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center'
-          }}
-        >
-          <canvas ref={canvasRef} style={{ display: 'block' }} />
+        <div style={{ fontWeight: 600 }}>
+          {current?.name} ({idx + 1} / {marks.length})
         </div>
 
-        {/* Marks list (collapsible) */}
-        {listOpen && (
-          <div style={{
-            position: 'absolute',
-            top: 0,
-            right: 0,
-            width: '300px',
+        <div style={{ marginLeft: 'auto', color: '#777', fontSize: 13 }}>{status}</div>
+      </div>
+
+      {/* Main: left scrollable PDF pane + right marks list */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', height: '100%' }}>
+        <div
+          ref={paneRef}
+          id="pdfPane"
+          style={{
+            position: 'relative',
+            overflow: 'auto',
+            background: '#f6f7f9',
             height: '100%',
-            backgroundColor: 'white',
-            borderLeft: '1px solid #ccc',
-            overflowY: 'auto',
-            padding: '1rem',
-            boxShadow: '-2px 0 8px rgba(0,0,0,0.1)'
-          }}>
-            <h3 style={{ marginTop: 0 }}>All Marks</h3>
-            {marks.map((mark, index) => (
-              <div 
-                key={mark.mark_id}
-                onClick={() => jumpTo(index)}
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'center', padding: 16 }}>
+            <canvas ref={canvasRef} style={{ display: 'block', background: '#fff', boxShadow: '0 1px 3px rgba(0,0,0,.08)' }} />
+          </div>
+        </div>
+
+        {/* Marks list */}
+        <aside style={{ borderLeft: '1px solid #e5e5e5', overflow: 'auto', background: '#fff' }}>
+          <div style={{ padding: 12, position: 'sticky', top: 0, background: '#fff', zIndex: 1, borderBottom: '1px solid #eee' }}>
+            <strong>All Marks</strong>
+          </div>
+          <div style={{ padding: 12 }}>
+            {marks.map((m, i) => (
+              <button
+                key={m.mark_id}
+                onClick={() => setIdx(i)}
                 style={{
-                  padding: '0.75rem',
-                  marginBottom: '0.5rem',
-                  border: index === currentIndex ? '2px solid #007bff' : '1px solid #ddd',
-                  borderRadius: '4px',
+                  textAlign: 'left',
+                  width: '100%',
+                  padding: '10px 12px',
+                  marginBottom: 8,
+                  borderRadius: 8,
+                  border: i === idx ? '2px solid #3b82f6' : '1px solid #e5e7eb',
+                  background: i === idx ? '#eff6ff' : '#fff',
                   cursor: 'pointer',
-                  backgroundColor: index === currentIndex ? '#e7f3ff' : 'white'
                 }}
               >
-                <div style={{ fontWeight: 'bold' }}>{mark.name}</div>
-                <div style={{ fontSize: '0.85em', color: '#666' }}>
-                  Page {mark.page_index + 1}
-                </div>
-              </div>
+                <div style={{ fontWeight: 600 }}>{m.name}</div>
+                <div style={{ fontSize: 12, color: '#666' }}>Page {m.page_index + 1}</div>
+              </button>
             ))}
           </div>
-        )}
+        </aside>
       </div>
     </div>
   );

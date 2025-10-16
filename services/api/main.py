@@ -1,146 +1,188 @@
 """
 FastAPI application entry point for PDF Markbook.
+- Uses adapter pattern (sqlite/json/sheets/pg) selected via settings.
+- Initializes a single adapter instance on startup (memoized).
+- CORS enabled for local editor/viewer by default.
+- Health endpoint included.
 """
+
+from __future__ import annotations
+
 import os
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends
+from typing import Annotated, Optional
+
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from typing import Annotated
 
-from settings import get_settings, Settings
-from schemas import HealthCheck
-from routers import documents, marks
-from adapters.base import StorageAdapter
-from adapters.sqlite import SqliteAdapter
-from adapters.json import JsonAdapter
-from adapters.sheets import SheetsAdapter
-from adapters.pg import PgAdapter
+# ---- Package-local imports (absolute package paths recommended) -------------
+from services.api.settings import get_settings
+from services.api.adapters.base import StorageAdapter
+from services.api.adapters.sqlite import SqliteAdapter  # has .from_url()
+from services.api.routers import documents, marks
 
 
-# Global storage adapter instance
-_storage_adapter = None
+# Global memoized adapter instance
+_ADAPTER: Optional[StorageAdapter] = None
 
 
-def get_storage_adapter(settings: Annotated[Settings, Depends(get_settings)]) -> StorageAdapter:
+def _resolve_allowed_origins(settings) -> list[str]:
+    """Support both a list property and a helper, depending on your Settings implementation."""
+    if hasattr(settings, "ALLOWED_ORIGINS"):
+        return list(getattr(settings, "ALLOWED_ORIGINS"))
+    if hasattr(settings, "allowed_origins"):
+        return list(getattr(settings, "allowed_origins"))
+    if hasattr(settings, "get_origins_list"):
+        return list(settings.get_origins_list())
+    # sensible default for local dev
+    return ["http://localhost:3001", "http://localhost:3002"]
+
+
+def _resolve_backend(settings) -> str:
+    for key in ("STORAGE_BACKEND", "storage_backend"):
+        if hasattr(settings, key):
+            v = getattr(settings, key)
+            if v:
+                return str(v).lower()
+    return "sqlite"
+
+
+def _resolve_db_url(settings) -> str:
+    for key in ("DB_URL", "db_url"):
+        if hasattr(settings, key):
+            v = getattr(settings, key)
+            if v:
+                return str(v)
+    # default local sqlite
+    return "sqlite:///data/markbook.db"
+
+
+def get_storage_adapter(settings=Depends(get_settings)) -> StorageAdapter:
     """
-    Dependency injection for storage adapter.
-    Returns the appropriate adapter based on STORAGE_BACKEND setting.
+    Dependency/Factory for the storage adapter.
+    Memoizes a single instance for the process lifetime.
     """
-    global _storage_adapter
-    
-    # Memoize the adapter
-    if _storage_adapter is not None:
-        return _storage_adapter
-    
-    backend = settings.storage_backend.lower()
-    
+    global _ADAPTER
+    if _ADAPTER is not None:
+        return _ADAPTER
+
+    backend = _resolve_backend(settings)
+
     if backend == "sqlite":
-        _storage_adapter = SqliteAdapter(settings.db_url)
-    elif backend == "json":
-        # Extract directory from db_url or use default
+        # Use tuned factory that applies WAL/PRAGMAs on connect
+        _ADAPTER = SqliteAdapter.from_url(_resolve_db_url(settings))
+        return _ADAPTER
+
+    if backend == "json":
+        # Import here to avoid import cost if unused
+        from services.api.adapters.json import JsonAdapter  # type: ignore
+
+        # If you pass a path via DB_URL for json, extract directory; else default data/
+        db_url = _resolve_db_url(settings)
         data_dir = "data"
-        if settings.db_url.startswith("sqlite:///"):
-            db_path = settings.db_url.replace("sqlite:///", "")
-            data_dir = os.path.dirname(db_path) or "data"
-        _storage_adapter = JsonAdapter(data_dir)
-    elif backend == "sheets":
-        _storage_adapter = SheetsAdapter(
-            settings.google_sa_json,
-            settings.sheets_spreadsheet_id
-        )
-    elif backend == "pg" or backend == "postgres" or backend == "postgresql":
-        db_url = settings.postgres_url or settings.db_url
-        _storage_adapter = PgAdapter(db_url)
-    else:
-        raise ValueError(
-            f"Unknown storage backend: {backend}. "
-            f"Valid options: sqlite, json, sheets, pg"
-        )
-    
-    return _storage_adapter
+        if db_url.startswith("sqlite:///"):
+            # They may have reused sqlite-style URL to point at a file path root
+            file_path = db_url.replace("sqlite:///", "", 1)
+            data_dir = os.path.dirname(file_path) or "data"
+        _ADAPTER = JsonAdapter(data_dir)  # type: ignore
+        return _ADAPTER
+
+    if backend in ("pg", "postgres", "postgresql"):
+        from services.api.adapters.pg import PgAdapter  # type: ignore
+
+        _ADAPTER = PgAdapter(_resolve_db_url(settings))  # type: ignore
+        return _ADAPTER
+
+    if backend == "sheets":
+        from services.api.adapters.sheets import SheetsAdapter  # type: ignore
+
+        # Settings should provide google_sa_json and sheets_spreadsheet_id
+        sa = getattr(settings, "google_sa_json", None)
+        ssid = getattr(settings, "sheets_spreadsheet_id", None)
+        _ADAPTER = SheetsAdapter(sa, ssid)  # type: ignore
+        return _ADAPTER
+
+    raise RuntimeError(
+        f"Unsupported STORAGE_BACKEND='{backend}'. Valid: sqlite | json | sheets | pg"
+    )
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    Lifecycle manager for the application.
-    Handles startup and shutdown tasks.
+    Startup/Shutdown hooks.
+    - Ensures local data dir for sqlite/json.
+    - Warms adapter once so tables are created (sqlite) or connections tested.
     """
-    # Startup
     settings = get_settings()
-    print(f"🚀 PDF Markbook API starting...")
-    print(f"📦 Storage backend: {settings.storage_backend}")
-    
-    # Ensure data directory exists for SQLite/JSON
-    if settings.storage_backend in ("sqlite", "json"):
+
+    backend = _resolve_backend(settings)
+    print("🚀 PDF Markbook API starting")
+    print(f"📦 Storage backend: {backend}")
+
+    if backend in ("sqlite", "json"):
         os.makedirs("data", exist_ok=True)
-        print(f"📁 Data directory: ./data")
-    
-    # Initialize adapter (this will create tables for SQLite)
+        print("📁 Data directory: ./data")
+
+    # Initialize adapter (creates tables for sqlite)
     try:
-        adapter = get_storage_adapter(settings)
-        print(f"✅ Storage adapter initialized")
+        _ = get_storage_adapter(settings)
+        print("✅ Storage adapter initialized")
     except NotImplementedError as e:
-        print(f"⚠️  Storage adapter not available: {e}")
+        print(f"⚠️  Storage adapter not implemented: {e}")
     except Exception as e:
         print(f"❌ Failed to initialize storage adapter: {e}")
         raise
-    
+
     yield
-    
-    # Shutdown
-    print("👋 PDF Markbook API shutting down...")
+
+    print("👋 PDF Markbook API shutting down")
 
 
-# Create FastAPI application
+# Create the FastAPI app
 app = FastAPI(
     title="PDF Markbook API",
     description="Backend API for managing PDF documents with marked regions of interest",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
-
-# Configure CORS
-settings = get_settings()
+# CORS
+_settings = get_settings()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.get_origins_list(),
+    allow_origins=_resolve_allowed_origins(_settings),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-
-# Include routers
+# Routers (they can call Depends(get_storage_adapter) internally if needed)
 app.include_router(documents.router)
 app.include_router(marks.router)
 
 
-# Health check endpoint
-@app.get("/health", response_model=HealthCheck)
-async def health_check(settings: Annotated[Settings, Depends(get_settings)]):
-    """
-    Health check endpoint.
-    Returns API status and current storage backend.
-    """
-    return HealthCheck(ok=True, backend=settings.storage_backend)
+# Health & root
+@app.get("/health")
+def health():
+    return {
+        "ok": True,
+        "backend": _resolve_backend(_settings),
+    }
 
 
-# Root endpoint
 @app.get("/")
-async def root():
-    """
-    Root endpoint with basic API information.
-    """
+def root():
     return {
         "name": "PDF Markbook API",
         "version": "1.0.0",
         "docs": "/docs",
-        "health": "/health"
+        "health": "/health",
     }
 
 
+# Uvicorn launch (dev convenience)
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8000)

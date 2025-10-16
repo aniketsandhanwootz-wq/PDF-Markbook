@@ -1,372 +1,331 @@
-"""
-SQLite storage adapter for PDF Markbook.
-Fully functional implementation using SQLAlchemy.
-"""
+# services/api/adapters/sqlite/__init__.py
+from __future__ import annotations
+
 import os
-import uuid
-from datetime import datetime
-from typing import List, Dict, Any, Optional
+import sqlite3
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
 
-from sqlalchemy import (
-    create_engine, Column, String, Integer, Float, Boolean, 
-    DateTime, ForeignKey, CheckConstraint, UniqueConstraint, Index
-)
-from sqlalchemy.orm import declarative_base, sessionmaker, Session
-from sqlalchemy.exc import IntegrityError
 from fastapi import HTTPException
+from sqlalchemy import (
+    CheckConstraint,
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    MetaData,
+    String,
+    Table,
+    Text,
+    UniqueConstraint,
+    create_engine,
+    select,
+    insert,
+    update,
+    and_,
+    event,
+)
+from sqlalchemy.engine import Engine
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import registry
+from datetime import datetime
+from uuid import uuid4
 
-Base = declarative_base()
+# ---- Engine (SQLite) with WAL & pragmas -------------------------------------
 
+def _ensure_dir(path: str):
+    d = os.path.dirname(path)
+    if d and not os.path.isdir(d):
+        os.makedirs(d, exist_ok=True)
 
-# ============ SQLAlchemy Models ============
+def make_engine(db_url: str) -> Engine:
+    # Create data dir if sqlite file
+    if db_url.startswith("sqlite:///"):
+        file_path = db_url.replace("sqlite:///", "", 1)
+        _ensure_dir(file_path)
 
-class DocumentModel(Base):
-    __tablename__ = "documents"
-    
-    doc_id = Column(String, primary_key=True)
-    pdf_url = Column(String, nullable=False)
-    page_count = Column(Integer, nullable=True)
-    created_by = Column(String, nullable=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    engine = create_engine(db_url, future=True, pool_pre_ping=True)
 
+    # Apply pragmas per-connection
+    @event.listens_for(engine, "connect")
+    def _set_sqlite_pragma(dbapi_connection, connection_record):  # type: ignore
+        if isinstance(dbapi_connection, sqlite3.Connection):
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA journal_mode=WAL;")
+            cursor.execute("PRAGMA synchronous=NORMAL;")
+            cursor.execute("PRAGMA temp_store=MEMORY;")
+            cursor.execute("PRAGMA mmap_size=268435456;")  # 256MB
+            cursor.execute("PRAGMA foreign_keys=ON;")
+            cursor.close()
 
-class PageModel(Base):
-    __tablename__ = "pages"
-    
-    page_id = Column(String, primary_key=True)
-    doc_id = Column(String, ForeignKey("documents.doc_id"), nullable=False)
-    idx = Column(Integer, nullable=False)  # 0-based page index
-    width_pt = Column(Float, nullable=False)
-    height_pt = Column(Float, nullable=False)
-    rotation_deg = Column(Integer, nullable=False, default=0)
-    
-    __table_args__ = (
-        Index("idx_pages_doc_id", "doc_id"),
-        UniqueConstraint("doc_id", "idx", name="uq_pages_doc_idx"),
-    )
+    return engine
 
+# ---- Schema via SQLAlchemy Core ---------------------------------------------
 
-class MarkSetModel(Base):
-    __tablename__ = "mark_sets"
-    
-    mark_set_id = Column(String, primary_key=True)
-    doc_id = Column(String, ForeignKey("documents.doc_id"), nullable=False)
-    label = Column(String, nullable=False, default="v1")
-    is_active = Column(Boolean, nullable=False, default=False)
-    created_by = Column(String, nullable=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    
-    __table_args__ = (
-        Index("idx_marksets_doc_id", "doc_id"),
-    )
+metadata = MetaData()
 
+documents = Table(
+    "documents",
+    metadata,
+    Column("doc_id", String, primary_key=True),
+    Column("pdf_url", Text, nullable=False),
+    Column("page_count", Integer),
+    Column("created_by", String),
+    Column("created_at", DateTime, nullable=False, default=datetime.utcnow),
+    Column("updated_at", DateTime, nullable=False, default=datetime.utcnow),
+)
 
-class MarkModel(Base):
-    __tablename__ = "marks"
-    
-    mark_id = Column(String, primary_key=True)
-    mark_set_id = Column(String, ForeignKey("mark_sets.mark_set_id"), nullable=False)
-    page_id = Column(String, ForeignKey("pages.page_id"), nullable=False)
-    order_index = Column(Integer, nullable=False)
-    name = Column(String, nullable=False)
-    
-    # Normalized coordinates (0-1 range)
-    nx = Column(Float, nullable=False)
-    ny = Column(Float, nullable=False)
-    nw = Column(Float, nullable=False)
-    nh = Column(Float, nullable=False)
-    
-    # Display preferences
-    zoom_hint = Column(Float, nullable=True)
-    padding_pct = Column(Float, nullable=False, default=0.1)
-    anchor = Column(String, nullable=False, default="auto")
-    
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    
-    __table_args__ = (
-        # Unique order_index per mark set
-        UniqueConstraint("mark_set_id", "order_index", name="uq_marks_set_order"),
-        
-        # Check constraints for normalized coordinates
-        CheckConstraint("nx >= 0 AND nx <= 1", name="ck_marks_nx"),
-        CheckConstraint("ny >= 0 AND ny <= 1", name="ck_marks_ny"),
-        CheckConstraint("nw > 0 AND nw <= 1", name="ck_marks_nw"),
-        CheckConstraint("nh > 0 AND nh <= 1", name="ck_marks_nh"),
-        
-        # Indexes for performance
-        Index("idx_marks_mark_set_id", "mark_set_id"),
-        Index("idx_marks_page_id", "page_id"),
-    )
+pages = Table(
+    "pages",
+    metadata,
+    Column("page_id", String, primary_key=True),
+    Column("doc_id", String, ForeignKey("documents.doc_id", ondelete="CASCADE"), nullable=False),
+    Column("idx", Integer, nullable=False),  # 0-based
+    Column("width_pt", Float, nullable=False),
+    Column("height_pt", Float, nullable=False),
+    Column("rotation_deg", Integer, nullable=False, default=0),
+    UniqueConstraint("doc_id", "idx", name="uq_pages_doc_idx"),
+)
 
+mark_sets = Table(
+    "mark_sets",
+    metadata,
+    Column("mark_set_id", String, primary_key=True),
+    Column("doc_id", String, ForeignKey("documents.doc_id", ondelete="CASCADE"), nullable=False),
+    Column("label", String, nullable=False, default="v1"),
+    Column("is_active", Integer, nullable=False, default=0),  # 0/1
+    Column("created_by", String),
+    Column("created_at", DateTime, nullable=False, default=datetime.utcnow),
+)
 
-# ============ SQLite Adapter ============
+marks = Table(
+    "marks",
+    metadata,
+    Column("mark_id", String, primary_key=True),
+    Column("mark_set_id", String, ForeignKey("mark_sets.mark_set_id", ondelete="CASCADE"), nullable=False),
+    Column("page_id", String, ForeignKey("pages.page_id", ondelete="CASCADE"), nullable=False),
+    Column("order_index", Integer, nullable=False),
+    Column("name", String, nullable=False),
+    Column("nx", Float, nullable=False),
+    Column("ny", Float, nullable=False),
+    Column("nw", Float, nullable=False),
+    Column("nh", Float, nullable=False),
+    Column("zoom_hint", Float, nullable=True),
+    Column("padding_pct", Float, nullable=False, default=0.1),
+    Column("anchor", String, nullable=False, default="auto"),
+    Column("created_at", DateTime, nullable=False, default=datetime.utcnow),
+    UniqueConstraint("mark_set_id", "order_index", name="uq_markset_order"),
+    CheckConstraint("nx >= 0 AND nx <= 1", name="ck_nx"),
+    CheckConstraint("ny >= 0 AND ny <= 1", name="ck_ny"),
+    CheckConstraint("nw > 0 AND nw <= 1", name="ck_nw"),
+    CheckConstraint("nh > 0 AND nh <= 1", name="ck_nh"),
+)
 
+# Helpful indexes (if not present they’ll be created once when metadata.create_all runs)
+# NOTE: SQLAlchemy Core creates simple indexes via Index(), but we can also rely on DDL in infra/sql.
+from sqlalchemy import Index
+Index("idx_pages_doc", pages.c.doc_id)
+Index("idx_marksets_doc", mark_sets.c.doc_id)
+Index("idx_marksets_active", mark_sets.c.doc_id, mark_sets.c.is_active)
+Index("idx_marks_markset", marks.c.mark_set_id)
+Index("idx_marks_page", marks.c.page_id)
+Index("idx_marks_order", marks.c.mark_set_id, marks.c.order_index)
+
+# ---- Adapter implementation --------------------------------------------------
+
+@dataclass(frozen=True)
 class SqliteAdapter:
-    """
-    SQLite storage adapter implementation.
-    Provides full CRUD operations for documents, pages, mark sets, and marks.
-    """
-    
-    def __init__(self, db_url: str):
-        """
-        Initialize the SQLite adapter.
-        
-        Args:
-            db_url: SQLAlchemy database URL (e.g., "sqlite:///data/markbook.db")
-        """
-        # Ensure data directory exists
-        if db_url.startswith("sqlite:///"):
-            db_path = db_url.replace("sqlite:///", "")
-            db_dir = os.path.dirname(db_path)
-            if db_dir:
-                os.makedirs(db_dir, exist_ok=True)
-        
-        self.engine = create_engine(db_url, echo=False)
-        self.SessionLocal = sessionmaker(bind=self.engine)
-        
-        # Create tables if they don't exist
-        Base.metadata.create_all(self.engine)
-    
-    def _get_session(self) -> Session:
-        """Get a new database session."""
-        return self.SessionLocal()
-    
-    def create_document(self, pdf_url: str, created_by: Optional[str] = None) -> str:
-        """Create a new document."""
-        doc_id = str(uuid.uuid4())
-        
-        with self._get_session() as session:
-            doc = DocumentModel(
-                doc_id=doc_id,
-                pdf_url=pdf_url,
-                created_by=created_by
-            )
-            session.add(doc)
-            session.commit()
-        
-        return doc_id
-    
-    def bootstrap_pages(
-        self,
-        doc_id: str,
-        page_count: int,
-        dims: List[Dict[str, Any]]
-    ) -> None:
-        """Bootstrap pages for a document."""
-        with self._get_session() as session:
-            # Check if document exists
-            doc = session.query(DocumentModel).filter_by(doc_id=doc_id).first()
-            if not doc:
-                raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
-            
-            # Check if pages already exist
-            existing = session.query(PageModel).filter_by(doc_id=doc_id).first()
-            if existing:
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Pages already exist for document {doc_id}. "
-                           "Bootstrap is idempotent only if called with identical data."
-                )
-            
-            # Create page records
-            pages = []
-            for dim in dims:
-                page_id = str(uuid.uuid4())
-                page = PageModel(
-                    page_id=page_id,
+    engine: Engine
+
+    @classmethod
+    def from_url(cls, db_url: str = "sqlite:///data/markbook.db") -> "SqliteAdapter":
+        eng = make_engine(db_url)
+        metadata.create_all(eng)
+        return cls(engine=eng)
+
+    # Documents
+    def create_document(self, pdf_url: str, created_by: Optional[str]) -> str:
+        doc_id = str(uuid4())
+        with self.engine.begin() as conn:
+            conn.execute(
+                insert(documents).values(
                     doc_id=doc_id,
-                    idx=dim["idx"],
-                    width_pt=dim["width_pt"],
-                    height_pt=dim["height_pt"],
-                    rotation_deg=dim.get("rotation_deg", 0)
+                    pdf_url=pdf_url,
+                    created_by=created_by or None,
+                    created_at=datetime.utcnow(),
+                    updated_at=datetime.utcnow(),
                 )
-                pages.append(page)
-            
-            # Update document page count
-            doc.page_count = page_count
-            doc.updated_at = datetime.utcnow()
-            
-            # Add all pages
-            session.add_all(pages)
-            session.commit()
-    
+            )
+        return doc_id
+
+    # Pages bootstrap (idempotency here = throw 409 if exists)
+    def bootstrap_pages(self, doc_id: str, page_count: int, dims: List[Dict[str, Any]]) -> None:
+        with self.engine.begin() as conn:
+            # check if any pages exist
+            existing = conn.execute(select(pages.c.page_id).where(pages.c.doc_id == doc_id)).first()
+            if existing:
+                raise HTTPException(status_code=409, detail="Pages already bootstrapped for this document")
+
+            rows = []
+            for d in dims:
+                rows.append(
+                    dict(
+                        page_id=str(uuid4()),
+                        doc_id=doc_id,
+                        idx=int(d["idx"]),
+                        width_pt=float(d["width_pt"]),
+                        height_pt=float(d["height_pt"]),
+                        rotation_deg=int(d.get("rotation_deg", 0)) % 360,
+                    )
+                )
+            conn.execute(pages.insert(), rows)
+            conn.execute(
+                update(documents)
+                .where(documents.c.doc_id == doc_id)
+                .values(page_count=page_count, updated_at=datetime.utcnow())
+            )
+
+    # Create mark set + marks (atomic)
     def create_mark_set(
         self,
         doc_id: str,
         label: str,
-        marks: List[Dict[str, Any]],
-        created_by: Optional[str] = None
+        marks_in: List[Dict[str, Any]],
+        created_by: Optional[str],
     ) -> str:
-        """Create a new mark set with all its marks atomically."""
-        mark_set_id = str(uuid.uuid4())
-        
-        with self._get_session() as session:
-            try:
-                # Verify document exists
-                doc = session.query(DocumentModel).filter_by(doc_id=doc_id).first()
-                if not doc:
-                    raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
-                
-                # Create mark set
-                mark_set = MarkSetModel(
+        mark_set_id = str(uuid4())
+        with self.engine.begin() as conn:
+            # create mark_set
+            conn.execute(
+                insert(mark_sets).values(
                     mark_set_id=mark_set_id,
                     doc_id=doc_id,
-                    label=label,
-                    is_active=False,
-                    created_by=created_by
+                    label=label or "v1",
+                    is_active=0,
+                    created_by=created_by or None,
+                    created_at=datetime.utcnow(),
                 )
-                session.add(mark_set)
-                session.flush()  # Ensure mark_set_id is available
-                
-                # Create all marks
-                mark_models = []
-                for mark_data in marks:
-                    # Find the page_id for this page_index
-                    page = session.query(PageModel).filter_by(
-                        doc_id=doc_id,
-                        idx=mark_data["page_index"]
-                    ).first()
-                    
-                    if not page:
-                        raise HTTPException(
-                            status_code=400,
-                            detail=f"Page index {mark_data['page_index']} not found in document {doc_id}"
-                        )
-                    
-                    mark = MarkModel(
-                        mark_id=str(uuid.uuid4()),
-                        mark_set_id=mark_set_id,
-                        page_id=page.page_id,
-                        order_index=mark_data["order_index"],
-                        name=mark_data["name"],
-                        nx=mark_data["nx"],
-                        ny=mark_data["ny"],
-                        nw=mark_data["nw"],
-                        nh=mark_data["nh"],
-                        zoom_hint=mark_data.get("zoom_hint"),
-                        padding_pct=mark_data.get("padding_pct", 0.1),
-                        anchor=mark_data.get("anchor", "auto")
-                    )
-                    mark_models.append(mark)
-                
-                session.add_all(mark_models)
-                session.commit()
-                
-            except IntegrityError as e:
-                session.rollback()
-                # Check for duplicate order_index
-                if "uq_marks_set_order" in str(e):
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Duplicate order_index detected in marks"
-                    )
-                # Check for coordinate constraint violations
-                elif "ck_marks_" in str(e):
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Invalid normalized coordinates (must be in range [0,1])"
-                    )
-                raise HTTPException(status_code=400, detail=f"Database constraint violation: {str(e)}")
-        
-        return mark_set_id
-    
-    def list_marks(self, mark_set_id: str) -> List[Dict[str, Any]]:
-        """List all marks in a mark set, ordered by order_index."""
-        with self._get_session() as session:
-            # Verify mark set exists
-            mark_set = session.query(MarkSetModel).filter_by(mark_set_id=mark_set_id).first()
-            if not mark_set:
-                raise HTTPException(status_code=404, detail=f"Mark set {mark_set_id} not found")
-            
-            # Join marks with pages to get page index
-            results = session.query(
-                MarkModel.mark_id,
-                MarkModel.order_index,
-                MarkModel.name,
-                MarkModel.nx,
-                MarkModel.ny,
-                MarkModel.nw,
-                MarkModel.nh,
-                MarkModel.zoom_hint,
-                MarkModel.padding_pct,
-                MarkModel.anchor,
-                PageModel.idx.label("page_index")
-            ).join(
-                PageModel, MarkModel.page_id == PageModel.page_id
-            ).filter(
-                MarkModel.mark_set_id == mark_set_id
-            ).order_by(
-                MarkModel.order_index
-            ).all()
-            
-            # Convert to dictionaries
-            marks = []
-            for row in results:
-                marks.append({
-                    "mark_id": row.mark_id,
-                    "page_index": row.page_index,
-                    "order_index": row.order_index,
-                    "name": row.name,
-                    "nx": row.nx,
-                    "ny": row.ny,
-                    "nw": row.nw,
-                    "nh": row.nh,
-                    "zoom_hint": row.zoom_hint,
-                    "padding_pct": row.padding_pct,
-                    "anchor": row.anchor
-                })
-            
-            return marks
-    
-    def patch_mark(self, mark_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Partially update a mark's display preferences."""
-        with self._get_session() as session:
-            mark = session.query(MarkModel).filter_by(mark_id=mark_id).first()
-            if not mark:
-                raise HTTPException(status_code=404, detail=f"Mark {mark_id} not found")
-            
-            # Update only provided fields
-            if "zoom_hint" in data:
-                mark.zoom_hint = data["zoom_hint"]
-            if "padding_pct" in data:
-                mark.padding_pct = data["padding_pct"]
-            if "anchor" in data:
-                mark.anchor = data["anchor"]
-            
-            session.commit()
-            
-            # Get page index for response
-            page = session.query(PageModel).filter_by(page_id=mark.page_id).first()
-            
-            return {
-                "mark_id": mark.mark_id,
-                "page_index": page.idx if page else 0,
-                "order_index": mark.order_index,
-                "name": mark.name,
-                "nx": mark.nx,
-                "ny": mark.ny,
-                "nw": mark.nw,
-                "nh": mark.nh,
-                "zoom_hint": mark.zoom_hint,
-                "padding_pct": mark.padding_pct,
-                "anchor": mark.anchor
-            }
-    
-    def activate_mark_set(self, mark_set_id: str) -> None:
-        """Activate a mark set and deactivate all others for the same document."""
-        with self._get_session() as session:
-            # Get the mark set
-            mark_set = session.query(MarkSetModel).filter_by(mark_set_id=mark_set_id).first()
-            if not mark_set:
-                raise HTTPException(status_code=404, detail=f"Mark set {mark_set_id} not found")
-            
-            # Deactivate all mark sets for this document
-            session.query(MarkSetModel).filter_by(doc_id=mark_set.doc_id).update(
-                {"is_active": False}
             )
-            
-            # Activate this mark set
-            mark_set.is_active = True
-            
-            session.commit()
+
+            # map page_index -> page_id
+            page_rows = conn.execute(
+                select(pages.c.idx, pages.c.page_id).where(pages.c.doc_id == doc_id)
+            ).all()
+            idx_to_pid = {r.idx: r.page_id for r in page_rows}
+
+            # build marks
+            mark_rows = []
+            seen_orders = set()
+            for m in marks_in:
+                oi = int(m["order_index"])
+                if oi in seen_orders:
+                    raise HTTPException(status_code=400, detail=f"Duplicate order_index {oi}")
+                seen_orders.add(oi)
+
+                pid = idx_to_pid.get(int(m["page_index"]))
+                if not pid:
+                    raise HTTPException(status_code=400, detail=f"Unknown page_index {m['page_index']} for this document")
+
+                nx, ny, nw, nh = float(m["nx"]), float(m["ny"]), float(m["nw"]), float(m["nh"])
+                # quick validation (DB will also enforce)
+                if not (0 <= nx <= 1 and 0 <= ny <= 1 and 0 < nw <= 1 and 0 < nh <= 1):
+                    raise HTTPException(status_code=400, detail="Normalized rect out of range")
+
+                mark_rows.append(
+                    dict(
+                        mark_id=str(uuid4()),
+                        mark_set_id=mark_set_id,
+                        page_id=pid,
+                        order_index=oi,
+                        name=str(m["name"]),
+                        nx=nx,
+                        ny=ny,
+                        nw=nw,
+                        nh=nh,
+                        zoom_hint=float(m.get("zoom_hint")) if m.get("zoom_hint") is not None else None,
+                        padding_pct=float(m.get("padding_pct", 0.1)),
+                        anchor=str(m.get("anchor", "auto")),
+                        created_at=datetime.utcnow(),
+                    )
+                )
+
+            try:
+                conn.execute(marks.insert(), mark_rows)
+            except IntegrityError as e:
+                raise HTTPException(status_code=400, detail="order_index must be unique per mark_set") from e
+
+        return mark_set_id
+
+    # List marks joined with page index
+    def list_marks(self, mark_set_id: str) -> List[Dict[str, Any]]:
+        with self.engine.begin() as conn:
+            q = (
+                select(
+                    marks.c.mark_id,
+                    marks.c.order_index,
+                    marks.c.name,
+                    marks.c.nx,
+                    marks.c.ny,
+                    marks.c.nw,
+                    marks.c.nh,
+                    marks.c.zoom_hint,
+                    marks.c.padding_pct,
+                    marks.c.anchor,
+                    pages.c.idx.label("page_index"),
+                )
+                .select_from(marks.join(pages, marks.c.page_id == pages.c.page_id))
+                .where(marks.c.mark_set_id == mark_set_id)
+                .order_by(marks.c.order_index.asc())
+            )
+            rows = conn.execute(q).mappings().all()
+            return [dict(row) for row in rows]
+
+    # Patch mark
+    def patch_mark(self, mark_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
+        allowed = {k: v for k, v in data.items() if k in {"zoom_hint", "padding_pct", "anchor"}}
+        if not allowed:
+            raise HTTPException(status_code=400, detail="No patchable fields")
+        with self.engine.begin() as conn:
+            res = conn.execute(
+                update(marks)
+                .where(marks.c.mark_id == mark_id)
+                .values(**allowed)
+                .returning(
+                    marks.c.mark_id,
+                    marks.c.order_index,
+                    marks.c.name,
+                    marks.c.nx,
+                    marks.c.ny,
+                    marks.c.nw,
+                    marks.c.nh,
+                    marks.c.zoom_hint,
+                    marks.c.padding_pct,
+                    marks.c.anchor,
+                )
+            ).mappings().first()
+            if not res:
+                raise HTTPException(status_code=404, detail="Mark not found")
+            return dict(res)
+
+    # Activate a mark set (deactivate siblings)
+    def activate_mark_set(self, mark_set_id: str) -> None:
+        with self.engine.begin() as conn:
+            # find doc_id
+            row = conn.execute(
+                select(mark_sets.c.doc_id).where(mark_sets.c.mark_set_id == mark_set_id)
+            ).first()
+            if not row:
+                raise HTTPException(status_code=404, detail="Mark set not found")
+            doc_id = row.doc_id
+
+            conn.execute(
+                update(mark_sets)
+                .where(mark_sets.c.doc_id == doc_id)
+                .values(is_active=0)
+            )
+            conn.execute(
+                update(mark_sets)
+                .where(mark_sets.c.mark_set_id == mark_set_id)
+                .values(is_active=1)
+            )
