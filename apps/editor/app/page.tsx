@@ -49,16 +49,25 @@ export default function Editor() {
   const [saving, setSaving] = useState<boolean>(false);
   const [savedMarkSetId, setSavedMarkSetId] = useState<string>('');
   const [status, setStatus] = useState<string>('Initializing...');
-  const [editingMarkIndex, setEditingMarkIndex] = useState<number | null>(null);
-  const [tempLabel, setTempLabel] = useState<string>('');
+  const [showNameDialog, setShowNameDialog] = useState<boolean>(false);
+  const [tempMarkName, setTempMarkName] = useState<string>('');
+  const [pendingMark, setPendingMark] = useState<DrawnRect | null>(null);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
   const marksRef = useRef<DrawnRect[]>([]);
+  const nameInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     marksRef.current = marks;
   }, [marks]);
+
+  useEffect(() => {
+    if (showNameDialog && nameInputRef.current) {
+      nameInputRef.current.focus();
+      nameInputRef.current.select();
+    }
+  }, [showNameDialog]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -76,7 +85,7 @@ export default function Editor() {
     pdfjsLib.getDocument(pdfUrl).promise
       .then((pdf) => {
         setPdfDoc(pdf);
-        setStatus('PDF loaded - Ready to mark');
+        setStatus('PDF loaded - Draw rectangles to create marks');
       })
       .catch((err) => {
         console.error('Failed to load PDF:', err);
@@ -244,12 +253,32 @@ export default function Editor() {
         label: `Mark ${marks.length + 1}`,
       };
       
-      setMarks([...marks, newMark]);
+      // Show naming dialog
+      setPendingMark(newMark);
+      setTempMarkName(`Mark ${marks.length + 1}`);
+      setShowNameDialog(true);
     }
 
     setDrawing(false);
     setCurrentRect(null);
     setStartPos(null);
+  };
+
+  const handleSaveName = () => {
+    if (pendingMark) {
+      const finalMark = { ...pendingMark, label: tempMarkName || pendingMark.label };
+      setMarks([...marks, finalMark]);
+      setStatus(`Added: ${finalMark.label}`);
+    }
+    setShowNameDialog(false);
+    setPendingMark(null);
+    setTempMarkName('');
+  };
+
+  const handleCancelName = () => {
+    setShowNameDialog(false);
+    setPendingMark(null);
+    setTempMarkName('');
   };
 
   const handleSave = async () => {
@@ -299,7 +328,7 @@ export default function Editor() {
 
       const data = await res.json();
       setSavedMarkSetId(data.mark_set_id);
-      setStatus(`✓ Saved ${currentMarks.length} marks!`);
+      setStatus(`✓ Saved ${currentMarks.length} marks successfully!`);
       
     } catch (err: any) {
       console.error('Save error:', err);
@@ -310,16 +339,83 @@ export default function Editor() {
     }
   };
 
-  const updateMarkLabel = (index: number, newLabel: string) => {
-    const newMarks = [...marks];
-    newMarks[index].label = newLabel;
-    setMarks(newMarks);
-    setEditingMarkIndex(null);
-    setTempLabel('');
-  };
-
   return (
     <div style={{ display: 'flex', height: '100vh', backgroundColor: '#f3f4f6', overflow: 'hidden' }}>
+      {/* Naming Dialog Overlay */}
+      {showNameDialog && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000,
+        }}>
+          <div style={{
+            backgroundColor: 'white',
+            borderRadius: '8px',
+            padding: '24px',
+            width: '400px',
+            boxShadow: '0 4px 20px rgba(0,0,0,0.3)',
+          }}>
+            <h3 style={{ margin: '0 0 16px 0', fontSize: '1.25rem', fontWeight: '700' }}>Name this mark</h3>
+            <input
+              ref={nameInputRef}
+              type="text"
+              value={tempMarkName}
+              onChange={(e) => setTempMarkName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleSaveName();
+                if (e.key === 'Escape') handleCancelName();
+              }}
+              placeholder="Enter a descriptive name..."
+              style={{
+                width: '100%',
+                padding: '12px',
+                border: '2px solid #3b82f6',
+                borderRadius: '4px',
+                fontSize: '1rem',
+                marginBottom: '16px',
+              }}
+            />
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+              <button
+                onClick={handleCancelName}
+                style={{
+                  padding: '10px 20px',
+                  backgroundColor: '#6b7280',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontWeight: '600',
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveName}
+                style={{
+                  padding: '10px 20px',
+                  backgroundColor: '#10b981',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontWeight: '600',
+                }}
+              >
+                ✓ Save Mark
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div style={{ width: '340px', backgroundColor: 'white', borderRight: '1px solid #d1d5db', overflowY: 'auto', flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
         <div style={{ padding: '16px', borderBottom: '1px solid #d1d5db', backgroundColor: '#f9fafb', flexShrink: 0 }}>
           <h2 style={{ fontSize: '1.125rem', fontWeight: 'bold', margin: 0 }}>PDF Marker</h2>
@@ -440,76 +536,10 @@ export default function Editor() {
                   border: '1px solid #e5e7eb',
                 }}
               >
-                {editingMarkIndex === idx ? (
-                  <div style={{ marginBottom: '8px' }}>
-                    <input
-                      type="text"
-                      value={tempLabel}
-                      onChange={(e) => setTempLabel(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') updateMarkLabel(idx, tempLabel);
-                        if (e.key === 'Escape') { setEditingMarkIndex(null); setTempLabel(''); }
-                      }}
-                      placeholder="Enter title..."
-                      autoFocus
-                      style={{
-                        width: '100%',
-                        padding: '6px',
-                        border: '2px solid #3b82f6',
-                        borderRadius: '3px',
-                        fontSize: '0.875rem',
-                      }}
-                    />
-                    <div style={{ display: 'flex', gap: '4px', marginTop: '4px' }}>
-                      <button
-                        onClick={() => updateMarkLabel(idx, tempLabel)}
-                        style={{
-                          flex: 1,
-                          padding: '4px',
-                          backgroundColor: '#10b981',
-                          color: 'white',
-                          border: 'none',
-                          borderRadius: '3px',
-                          fontSize: '0.75rem',
-                          cursor: 'pointer',
-                        }}
-                      >
-                        ✓ Save
-                      </button>
-                      <button
-                        onClick={() => { setEditingMarkIndex(null); setTempLabel(''); }}
-                        style={{
-                          flex: 1,
-                          padding: '4px',
-                          backgroundColor: '#6b7280',
-                          color: 'white',
-                          border: 'none',
-                          borderRadius: '3px',
-                          fontSize: '0.75rem',
-                          cursor: 'pointer',
-                        }}
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div
-                    onClick={() => { setEditingMarkIndex(idx); setTempLabel(rect.label); }}
-                    style={{
-                      fontWeight: '600',
-                      marginBottom: '6px',
-                      fontSize: '0.875rem',
-                      cursor: 'pointer',
-                      color: '#3b82f6',
-                    }}
-                    title="Click to edit title"
-                  >
-                    {rect.label} - Page {rect.page}
-                  </div>
-                )}
-                
-                <div style={{ display: 'flex', gap: '4px', marginTop: '6px' }}>
+                <div style={{ fontWeight: '600', marginBottom: '6px', fontSize: '0.875rem' }}>
+                  {rect.label} - Page {rect.page}
+                </div>
+                <div style={{ display: 'flex', gap: '4px' }}>
                   <button
                     onClick={() => {
                       if (idx === 0) return;
@@ -611,11 +641,11 @@ export default function Editor() {
                 >
                   <div style={{
                     position: 'absolute',
-                    top: '-20px',
+                    top: '-22px',
                     left: '0',
                     backgroundColor: '#3b82f6',
                     color: 'white',
-                    padding: '2px 6px',
+                    padding: '3px 8px',
                     borderRadius: '3px',
                     fontSize: '0.75rem',
                     fontWeight: '600',

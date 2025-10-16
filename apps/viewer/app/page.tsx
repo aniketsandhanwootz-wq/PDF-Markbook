@@ -34,10 +34,12 @@ export default function Viewer() {
   const [demoMode, setDemoMode] = useState<boolean>(false);
   const [status, setStatus] = useState<string>('Initializing...');
   const [numPages, setNumPages] = useState<number>(0);
+  const [renderComplete, setRenderComplete] = useState<boolean>(false);
 
   const pdfPaneRef = useRef<HTMLDivElement>(null);
   const canvasRefs = useRef<Map<number, HTMLCanvasElement>>(new Map());
   const pageContainerRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+  const scrollTimeoutRef = useRef<any>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -74,7 +76,7 @@ export default function Viewer() {
           order_index: 1,
         },
       ]);
-      setStatus('Demo mode');
+      setStatus('Demo mode - 2 marks');
       return;
     }
 
@@ -85,7 +87,7 @@ export default function Viewer() {
       .then((res) => res.json())
       .then((data) => {
         setMarks(data.marks || []);
-        setStatus(`${data.marks?.length || 0} marks loaded`);
+        setStatus(`Ready - ${data.marks?.length || 0} marks`);
       })
       .catch((err) => {
         console.error('Failed to fetch marks:', err);
@@ -103,7 +105,7 @@ export default function Viewer() {
         setPdfDoc(pdf);
         setNumPages(pdf.numPages);
         setLoading(false);
-        setStatus('Ready');
+        setStatus('PDF loaded');
       })
       .catch((err) => {
         console.error('Failed to load PDF:', err);
@@ -112,14 +114,15 @@ export default function Viewer() {
       });
   }, [pdfUrl]);
 
-  // Render all pages when PDF loads or scale changes
   useEffect(() => {
     if (!pdfDoc || numPages === 0) return;
 
     const renderAllPages = async () => {
+      setRenderComplete(false);
       for (let pageNum = 1; pageNum <= numPages; pageNum++) {
         await renderPage(pageNum);
       }
+      setRenderComplete(true);
     };
 
     renderAllPages();
@@ -173,75 +176,108 @@ export default function Viewer() {
     const currentMark = marks[currentMarkIndex];
     if (!currentMark) return;
 
-    zoomToMark(currentMark);
+    zoomAndScrollToMark(currentMark);
   }, [currentMarkIndex, marks, pdfDoc]);
 
-  const zoomToMark = async (mark: Mark) => {
+  // Scroll after render complete
+  useEffect(() => {
+    if (!renderComplete || marks.length === 0) return;
+    
+    const currentMark = marks[currentMarkIndex];
+    if (!currentMark) return;
+
+    // Small delay to ensure DOM has updated
+    if (scrollTimeoutRef.current) {
+      clearTimeout(scrollTimeoutRef.current);
+    }
+
+    scrollTimeoutRef.current = setTimeout(() => {
+      scrollToMarkCenter(currentMark);
+    }, 150);
+
+    return () => {
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current);
+      }
+    };
+  }, [renderComplete, currentMarkIndex]);
+
+  const zoomAndScrollToMark = async (mark: Mark) => {
     if (!pdfDoc || !pdfPaneRef.current) return;
 
     try {
       const page = await pdfDoc.getPage(mark.page_number);
-      const viewport = page.getViewport({ scale: 1 });
+      const baseViewport = page.getViewport({ scale: 1 });
 
-      // Calculate mark dimensions in page coordinates
-      const markWidth = (mark.x1 - mark.x0) * viewport.width;
-      const markHeight = (mark.y1 - mark.y0) * viewport.height;
+      // Calculate mark dimensions in page units
+      const markWidth = (mark.x1 - mark.x0) * baseViewport.width;
+      const markHeight = (mark.y1 - mark.y0) * baseViewport.height;
 
-      // Calculate optimal zoom to fit mark with padding
-      const paneWidth = pdfPaneRef.current.clientWidth - 100; // Leave margin
+      // Get pane dimensions
+      const paneWidth = pdfPaneRef.current.clientWidth - 100;
       const paneHeight = pdfPaneRef.current.clientHeight - 100;
-      
-      const padding = 0.15; // 15% padding around mark
-      const fitScale = Math.min(
-        paneWidth / (markWidth * (1 + 2 * padding)),
-        paneHeight / (markHeight * (1 + 2 * padding))
-      );
 
-      // Apply 150% boost but cap at reasonable limits
-      const newScale = Math.max(1.0, Math.min(3.5, fitScale * 1.5));
-      
+      // Calculate scale to fit mark with padding
+      const padding = 0.2; // 20% padding
+      const scaleX = paneWidth / (markWidth * (1 + 2 * padding));
+      const scaleY = paneHeight / (markHeight * (1 + 2 * padding));
+      const fitScale = Math.min(scaleX, scaleY);
+
+      // Apply 150% boost, clamped to reasonable limits
+      const newScale = Math.max(1.2, Math.min(3.5, fitScale * 1.5));
+
       setScale(newScale);
       setStatus(`Zooming to: ${mark.label || `Mark ${currentMarkIndex + 1}`}`);
-
-      // Wait for re-render
-      setTimeout(() => {
-        scrollToMark(mark, newScale);
-      }, 100);
     } catch (err) {
       console.error('Zoom error:', err);
     }
   };
 
-  const scrollToMark = async (mark: Mark, useScale: number) => {
-    if (!pdfDoc || !pdfPaneRef.current) return;
+  const scrollToMarkCenter = (mark: Mark) => {
+    if (!pdfPaneRef.current || !pdfDoc) return;
 
     try {
-      const page = await pdfDoc.getPage(mark.page_number);
-      const viewport = page.getViewport({ scale: useScale });
+      const canvas = canvasRefs.current.get(mark.page_number);
+      if (!canvas) return;
 
-      // Calculate mark center
-      const markCenterX = ((mark.x0 + mark.x1) / 2) * viewport.width;
-      const markCenterY = ((mark.y0 + mark.y1) / 2) * viewport.height;
+      // Calculate mark center in canvas coordinates
+      const markCenterX = ((mark.x0 + mark.x1) / 2) * canvas.offsetWidth;
+      const markCenterY = ((mark.y0 + mark.y1) / 2) * canvas.offsetHeight;
 
-      // Calculate offset from top
+      // Calculate total offset from top of scrollable area
       let offsetTop = 0;
       for (let i = 1; i < mark.page_number; i++) {
         const prevCanvas = canvasRefs.current.get(i);
         if (prevCanvas) {
-          offsetTop += prevCanvas.offsetHeight + 20;
+          offsetTop += prevCanvas.offsetHeight + 20; // 20px gap between pages
         }
       }
 
+      // Add the Y position within the current page
       offsetTop += markCenterY;
 
-      // Center in viewport
+      // Calculate scroll position to center the mark
       const paneHeight = pdfPaneRef.current.clientHeight;
+      const paneWidth = pdfPaneRef.current.clientWidth;
+      
       const scrollTop = offsetTop - (paneHeight / 2);
+      const scrollLeft = markCenterX - (paneWidth / 2);
 
-      pdfPaneRef.current.scrollTo({
-        top: Math.max(0, scrollTop),
-        behavior: 'smooth',
-      });
+      // Get the page container to account for centering
+      const pageContainer = pageContainerRefs.current.get(mark.page_number);
+      if (pageContainer) {
+        const containerLeft = pageContainer.offsetLeft;
+        pdfPaneRef.current.scrollTo({
+          top: Math.max(0, scrollTop),
+          left: Math.max(0, containerLeft + markCenterX - (paneWidth / 2)),
+          behavior: 'smooth',
+        });
+      } else {
+        pdfPaneRef.current.scrollTo({
+          top: Math.max(0, scrollTop),
+          behavior: 'smooth',
+        });
+      }
 
       setStatus(`Viewing: ${mark.label || `Mark ${currentMarkIndex + 1}`}`);
     } catch (err) {
@@ -276,7 +312,7 @@ export default function Viewer() {
   const handleResetZoom = () => {
     const currentMark = marks[currentMarkIndex];
     if (currentMark) {
-      zoomToMark(currentMark);
+      zoomAndScrollToMark(currentMark);
     }
   };
 
@@ -311,7 +347,7 @@ export default function Viewer() {
           </button>
 
           {currentMark && (
-            <div style={{ fontSize: '0.875rem' }}>
+            <div>
               <div style={{ fontWeight: '700', fontSize: '1rem', color: '#1f2937' }}>
                 {currentMark.label || `Mark ${currentMarkIndex + 1}`}
               </div>
@@ -334,7 +370,6 @@ export default function Viewer() {
               borderRadius: '4px',
               cursor: currentMarkIndex === 0 ? 'not-allowed' : 'pointer',
               fontWeight: '600',
-              fontSize: '0.875rem',
             }}
           >
             ← Previous
@@ -350,14 +385,13 @@ export default function Viewer() {
               borderRadius: '4px',
               cursor: currentMarkIndex >= marks.length - 1 ? 'not-allowed' : 'pointer',
               fontWeight: '600',
-              fontSize: '0.875rem',
             }}
           >
             Next →
           </button>
-          
+
           <div style={{ width: '1px', height: '30px', backgroundColor: '#d1d5db', margin: '0 8px' }} />
-          
+
           <button onClick={handleZoomOut} style={{ padding: '8px 14px', backgroundColor: '#e5e7eb', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '1rem' }}>
             −
           </button>
@@ -432,7 +466,6 @@ export default function Viewer() {
 
                     return (
                       <div key={mark.id}>
-                        {/* Highlight box */}
                         <div
                           style={{
                             position: 'absolute',
@@ -440,29 +473,28 @@ export default function Viewer() {
                             top: `${top}px`,
                             width: `${width}px`,
                             height: `${height}px`,
-                            border: isCurrent ? '4px solid #ef4444' : '2px solid #3b82f6',
-                            backgroundColor: isCurrent ? 'rgba(239, 68, 68, 0.2)' : 'rgba(59, 130, 246, 0.08)',
+                            border: isCurrent ? '5px solid #ef4444' : '2px solid #3b82f6',
+                            backgroundColor: isCurrent ? 'rgba(239, 68, 68, 0.25)' : 'rgba(59, 130, 246, 0.08)',
                             pointerEvents: 'none',
                             boxSizing: 'border-box',
                             transition: 'all 0.3s',
                           }}
                         />
-                        
-                        {/* Label above mark */}
+
                         {isCurrent && mark.label && (
                           <div
                             style={{
                               position: 'absolute',
                               left: `${left}px`,
-                              top: `${top - 32}px`,
+                              top: `${Math.max(0, top - 38)}px`,
                               backgroundColor: '#ef4444',
                               color: 'white',
-                              padding: '6px 12px',
+                              padding: '8px 14px',
                               borderRadius: '6px',
                               fontSize: '0.875rem',
                               fontWeight: '700',
                               whiteSpace: 'nowrap',
-                              boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+                              boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
                               zIndex: 10,
                             }}
                           >
@@ -521,7 +553,7 @@ export default function Viewer() {
                       </div>
                     </div>
                     {idx === currentMarkIndex && (
-                      <div style={{ fontSize: '1rem', color: '#3b82f6' }}>
+                      <div style={{ fontSize: '1.25rem', color: '#3b82f6' }}>
                         ●
                       </div>
                     )}

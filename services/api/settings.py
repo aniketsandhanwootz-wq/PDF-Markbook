@@ -1,50 +1,61 @@
 """
 Application settings with environment variable support.
-Supports multiple storage backends via STORAGE_BACKEND env var.
+Supports SQLite, Google Sheets, JSON, and Postgres backends.
 """
-import os
+
+from __future__ import annotations
+
+import base64
 from functools import lru_cache
-from typing import List
+from typing import List, Optional
+
 from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    """Application settings loaded from environment variables."""
-    
-    # Storage backend selection
+    # Backend selection
     storage_backend: str = Field(default="sqlite", alias="STORAGE_BACKEND")
-    
-    # SQLite configuration
+
+    # SQLite / generic
     db_url: str = Field(default="sqlite:///data/markbook.db", alias="DB_URL")
-    
-    # CORS origins (comma-separated)
+
+    # Google Sheets
+    google_sa_json: Optional[str] = Field(default=None, alias="GOOGLE_SA_JSON")          # path or inline JSON
+    google_sa_json_b64: Optional[str] = Field(default=None, alias="GOOGLE_SA_JSON_B64")  # base64 (optional)
+    sheets_spreadsheet_id: Optional[str] = Field(default=None, alias="SHEETS_SPREADSHEET_ID")
+
+    # Postgres (future)
+    postgres_url: Optional[str] = Field(default=None, alias="POSTGRES_URL")
+
+    # CORS
     allowed_origins: str = Field(
         default="http://localhost:3001,http://localhost:3002",
-        alias="ALLOWED_ORIGINS"
+        alias="ALLOWED_ORIGINS",
     )
-    
-    # Google Sheets configuration (for future use)
-    google_sa_json: str = Field(default="", alias="GOOGLE_SA_JSON")
-    sheets_spreadsheet_id: str = Field(default="", alias="SHEETS_SPREADSHEET_ID")
-    
-    # PostgreSQL configuration (for future use)
-    postgres_url: str = Field(default="", alias="POSTGRES_URL")
-    
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
         case_sensitive = False
-    
+
     def get_origins_list(self) -> List[str]:
-        """Parse comma-separated origins into a list."""
-        return [origin.strip() for origin in self.allowed_origins.split(",") if origin.strip()]
+        return [o.strip() for o in self.allowed_origins.split(",") if o.strip()]
+
+    def resolved_google_sa_json(self) -> Optional[str]:
+        """
+        Prefer base64 (single line). If provided, return decoded JSON text.
+        Otherwise return GOOGLE_SA_JSON as-is (path or inline JSON).
+        """
+        if self.google_sa_json_b64:
+            try:
+                return base64.b64decode(self.google_sa_json_b64).decode("utf-8")
+            except Exception:
+                # If decoding fails, fall back to raw
+                pass
+        return self.google_sa_json
 
 
 @lru_cache()
 def get_settings() -> Settings:
-    """
-    Get cached settings instance.
-    Using lru_cache ensures we only instantiate settings once.
-    """
     return Settings()
