@@ -1,13 +1,15 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useState, useRef, useCallback, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import * as pdfjsLib from 'pdfjs-dist';
+import type { PDFDocumentProxy } from 'pdfjs-dist';
+import PageCanvas from '../components/PageCanvas';
+import MarkList from '../components/MarkList';
+import ZoomToolbar from '../components/ZoomToolbar';
+import { clampZoom, fitToWidth, scrollToRect } from '../lib/pdf';
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
-
-const API_BASE = 'http://localhost:8000';
-const DEMO_PDF =
-  'https://mozilla.github.io/pdf.js/web/compressed.tracemonkey-pldi-09.pdf';
+pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
 type Mark = {
   mark_id?: string;
@@ -23,297 +25,355 @@ type Mark = {
   anchor?: string;
 };
 
-export default function ViewerPage() {
-  const params = useMemo(() => new URLSearchParams(window.location.search), []);
-  const isDemo = params.get('demo') === '1';
-  const [pdfUrl] = useState(params.get('pdf_url') || (isDemo ? DEMO_PDF : ''));
-  const [markSetId] = useState<string | null>(
-    params.get('mark_set_id') || null
-  );
+type FlashRect = {
+  pageNumber: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+} | null;
 
-  const [pdfDoc, setPdfDoc] = useState<any>(null);
-  const [pageCount, setPageCount] = useState(0);
-
+function ViewerContent() {
+  const searchParams = useSearchParams();
+  const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
+  const [numPages, setNumPages] = useState(0);
   const [marks, setMarks] = useState<Mark[]>([]);
-  const [idx, setIdx] = useState(0); // current mark index
-  const [scale, setScale] = useState(1.0);
-  const [panelOpen, setPanelOpen] = useState(true);
-  const [status, setStatus] = useState('Loading marks…');
+  const [currentMarkIndex, setCurrentMarkIndex] = useState(-1);
+  const [zoom, setZoom] = useState(1.0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [flashRect, setFlashRect] = useState<FlashRect>(null);
+  
+  const containerRef = useRef<HTMLDivElement>(null);
+  const pageHeightsRef = useRef<number[]>([]);
 
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  // Parse query params
+  const isDemo = searchParams?.get('demo') === '1';
+  const pdfUrl = isDemo
+    ? 'https://mozilla.github.io/pdf.js/web/compressed.tracemonkey-pldi-09.pdf'
+    : searchParams?.get('pdf_url') || '';
+  const markSetId = searchParams?.get('mark_set_id') || '';
 
-  // demo marks if ?demo=1
-  useEffect(() => {
-    (async () => {
-      try {
-        // load the pdf
-        const task = pdfjsLib.getDocument({
-          url: pdfUrl || DEMO_PDF,
-          isEvalSupported: false,
-          withCredentials: false,
-        });
-        const pdf = await task.promise;
-        setPdfDoc(pdf);
-        setPageCount(pdf.numPages);
-
-        // fetch marks
-        if (markSetId) {
-          const r = await fetch(`${API_BASE}/mark-sets/${markSetId}/marks`);
-          if (!r.ok) throw new Error(await r.text());
-          const list = await r.json();
-          setMarks(list);
-          setStatus('Ready');
-          setIdx(0);
-        } else {
-          // demo: two marks (page 1 header; page 6 figure)
-          setMarks([
-            {
-              page_index: 0,
-              order_index: 0,
-              name: 'Demo Mark on Page 1',
-              nx: 0.12,
-              ny: 0.09,
-              nw: 0.76,
-              nh: 0.18,
-              padding_pct: 0.1,
-            },
-            {
-              page_index: 5,
-              order_index: 1,
-              name: 'Demo Mark on Page 6',
-              nx: 0.08,
-              ny: 0.42,
-              nw: 0.52,
-              nh: 0.33,
-              padding_pct: 0.08,
-            },
-          ]);
-          setStatus('Ready (demo)');
-          setIdx(0);
-        }
-      } catch (e: any) {
-        console.error(e);
-        setStatus('Error: ' + e.message);
-      }
-    })();
-  }, [pdfUrl, markSetId]);
-
-  // render current mark’s page at given scale, then center on bbox
-  const renderPageAndCenter = useCallback(
-    async (mk: Mark, targetScale?: number) => {
-      if (!pdfDoc || !mk) return;
-
-      const page = await pdfDoc.getPage(mk.page_index + 1);
-      const newScale = targetScale ?? scale;
-      const viewport = page.getViewport({ scale: newScale });
-
-      const canvas = canvasRef.current!;
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
-
-      const ctx = canvas.getContext('2d')!;
-      await page.render({ canvasContext: ctx, viewport }).promise;
-
-      // center scroll on bbox with padding
-      const pad = mk.padding_pct ?? 0.1;
-      const x = mk.nx * viewport.width;
-      const y = mk.ny * viewport.height;
-      const w = mk.nw * viewport.width;
-      const h = mk.nh * viewport.height;
-
-      const cx = x + w / 2;
-      const cy = y + h / 2;
-
-      const sc = scrollRef.current!;
-      // scroll so that (cx,cy) sits at the center of the visible area
-      const targetLeft = Math.max(0, cx - sc.clientWidth / 2);
-      const targetTop = Math.max(0, cy - sc.clientHeight / 2);
-
-      sc.scrollTo({
-        left: targetLeft,
-        top: targetTop,
-        behavior: 'instant' as ScrollBehavior, // snappy
-      });
-
-      // draw a subtle overlay to indicate region
-      const overlay = canvas.getContext('2d')!;
-      overlay.save();
-      overlay.strokeStyle = 'rgba(255,59,48,0.9)';
-      overlay.fillStyle = 'rgba(255,59,48,0.15)';
-      overlay.lineWidth = 3;
-      overlay.beginPath();
-      overlay.rect(x - w * pad, y - h * pad, w * (1 + 2 * pad), h * (1 + 2 * pad));
-      overlay.fill();
-      overlay.stroke();
-      overlay.restore();
+  // Demo marks
+  const demoMarks: Mark[] = [
+    {
+      mark_id: 'demo-1',
+      page_index: 0,
+      order_index: 0,
+      name: 'First Mark',
+      nx: 0.1,
+      ny: 0.1,
+      nw: 0.3,
+      nh: 0.15,
+      zoom_hint: 1.5,
     },
-    [pdfDoc, scale]
+    {
+      mark_id: 'demo-2',
+      page_index: 5,
+      order_index: 1,
+      name: 'Second Mark',
+      nx: 0.2,
+      ny: 0.3,
+      nw: 0.4,
+      nh: 0.2,
+      zoom_hint: 1.5,
+    },
+  ];
+
+  // Load PDF
+  useEffect(() => {
+    if (!pdfUrl) {
+      setError('No PDF URL provided');
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    pdfjsLib
+      .getDocument({ url: pdfUrl })
+      .promise.then((loadedPdf) => {
+        setPdf(loadedPdf);
+        setNumPages(loadedPdf.numPages);
+        setLoading(false);
+      })
+      .catch((err) => {
+        console.error('PDF load error:', err);
+        setError('Failed to load PDF');
+        setLoading(false);
+      });
+  }, [pdfUrl]);
+
+  // Load marks
+  useEffect(() => {
+    if (isDemo) {
+      setMarks(demoMarks);
+      return;
+    }
+
+    if (!markSetId) return;
+
+    const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
+    fetch(`${apiBase}/mark-sets/${markSetId}/marks`)
+      .then((res) => {
+        if (!res.ok) throw new Error('Failed to fetch marks');
+        return res.json();
+      })
+      .then((data: Mark[]) => {
+        const sorted = [...data].sort((a, b) => a.order_index - b.order_index);
+        setMarks(sorted);
+      })
+      .catch((err) => {
+        console.error('Marks fetch error:', err);
+      });
+  }, [markSetId, isDemo]);
+
+  // Navigate to mark
+  // Navigate to mark
+    const navigateToMark = useCallback(
+      (index: number) => {
+        if (!pdf || index < 0 || index >= marks.length) return;
+
+        const mark = marks[index];
+        setCurrentMarkIndex(index);
+
+        // Wait for state update, then compute zoom and scroll
+        setTimeout(() => {
+          const pageNumber = mark.page_index + 1;
+
+          pdf.getPage(pageNumber).then((page) => {
+            // 1) Compute rect @ scale=1
+            const vp1 = page.getViewport({ scale: 1 });
+            const rectAt1 = {
+              x: mark.nx * vp1.width,
+              y: mark.ny * vp1.height,
+              w: mark.nw * vp1.width,
+              h: mark.nh * vp1.height,
+            };
+
+            // 2) Decide the best zoom for this rect
+            const container = containerRef.current!;
+            const targetZoom2 = computeZoomForRect(
+              { w: container.clientWidth, h: container.clientHeight },
+              { w: vp1.width, h: vp1.height },
+              { w: rectAt1.w, h: rectAt1.h },
+              0.75
+            );
+
+            // Apply the new zoom
+            setZoom(targetZoom2);
+
+            // 3) After the zoom is applied in the DOM, scroll & flash
+            setTimeout(() => {
+              const vpZ = page.getViewport({ scale: targetZoom2 });
+              const pageWidthPx = vpZ.width;
+
+              const rectAtZ = {
+                x: mark.nx * vpZ.width,
+                y: mark.ny * vpZ.height,
+                w: mark.nw * vpZ.width,
+                h: mark.nh * vpZ.height,
+              };
+
+              // flash
+              setFlashRect({ pageNumber, ...rectAtZ });
+              setTimeout(() => setFlashRect(null), 1200);
+
+              // compute vertical page top across previous pages
+              let pageTop = 0;
+              for (let i = 0; i < mark.page_index; i++) {
+                pageTop += (pageHeightsRef.current[i] || 0) + 16; // 16px gap
+              }
+
+              scrollToRect(
+                container,
+                pageTop,
+                pageWidthPx,
+                rectAtZ,
+                { w: container.clientWidth, h: container.clientHeight }
+              );
+            }, 50);
+          });
+        }, 50);
+      },
+      [marks, pdf]
+    );
+    
+  // Previous/Next mark
+  const prevMark = useCallback(() => {
+    if (currentMarkIndex > 0) {
+      navigateToMark(currentMarkIndex - 1);
+    }
+  }, [currentMarkIndex, navigateToMark]);
+
+  const nextMark = useCallback(() => {
+    if (currentMarkIndex < marks.length - 1) {
+      navigateToMark(currentMarkIndex + 1);
+    }
+  }, [currentMarkIndex, marks.length, navigateToMark]);
+
+  // Zoom controls
+  const zoomIn = useCallback(() => {
+    setZoom((z) => clampZoom(z * 1.2));
+  }, []);
+
+  const zoomOut = useCallback(() => {
+    setZoom((z) => clampZoom(z / 1.2));
+  }, []);
+
+  const resetZoom = useCallback(() => {
+    setZoom(1.0);
+  }, []);
+
+  const fitToWidthZoom = useCallback(() => {
+    if (!pdf || !containerRef.current) return;
+
+    pdf.getPage(1).then((page) => {
+      const viewport = page.getViewport({ scale: 1.0 });
+      const containerWidth = containerRef.current!.clientWidth - 32;
+      const newZoom = fitToWidth(containerWidth, viewport.width);
+      setZoom(clampZoom(newZoom));
+    });
+  }, [pdf]);
+
+  // Wheel zoom with Ctrl/Cmd
+  const handleWheel = useCallback(
+    (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+
+      const container = containerRef.current;
+      if (!container) return;
+
+      const rect = container.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      const scrollLeft = container.scrollLeft;
+      const scrollTop = container.scrollTop;
+
+      const contentX = scrollLeft + mouseX;
+      const contentY = scrollTop + mouseY;
+
+      const delta = e.deltaY;
+      const zoomFactor = delta > 0 ? 0.9 : 1.1;
+
+      setZoom((prevZoom) => {
+        const newZoom = clampZoom(prevZoom * zoomFactor);
+        const scale = newZoom / prevZoom;
+
+        setTimeout(() => {
+          if (container) {
+            container.scrollLeft = contentX * scale - mouseX;
+            container.scrollTop = contentY * scale - mouseY;
+          }
+        }, 0);
+
+        return newZoom;
+      });
+    },
+    []
   );
 
-  // jump to current mark at 150%
   useEffect(() => {
-    if (!marks.length || !pdfDoc) return;
-    const mk = marks[idx];
-    const zoom = Math.max(1.5, mk.zoom_hint || 1.5);
-    setScale(zoom); // keep state in sync
-    renderPageAndCenter(mk, zoom);
-  }, [idx, marks, pdfDoc, renderPageAndCenter]);
+    const container = containerRef.current;
+    if (!container) return;
 
-  // zoom controls only affect canvas (not the whole UI)
-  const zoomBy = (delta: number) => {
-    const s = Math.max(0.5, Math.min(6, +(scale + delta).toFixed(2)));
-    setScale(s);
-    if (marks[idx]) renderPageAndCenter(marks[idx], s);
-  };
+    container.addEventListener('wheel', handleWheel, { passive: false });
+    return () => container.removeEventListener('wheel', handleWheel);
+  }, [handleWheel]);
 
-  // wheel + ctrl/⌘ = zoom
-  const onWheel = (e: React.WheelEvent) => {
-    if (e.ctrlKey || e.metaKey) {
-      e.preventDefault();
-      zoomBy(e.deltaY > 0 ? -0.1 : 0.1);
-    }
-  };
+  // Handle page ready callback
+  const handlePageReady = useCallback((pageNumber: number, height: number) => {
+    pageHeightsRef.current[pageNumber - 1] = height;
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="viewer-container">
+        <div className="loading">Loading PDF...</div>
+      </div>
+    );
+  }
+
+  if (error || !pdf) {
+    return (
+      <div className="viewer-container">
+        <div className="error">{error || 'Failed to load PDF'}</div>
+      </div>
+    );
+  }
 
   return (
-    <div
-      style={{
-        display: 'grid',
-        gridTemplateColumns: panelOpen ? '320px 1fr' : '1fr',
-        height: '100vh',
-        fontFamily: 'Inter, system-ui, -apple-system, Segoe UI, sans-serif',
-      }}
-    >
-      {/* Left panel */}
-      {panelOpen && (
-        <aside
-          style={{
-            borderRight: '1px solid #eee',
-            overflow: 'auto',
-            display: 'flex',
-            flexDirection: 'column',
-          }}
-        >
-          <div
-            style={{
-              padding: 12,
-              borderBottom: '1px solid #f0f0f0',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-            }}
-          >
-            <button onClick={() => setPanelOpen(false)}>Hide List</button>
-            <div style={{ marginLeft: 'auto', fontSize: 12, color: '#666' }}>
-              {status}
-            </div>
+    <div className="viewer-container">
+      {marks.length > 0 && (
+        <div className={`sidebar ${sidebarOpen ? 'open' : 'closed'}`}>
+          <div className="sidebar-header">
+            <button
+              className="sidebar-toggle"
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+            >
+              {sidebarOpen ? '◀' : '▶'}
+            </button>
+            {sidebarOpen && <h3>Marks</h3>}
           </div>
-
-          <div style={{ padding: 12, display: 'grid', gap: 8 }}>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button
-                onClick={() => setIdx((i) => Math.max(0, i - 1))}
-                disabled={idx <= 0}
-              >
-                ← Previous
-              </button>
-              <button
-                onClick={() => setIdx((i) => Math.min(marks.length - 1, i + 1))}
-                disabled={idx >= marks.length - 1}
-              >
-                Next →
-              </button>
-            </div>
-
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button onClick={() => zoomBy(-0.1)}>-</button>
-              <div
-                style={{
-                  flex: 1,
-                  textAlign: 'center',
-                  lineHeight: '28px',
-                  border: '1px solid #eee',
-                  borderRadius: 6,
-                  background: '#fafafa',
-                  fontSize: 12,
-                }}
-              >
-                {Math.round(scale * 100)}%
-              </div>
-              <button onClick={() => zoomBy(0.1)}>+</button>
-            </div>
-
-            <div style={{ fontWeight: 600, fontSize: 14 }}>All Marks</div>
-            <div style={{ display: 'grid', gap: 6 }}>
-              {marks.map((m, i) => (
-                <div
-                  key={i}
-                  onClick={() => setIdx(i)}
-                  style={{
-                    border: '1px solid ' + (i === idx ? '#0d6efd' : '#eee'),
-                    padding: 10,
-                    borderRadius: 8,
-                    background: i === idx ? '#eff6ff' : '#fff',
-                    cursor: 'pointer',
-                  }}
-                >
-                  <div style={{ fontWeight: 600 }}>{m.name}</div>
-                  <div style={{ fontSize: 12, color: '#666' }}>
-                    Page {m.page_index + 1}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </aside>
+          {sidebarOpen && (
+            <MarkList
+              marks={marks}
+              currentIndex={currentMarkIndex}
+              onSelect={navigateToMark}
+            />
+          )}
+        </div>
       )}
 
-      {/* PDF canvas area */}
-      <main
-        ref={scrollRef}
-        onWheel={onWheel}
-        style={{
-          position: 'relative',
-          overflow: 'auto',
-          background: '#f7f7f7',
-          padding: 16,
-          height: '100%',
-          touchAction: 'pan-x pan-y', // allow scrolling; avoid browser-pinch zoom on mobile
-        }}
-      >
-        {!panelOpen && (
-          <div style={{ position: 'sticky', top: 12, zIndex: 10 }}>
-            <button onClick={() => setPanelOpen(true)}>Show List</button>
+      <div className="main-content">
+        <ZoomToolbar
+          zoom={zoom}
+          onZoomIn={zoomIn}
+          onZoomOut={zoomOut}
+          onReset={resetZoom}
+          onFit={fitToWidthZoom}
+          onPrev={marks.length > 0 ? prevMark : undefined}
+          onNext={marks.length > 0 ? nextMark : undefined}
+          canPrev={currentMarkIndex > 0}
+          canNext={currentMarkIndex < marks.length - 1}
+        />
+
+        <div className="pdf-surface-wrap" ref={containerRef}>
+          <div className="pdf-surface">
+            {Array.from({ length: numPages }, (_, i) => i + 1).map((pageNum) => (
+              <PageCanvas
+                key={pageNum}
+                pdf={pdf}
+                pageNumber={pageNum}
+                zoom={zoom}
+                onReady={(height) => handlePageReady(pageNum, height)}
+                flashRect={
+                  flashRect?.pageNumber === pageNum
+                    ? {
+                        x: flashRect.x,
+                        y: flashRect.y,
+                        w: flashRect.w,
+                        h: flashRect.h,
+                      }
+                    : null
+                }
+              />
+            ))}
           </div>
-        )}
-
-        <div style={{ marginBottom: 8, display: 'flex', gap: 8 }}>
-          <button
-            onClick={() => setIdx((i) => Math.max(0, i - 1))}
-            disabled={idx <= 0}
-          >
-            ← Previous
-          </button>
-          <button
-            onClick={() => setIdx((i) => Math.min(marks.length - 1, i + 1))}
-            disabled={idx >= marks.length - 1}
-          >
-            Next →
-          </button>
         </div>
-
-        <div style={{ position: 'relative', display: 'inline-block' }}>
-          <canvas
-            ref={canvasRef}
-            style={{
-              display: 'block',
-              background: 'white',
-              border: '1px solid #ddd',
-              boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
-            }}
-          />
-        </div>
-      </main>
+      </div>
     </div>
+  );
+}
+
+export default function ViewerPage() {
+  return (
+    <Suspense fallback={<div className="viewer-container"><div className="loading">Loading...</div></div>}>
+      <ViewerContent />
+    </Suspense>
   );
 }

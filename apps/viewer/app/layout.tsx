@@ -1,14 +1,19 @@
-export const metadata = {
+import type { Metadata } from 'next';
+import './globals.css';
+
+export const metadata: Metadata = {
   title: 'PDF Viewer',
-  description: 'Scrollable, zoomable viewer with marks',
+  description: 'PDF viewer with marks navigation',
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
     <html lang="en">
-      {/* Prevent browser zooming the whole UI on mobile; keep zoom inside our canvas */}
-      <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
-      <body style={{ margin: 0, background: '#fff' }}>{children}</body>
+      <body>{children}</body>
     </html>
   );
 }

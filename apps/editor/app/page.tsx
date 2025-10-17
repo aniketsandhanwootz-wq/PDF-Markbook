@@ -1,16 +1,20 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useState, useRef, useCallback, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import * as pdfjsLib from 'pdfjs-dist';
+import type { PDFDocumentProxy } from 'pdfjs-dist';
+import PageCanvas from '../components/PageCanvas';
+import MarkList from '../components/MarkList';
+import ZoomToolbar from '../components/ZoomToolbar';
+import Toast from '../components/Toast';
+import FloatingNameBox from '../components/FloatingNameBox';
+import { clampZoom, computeZoomForRect, scrollToRect } from '../lib/pdf';
 
-// PDF.js worker
-pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
-
-const API_BASE = 'http://localhost:8000';
-const DEMO_PDF =
-  'https://mozilla.github.io/pdf.js/web/compressed.tracemonkey-pldi-09.pdf';
+pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
 type Mark = {
+  mark_id?: string;
   page_index: number;
   order_index: number;
   name: string;
@@ -18,369 +22,623 @@ type Mark = {
   ny: number;
   nw: number;
   nh: number;
+  zoom_hint?: number | null;
 };
 
-type PageDim = {
-  idx: number;
-  width_pt: number;
-  height_pt: number;
-  rotation_deg: number;
+type Rect = { x: number; y: number; w: number; h: number };
+
+type FlashRect = {
+  pageNumber: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+} | null;
+
+type ToastMessage = {
+  id: number;
+  message: string;
+  type: 'success' | 'error' | 'info';
 };
 
-export default function EditorPage() {
-  const params = useMemo(() => new URLSearchParams(window.location.search), []);
-  const isDemo = params.get('demo') === '1';
-  const [pdfUrl, setPdfUrl] = useState(
-    params.get('pdf_url') || (isDemo ? DEMO_PDF : '')
-  );
-  const [userId] = useState(params.get('user_id') || 'anonymous');
+type MarkOverlay = {
+  markId: string;
+  pageIndex: number;
+  style: {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  };
+};
 
-  const [docId, setDocId] = useState('');
-  const [pdfDoc, setPdfDoc] = useState<any>(null);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(0);
+function EditorContent() {
+  const searchParams = useSearchParams();
+  const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
+  const [numPages, setNumPages] = useState(0);
   const [marks, setMarks] = useState<Mark[]>([]);
-  const [status, setStatus] = useState('');
-  const [pageDims, setPageDims] = useState<PageDim[]>([]);
+  const [selectedMarkId, setSelectedMarkId] = useState<string | null>(null);
+  const [zoom, setZoom] = useState(1.0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [flashRect, setFlashRect] = useState<FlashRect>(null);
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const [markOverlays, setMarkOverlays] = useState<MarkOverlay[]>([]);
+
+  // Drawing state
   const [isDrawing, setIsDrawing] = useState(false);
-  const [start, setStart] = useState<{ x: number; y: number } | null>(null);
-  const [curr, setCurr] = useState<{ x: number; y: number } | null>(null);
+  const [drawStart, setDrawStart] = useState<{ x: number; y: number; pageIndex: number } | null>(null);
+  const [currentRect, setCurrentRect] = useState<Rect | null>(null);
+  const [showNameBox, setShowNameBox] = useState(false);
+  const [nameBoxPosition, setNameBoxPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [pendingMark, setPendingMark] = useState<Partial<Mark> | null>(null);
 
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const overlayRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const pageHeightsRef = useRef<number[]>([]);
+  const pdfUrl = useRef<string>('');
+  const markSetId = useRef<string>('');
 
-  // quick helper for demo link
-  const useSample = () => {
-    const url = new URL(window.location.href);
-    url.searchParams.delete('pdf_url');
-    url.searchParams.set('demo', '1');
-    window.location.href = url.toString();
-  };
+  const isDemo = searchParams?.get('demo') === '1';
+  const urlMarkSetId = searchParams?.get('mark_set_id') || '';
 
-  // bootstrap: create doc, load pdf, send page dims
+  const demoMarks: Mark[] = [
+    {
+      mark_id: 'demo-1',
+      page_index: 0,
+      order_index: 0,
+      name: 'Demo Mark 1',
+      nx: 0.1,
+      ny: 0.1,
+      nw: 0.3,
+      nh: 0.15,
+      zoom_hint: 1.5,
+    },
+    {
+      mark_id: 'demo-2',
+      page_index: 0,
+      order_index: 1,
+      name: 'Demo Mark 2',
+      nx: 0.5,
+      ny: 0.4,
+      nw: 0.3,
+      nh: 0.2,
+      zoom_hint: 1.5,
+    },
+  ];
+
+  // Toast helpers
+  const addToast = useCallback((message: string, type: ToastMessage['type'] = 'info') => {
+    const id = Date.now();
+    setToasts((prev) => [...prev.slice(-2), { id, message, type }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 3000);
+  }, []);
+
+  // Load PDF (demo mode)
   useEffect(() => {
-    (async () => {
-      if (!pdfUrl) return;
+    if (!isDemo) return;
 
-      try {
-        setStatus('Creating document…');
+    const demoPdfUrl = 'https://mozilla.github.io/pdf.js/web/compressed.tracemonkey-pldi-09.pdf';
+    pdfUrl.current = demoPdfUrl;
 
-        // 1) create document
-        const r = await fetch(`${API_BASE}/documents`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ pdf_url: pdfUrl, created_by: userId }),
-        });
-        if (!r.ok) throw new Error(await r.text());
-        const { doc_id } = await r.json();
-        setDocId(doc_id);
+    setLoading(true);
+    pdfjsLib
+      .getDocument({ url: demoPdfUrl })
+      .promise.then((loadedPdf) => {
+        setPdf(loadedPdf);
+        setNumPages(loadedPdf.numPages);
+        setMarks(demoMarks);
+        setLoading(false);
+      })
+      .catch((err) => {
+        console.error('PDF load error:', err);
+        setError('Failed to load PDF');
+        setLoading(false);
+      });
+  }, [isDemo]);
 
-        // 2) load pdf
-        setStatus('Loading PDF…');
-        const task = pdfjsLib.getDocument({
-          url: pdfUrl,
-          withCredentials: false,
-          isEvalSupported: false,
-        });
-        const pdf = await task.promise;
-        setPdfDoc(pdf);
-        setTotalPages(pdf.numPages);
+  // Load PDF and marks (real mode)
+  useEffect(() => {
+    if (isDemo || !urlMarkSetId) return;
 
-        // 3) collect dims (unrotated base + rotation)
-        setStatus('Collecting page dimensions…');
-        const dims: PageDim[] = [];
-        for (let i = 1; i <= pdf.numPages; i++) {
-          const page = await pdf.getPage(i);
-          const vp = page.getViewport({ scale: 1, rotation: 0 });
-          dims.push({
-            idx: i - 1,
-            width_pt: vp.width,
-            height_pt: vp.height,
-            rotation_deg: (page.rotate || 0) % 360,
+    markSetId.current = urlMarkSetId;
+    const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
+
+    setLoading(true);
+
+    fetch(`${apiBase}/mark-sets/${urlMarkSetId}/marks`)
+      .then((res) => {
+        if (!res.ok) throw new Error('Failed to fetch marks');
+        return res.json();
+      })
+      .then((data: any) => {
+        const sorted = [...data].sort((a: Mark, b: Mark) => a.order_index - b.order_index);
+        setMarks(sorted);
+
+        const demoPdfUrl = 'https://mozilla.github.io/pdf.js/web/compressed.tracemonkey-pldi-09.pdf';
+        pdfUrl.current = demoPdfUrl;
+
+        return pdfjsLib.getDocument({ url: demoPdfUrl }).promise;
+      })
+      .then((loadedPdf) => {
+        setPdf(loadedPdf);
+        setNumPages(loadedPdf.numPages);
+        setLoading(false);
+      })
+      .catch((err) => {
+        console.error('Load error:', err);
+        setError('Failed to load marks or PDF');
+        setLoading(false);
+      });
+  }, [isDemo, urlMarkSetId]);
+
+  // Update mark overlays when zoom or marks change
+  useEffect(() => {
+    if (!pdf) return;
+
+    const updateOverlays = async () => {
+      const overlays: MarkOverlay[] = [];
+
+      for (const mark of marks) {
+        try {
+          const page = await pdf.getPage(mark.page_index + 1);
+          const vp = page.getViewport({ scale: zoom });
+          
+          overlays.push({
+            markId: mark.mark_id!,
+            pageIndex: mark.page_index,
+            style: {
+              left: mark.nx * vp.width,
+              top: mark.ny * vp.height,
+              width: mark.nw * vp.width,
+              height: mark.nh * vp.height,
+            },
           });
+        } catch (e) {
+          console.error('Error computing overlay:', e);
         }
-        setPageDims(dims);
-
-        // 4) POST bootstrap (ignore 409)
-        setStatus('Bootstrapping pages…');
-        const b = await fetch(
-          `${API_BASE}/documents/${doc_id}/pages/bootstrap`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ page_count: pdf.numPages, dims }),
-          }
-        );
-        if (!(b.ok || b.status === 409)) {
-          throw new Error('Bootstrap failed: ' + (await b.text()));
-        }
-
-        setStatus('Ready');
-        setCurrentPage(1);
-      } catch (e: any) {
-        console.error(e);
-        setStatus('Error: ' + e.message);
       }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pdfUrl]);
 
-  // render current page
-  useEffect(() => {
-    (async () => {
-      if (!pdfDoc || !currentPage) return;
-      const page = await pdfDoc.getPage(currentPage);
-      const scale = 1.6; // crisp drawing without CSS scaling
-      const viewport = page.getViewport({ scale });
+      setMarkOverlays(overlays);
+    };
 
-      const canvas = canvasRef.current!;
-      const overlay = overlayRef.current!;
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
-      overlay.width = viewport.width;
-      overlay.height = viewport.height;
+    updateOverlays();
+  }, [pdf, marks, zoom]);
 
-      const ctx = canvas.getContext('2d')!;
-      await page.render({ canvasContext: ctx, viewport }).promise;
+  // Navigate to mark
+  const navigateToMark = useCallback(
+    (mark: Mark) => {
+      if (!pdf) return;
 
-      // clear overlay
-      overlay.getContext('2d')!.clearRect(0, 0, overlay.width, overlay.height);
-    })();
-  }, [pdfDoc, currentPage]);
+      setSelectedMarkId(mark.mark_id || null);
 
-  // drawing handlers
-  const onDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    const rect = overlayRef.current!.getBoundingClientRect();
-    setIsDrawing(true);
-    setStart({ x: e.clientX - rect.left, y: e.clientY - rect.top });
-    setCurr({ x: e.clientX - rect.left, y: e.clientY - rect.top });
-  };
+      setTimeout(() => {
+        const pageNumber = mark.page_index + 1;
 
-  const onMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!isDrawing || !start) return;
-    const rect = overlayRef.current!.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    setCurr({ x, y });
+        pdf.getPage(pageNumber).then((page) => {
+          const vp1 = page.getViewport({ scale: 1 });
+          const rectAt1 = {
+            x: mark.nx * vp1.width,
+            y: mark.ny * vp1.height,
+            w: mark.nw * vp1.width,
+            h: mark.nh * vp1.height,
+          };
 
-    const ctx = overlayRef.current!.getContext('2d')!;
-    ctx.clearRect(0, 0, overlayRef.current!.width, overlayRef.current!.height);
-    ctx.strokeStyle = '#ff3b30';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(start.x, start.y, x - start.x, y - start.y);
-  };
+          const container = containerRef.current!;
+          const targetZoom = computeZoomForRect(
+            { w: container.clientWidth, h: container.clientHeight },
+            { w: vp1.width, h: vp1.height },
+            { w: rectAt1.w, h: rectAt1.h },
+            0.75
+          );
 
-  const onUp = async () => {
-    if (!isDrawing || !start || !curr) return;
-    setIsDrawing(false);
+          setZoom(targetZoom);
 
-    overlayRef.current!.getContext('2d')!.clearRect(
-      0,
-      0,
-      overlayRef.current!.width,
-      overlayRef.current!.height
-    );
+          setTimeout(() => {
+            const vpZ = page.getViewport({ scale: targetZoom });
+            const pageWidthPx = vpZ.width;
 
-    const name = window.prompt('Name this mark:');
-    if (!name) return;
+            const rectAtZ = {
+              x: mark.nx * vpZ.width,
+              y: mark.ny * vpZ.height,
+              w: mark.nw * vpZ.width,
+              h: mark.nh * vpZ.height,
+            };
 
-    // convert to normalized coords in unscaled page space
-    const scale = 1.6;
-    const pd = pageDims[currentPage - 1];
-    const x1 = Math.min(start.x, curr.x) / scale;
-    const y1 = Math.min(start.y, curr.y) / scale;
-    const x2 = Math.max(start.x, curr.x) / scale;
-    const y2 = Math.max(start.y, curr.y) / scale;
+            setFlashRect({ pageNumber, ...rectAtZ });
+            setTimeout(() => setFlashRect(null), 1200);
 
-    const nx = Math.max(0, Math.min(1, x1 / pd.width_pt));
-    const ny = Math.max(0, Math.min(1, y1 / pd.height_pt));
-    const nw = Math.max(0.01, Math.min(1 - nx, (x2 - x1) / pd.width_pt));
-    const nh = Math.max(0.01, Math.min(1 - ny, (y2 - y1) / pd.height_pt));
+            let pageTop = 0;
+            for (let i = 0; i < mark.page_index; i++) {
+              pageTop += (pageHeightsRef.current[i] || 0) + 16;
+            }
 
-    setMarks((prev) => [
-      ...prev,
-      {
-        page_index: currentPage - 1,
-        order_index: prev.length,
-        name,
-        nx,
-        ny,
-        nw,
-        nh,
-      },
-    ]);
+            scrollToRect(
+              container,
+              pageTop,
+              pageWidthPx,
+              rectAtZ,
+              { w: container.clientWidth, h: container.clientHeight }
+            );
+          }, 50);
+        });
+      }, 50);
+    },
+    [pdf]
+  );
 
-    setStart(null);
-    setCurr(null);
-  };
+  // Save marks
+  const saveMarks = useCallback(async () => {
+    if (isDemo) {
+      addToast('Demo mode - changes not saved', 'info');
+      return;
+    }
 
-  const saveMarks = async () => {
-    if (marks.length === 0) return alert('No marks to save');
+    if (marks.length === 0) {
+      addToast('No marks to save', 'info');
+      return;
+    }
+
+    const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
+    addToast('Saving...', 'info');
+
     try {
-      setStatus('Saving…');
-
-      const res = await fetch(`${API_BASE}/mark-sets`, {
+      await fetch(`${apiBase}/mark-sets/${markSetId.current}/marks`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          doc_id: docId,
-          label: 'v1',
-          created_by: userId,
-          marks,
-        }),
+        body: JSON.stringify(marks),
       });
-      if (!res.ok) throw new Error(await res.text());
-      const { mark_set_id } = await res.json();
 
-      setStatus('Saved');
-      await navigator.clipboard.writeText(
-        `${location.origin.replace(':3001', ':3002')}?pdf_url=${encodeURIComponent(
-          pdfUrl
-        )}&mark_set_id=${mark_set_id}`
-      );
-      alert(
-        `Saved! mark_set_id=${mark_set_id}\n\nCopied a viewer link to clipboard.`
-      );
-    } catch (e: any) {
-      console.error(e);
-      alert('Failed to save: ' + e.message);
-      setStatus('Error');
+      addToast('Saved successfully', 'success');
+    } catch (err) {
+      console.error('Save error:', err);
+      addToast('Failed to save marks', 'error');
     }
-  };
+  }, [marks, isDemo, addToast]);
+
+  // Create mark
+  const createMark = useCallback((name: string) => {
+    if (!pendingMark) return;
+
+    const newMark: Mark = {
+      mark_id: `temp-${Date.now()}`,
+      page_index: pendingMark.page_index!,
+      order_index: marks.length,
+      name,
+      nx: pendingMark.nx!,
+      ny: pendingMark.ny!,
+      nw: pendingMark.nw!,
+      nh: pendingMark.nh!,
+    };
+
+    setMarks((prev) => [...prev, newMark]);
+    setPendingMark(null);
+    setShowNameBox(false);
+    setCurrentRect(null);
+    addToast(`Mark "${name}" created`, 'success');
+
+    setTimeout(() => navigateToMark(newMark), 100);
+  }, [pendingMark, marks.length, addToast, navigateToMark]);
+
+  // Update mark
+  const updateMark = useCallback((markId: string, updates: Partial<Mark>) => {
+    setMarks((prev) =>
+      prev.map((m) => (m.mark_id === markId ? { ...m, ...updates } : m))
+    );
+    addToast('Mark updated', 'success');
+  }, [addToast]);
+
+  // Delete mark
+  const deleteMark = useCallback((markId: string) => {
+    setMarks((prev) => prev.filter((m) => m.mark_id !== markId));
+    addToast('Mark deleted', 'success');
+  }, [addToast]);
+
+  // Duplicate mark
+  const duplicateMark = useCallback((markId: string) => {
+    const source = marks.find((m) => m.mark_id === markId);
+    if (!source) return;
+
+    const newMark: Mark = {
+      ...source,
+      mark_id: `temp-${Date.now()}`,
+      name: `${source.name} (copy)`,
+      order_index: marks.length,
+    };
+
+    setMarks((prev) => [...prev, newMark]);
+    addToast('Mark duplicated', 'success');
+  }, [marks, addToast]);
+
+  // Reorder mark
+  const reorderMark = useCallback((markId: string, direction: 'up' | 'down') => {
+    setMarks((prev) => {
+      const index = prev.findIndex((m) => m.mark_id === markId);
+      if (index === -1) return prev;
+
+      const newIndex = direction === 'up' ? index - 1 : index + 1;
+      if (newIndex < 0 || newIndex >= prev.length) return prev;
+
+      const newMarks = [...prev];
+      [newMarks[index], newMarks[newIndex]] = [newMarks[newIndex], newMarks[index]];
+
+      return newMarks.map((m, i) => ({ ...m, order_index: i }));
+    });
+  }, []);
+
+  // Zoom controls
+  const zoomIn = useCallback(() => setZoom((z) => clampZoom(z * 1.2)), []);
+  const zoomOut = useCallback(() => setZoom((z) => clampZoom(z / 1.2)), []);
+  const resetZoom = useCallback(() => setZoom(1.0), []);
+
+  const fitToWidthZoom = useCallback(() => {
+    if (!pdf || !containerRef.current) return;
+    pdf.getPage(1).then((page) => {
+      const viewport = page.getViewport({ scale: 1.0 });
+      const containerWidth = containerRef.current!.clientWidth - 32;
+      const newZoom = containerWidth / viewport.width;
+      setZoom(clampZoom(newZoom));
+    });
+  }, [pdf]);
+
+  // Wheel zoom
+  const handleWheel = useCallback((e: WheelEvent) => {
+    if (!e.ctrlKey && !e.metaKey) return;
+    e.preventDefault();
+
+    const container = containerRef.current;
+    if (!container) return;
+
+    const rect = container.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+    const scrollLeft = container.scrollLeft;
+    const scrollTop = container.scrollTop;
+    const contentX = scrollLeft + mouseX;
+    const contentY = scrollTop + mouseY;
+    const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
+
+    setZoom((prevZoom) => {
+      const newZoom = clampZoom(prevZoom * zoomFactor);
+      const scale = newZoom / prevZoom;
+
+      setTimeout(() => {
+        if (container) {
+          container.scrollLeft = contentX * scale - mouseX;
+          container.scrollTop = contentY * scale - mouseY;
+        }
+      }, 0);
+
+      return newZoom;
+    });
+  }, []);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    container.addEventListener('wheel', handleWheel, { passive: false });
+    return () => container.removeEventListener('wheel', handleWheel);
+  }, [handleWheel]);
+
+  // Drawing handlers
+  const handleMouseDown = useCallback(
+    (e: React.MouseEvent, pageIndex: number) => {
+      if (!pdf || showNameBox) return;
+
+      const target = e.currentTarget as HTMLElement;
+      const rect = target.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+
+      setIsDrawing(true);
+      setDrawStart({ x, y, pageIndex });
+      setCurrentRect(null);
+    },
+    [pdf, showNameBox]
+  );
+
+  const handleMouseMove = useCallback(
+    (e: React.MouseEvent, pageIndex: number) => {
+      if (!isDrawing || !drawStart || drawStart.pageIndex !== pageIndex) return;
+
+      const target = e.currentTarget as HTMLElement;
+      const rect = target.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+
+      const left = Math.min(drawStart.x, x);
+      const top = Math.min(drawStart.y, y);
+      const width = Math.abs(x - drawStart.x);
+      const height = Math.abs(y - drawStart.y);
+
+      setCurrentRect({ x: left, y: top, w: width, h: height });
+    },
+    [isDrawing, drawStart]
+  );
+
+  const handleMouseUp = useCallback(
+    (e: React.MouseEvent, pageIndex: number) => {
+      if (!isDrawing || !drawStart || !currentRect || drawStart.pageIndex !== pageIndex) {
+        setIsDrawing(false);
+        return;
+      }
+
+      if (currentRect.w < 10 || currentRect.h < 10) {
+        setIsDrawing(false);
+        setCurrentRect(null);
+        return;
+      }
+
+      const target = e.currentTarget as HTMLElement;
+      const pageWidth = target.clientWidth;
+      const pageHeight = target.clientHeight;
+
+      const normalizedMark: Partial<Mark> = {
+        page_index: pageIndex,
+        nx: currentRect.x / pageWidth,
+        ny: currentRect.y / pageHeight,
+        nw: currentRect.w / pageWidth,
+        nh: currentRect.h / pageHeight,
+      };
+
+      setPendingMark(normalizedMark);
+
+      const container = containerRef.current;
+      if (container) {
+        const containerRect = container.getBoundingClientRect();
+        const targetRect = target.getBoundingClientRect();
+        const absoluteX = targetRect.left - containerRect.left + container.scrollLeft + currentRect.x;
+        const absoluteY = targetRect.top - containerRect.top + container.scrollTop + currentRect.y;
+
+        setNameBoxPosition({ x: absoluteX, y: absoluteY });
+      }
+
+      setShowNameBox(true);
+      setIsDrawing(false);
+    },
+    [isDrawing, drawStart, currentRect]
+  );
+
+  const handlePageReady = useCallback((pageNumber: number, height: number) => {
+    pageHeightsRef.current[pageNumber - 1] = height;
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="editor-container">
+        <div className="loading">Loading PDF...</div>
+      </div>
+    );
+  }
+
+  if (error || !pdf) {
+    return (
+      <div className="editor-container">
+        <div className="error">{error || 'Failed to load'}</div>
+      </div>
+    );
+  }
 
   return (
-    <div
-      style={{
-        display: 'grid',
-        gridTemplateColumns: '280px 1fr',
-        height: '100vh',
-        fontFamily: 'Inter, system-ui, -apple-system, Segoe UI, sans-serif',
-      }}
-    >
-      {/* Left rail */}
-      <aside
-        style={{
-          borderRight: '1px solid #eee',
-          padding: 12,
-          overflowY: 'auto',
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <button
-            onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-            disabled={currentPage <= 1}
-          >
-            ← Prev
+    <div className="editor-container">
+      <div className={`sidebar ${sidebarOpen ? 'open' : 'closed'}`}>
+        <div className="sidebar-header">
+          <button className="sidebar-toggle" onClick={() => setSidebarOpen(!sidebarOpen)}>
+            {sidebarOpen ? '◀' : '▶'}
           </button>
-          <div style={{ fontSize: 13 }}>
-            Page {currentPage} of {totalPages}
+          {sidebarOpen && <h3>Marks</h3>}
+        </div>
+        {sidebarOpen && (
+          <MarkList
+            marks={marks}
+            selectedMarkId={selectedMarkId}
+            onSelect={navigateToMark}
+            onUpdate={updateMark}
+            onDelete={deleteMark}
+            onDuplicate={duplicateMark}
+            onReorder={reorderMark}
+          />
+        )}
+        {sidebarOpen && (
+          <div className="sidebar-footer">
+            <button
+              className="save-btn"
+              onClick={saveMarks}
+              disabled={marks.length === 0}
+            >
+              Save {marks.length} Mark{marks.length !== 1 ? 's' : ''}
+            </button>
           </div>
-          <button
-            onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-            disabled={currentPage >= totalPages}
-          >
-            Next →
-          </button>
-          <a
-            onClick={useSample}
-            style={{ marginLeft: 'auto', fontSize: 12, cursor: 'pointer' }}
-          >
-            use sample
-          </a>
-        </div>
+        )}
+      </div>
 
-        <div style={{ marginTop: 12 }}>
-          <button
-            onClick={saveMarks}
-            style={{
-              width: '100%',
-              padding: '10px 12px',
-              background: '#0d6efd',
-              color: 'white',
-              border: 'none',
-              borderRadius: 6,
-              fontWeight: 600,
-            }}
-          >
-            Save {marks.length} Marks
-          </button>
-        </div>
+      <div className="main-content">
+        <ZoomToolbar
+          zoom={zoom}
+          onZoomIn={zoomIn}
+          onZoomOut={zoomOut}
+          onReset={resetZoom}
+          onFit={fitToWidthZoom}
+        />
 
-        <div style={{ marginTop: 16, color: '#666', fontSize: 12 }}>
-          <div>Status: {status || '—'}</div>
-        </div>
-
-        <div style={{ marginTop: 16 }}>
-          <h4 style={{ margin: 0, fontSize: 14 }}>Marks ({marks.length})</h4>
-          <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
-            {marks.map((m) => (
+        <div className="pdf-surface-wrap" ref={containerRef}>
+          <div className="pdf-surface">
+            {Array.from({ length: numPages }, (_, i) => i + 1).map((pageNum) => (
               <div
-                key={m.order_index}
-                style={{
-                  border: '1px solid #ddd',
-                  padding: 8,
-                  borderRadius: 6,
-                  background: '#fff',
-                  fontSize: 13,
-                }}
+                key={pageNum}
+                className="page-container"
+                onMouseDown={(e) => handleMouseDown(e, pageNum - 1)}
+                onMouseMove={(e) => handleMouseMove(e, pageNum - 1)}
+                onMouseUp={(e) => handleMouseUp(e, pageNum - 1)}
               >
-                <div style={{ fontWeight: 600 }}>{m.name}</div>
-                <div style={{ color: '#666', fontSize: 12 }}>
-                  Page {m.page_index + 1}, Order {m.order_index}
-                </div>
+                <PageCanvas
+                  pdf={pdf}
+                  pageNumber={pageNum}
+                  zoom={zoom}
+                  onReady={(height) => handlePageReady(pageNum, height)}
+                  flashRect={
+                    flashRect?.pageNumber === pageNum
+                      ? { x: flashRect.x, y: flashRect.y, w: flashRect.w, h: flashRect.h }
+                      : null
+                  }
+                />
+                {isDrawing && drawStart?.pageIndex === pageNum - 1 && currentRect && (
+                  <div
+                    className="drawing-rect"
+                    style={{
+                      left: currentRect.x,
+                      top: currentRect.y,
+                      width: currentRect.w,
+                      height: currentRect.h,
+                    }}
+                  />
+                )}
+                {markOverlays
+                  .filter((overlay) => overlay.pageIndex === pageNum - 1)
+                  .map((overlay) => (
+                    <div
+                      key={overlay.markId}
+                      className={`mark-rect ${selectedMarkId === overlay.markId ? 'selected' : ''}`}
+                      style={overlay.style}
+                      onClick={() => {
+                        const mark = marks.find((m) => m.mark_id === overlay.markId);
+                        if (mark) navigateToMark(mark);
+                      }}
+                    />
+                  ))}
               </div>
             ))}
           </div>
+
+          {showNameBox && (
+            <FloatingNameBox
+              position={nameBoxPosition}
+              onSave={createMark}
+              onCancel={() => {
+                setShowNameBox(false);
+                setPendingMark(null);
+                setCurrentRect(null);
+              }}
+            />
+          )}
         </div>
+      </div>
 
-        <p style={{ marginTop: 16, fontSize: 12, color: '#666' }}>
-          <b>Instructions:</b> Click and drag to draw a rectangle. You’ll be
-          prompted to name it.
-        </p>
-      </aside>
-
-      {/* PDF area */}
-      <main
-        style={{
-          overflow: 'auto',
-          background: '#f7f7f7',
-          padding: 16,
-          height: '100%',
-        }}
-      >
-        {!pdfUrl && (
-          <div style={{ color: '#666' }}>
-            Add <code>?pdf_url=YOUR_PDF_URL</code> or click{' '}
-            <a onClick={useSample} style={{ cursor: 'pointer' }}>
-              use sample
-            </a>
-            .
-          </div>
-        )}
-
-        <div style={{ position: 'relative', display: 'inline-block' }}>
-          <canvas
-            ref={canvasRef}
-            style={{
-              display: 'block',
-              background: 'white',
-              border: '1px solid #ddd',
-              boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
-            }}
-          />
-          <canvas
-            ref={overlayRef}
-            onMouseDown={onDown}
-            onMouseMove={onMove}
-            onMouseUp={onUp}
-            style={{
-              position: 'absolute',
-              inset: 0,
-              cursor: 'crosshair',
-            }}
-          />
-        </div>
-      </main>
+      <div className="toast-container">
+        {toasts.map((toast) => (
+          <Toast key={toast.id} message={toast.message} type={toast.type} />
+        ))}
+      </div>
     </div>
+  );
+}
+
+export default function EditorPage() {
+  return (
+    <Suspense fallback={<div className="editor-container"><div className="loading">Loading...</div></div>}>
+      <EditorContent />
+    </Suspense>
   );
 }
