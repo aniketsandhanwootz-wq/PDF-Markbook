@@ -1,4 +1,4 @@
-'use client';
+ 'use client';
 
 import { useEffect, useState, useRef, useCallback, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
@@ -404,62 +404,56 @@ function EditorContent() {
 
       setSelectedMarkId(mark.mark_id || null);
 
-      setTimeout(() => {
-        const pageNumber = mark.page_index + 1;
-        const container = containerRef.current!;
+      const pageNumber = mark.page_index + 1;
+      const container = containerRef.current!;
 
-        pdf.getPage(pageNumber).then((page) => {
-          const vp1 = page.getViewport({ scale: 1 });
-          const rectAt1 = {
-            x: mark.nx * vp1.width,
-            y: mark.ny * vp1.height,
-            w: mark.nw * vp1.width,
-            h: mark.nh * vp1.height,
+      pdf.getPage(pageNumber).then((page) => {
+        const vp1 = page.getViewport({ scale: 1 });
+        const rectAt1 = {
+          w: mark.nw * vp1.width,
+          h: mark.nh * vp1.height,
+        };
+
+        // Calculate zoom to make mark fill 80% of viewport
+        const zoomX = (container.clientWidth * 0.8) / rectAt1.w;
+        const zoomY = (container.clientHeight * 0.8) / rectAt1.h;
+        const targetZoom = clampZoom(Math.min(zoomX, zoomY));
+
+        setZoom(targetZoom);
+
+        setTimeout(() => {
+          const vpZ = page.getViewport({ scale: targetZoom });
+          const rectAtZ = {
+            x: mark.nx * vpZ.width,
+            y: mark.ny * vpZ.height,
+            w: mark.nw * vpZ.width,
+            h: mark.nh * vpZ.height,
           };
 
-          const targetZoom = computeZoomForRect(
-            { w: container.clientWidth, h: container.clientHeight },
-            { w: vp1.width, h: vp1.height },
-            { w: rectAt1.w, h: rectAt1.h },
-            0.75
-          );
+          setFlashRect({ pageNumber, ...rectAtZ });
+          setTimeout(() => setFlashRect(null), 1200);
 
-          setZoom(targetZoom);
+          // Calculate cumulative page offset
+          let pageTop = 0;
+          for (let i = 0; i < mark.page_index; i++) {
+            pageTop += (pageHeightsRef.current[i] || 0) + 16;
+          }
 
-          setTimeout(() => {
-            const vpZ = page.getViewport({ scale: targetZoom });
+          // Calculate center of marked area
+          const markCenterX = rectAtZ.x + rectAtZ.w / 2;
+          const markCenterY = rectAtZ.y + rectAtZ.h / 2;
 
-            const rectAtZ = {
-              x: mark.nx * vpZ.width,
-              y: mark.ny * vpZ.height,
-              w: mark.nw * vpZ.width,
-              h: mark.nh * vpZ.height,
-            };
+          // Center the mark in viewport
+          const targetScrollLeft = markCenterX - container.clientWidth / 2;
+          const targetScrollTop = pageTop + markCenterY - container.clientHeight / 2;
 
-            setFlashRect({ pageNumber, ...rectAtZ });
-            setTimeout(() => setFlashRect(null), 1200);
-
-            // Calculate page top position
-            let pageTop = 0;
-            for (let i = 0; i < mark.page_index; i++) {
-              pageTop += (pageHeightsRef.current[i] || 0) + 16;
-            }
-
-            // Center the marked rectangle in the viewport
-            const markCenterX = rectAtZ.x + rectAtZ.w / 2;
-            const markCenterY = rectAtZ.y + rectAtZ.h / 2;
-            
-            const scrollLeft = markCenterX - container.clientWidth / 2;
-            const scrollTop = pageTop + markCenterY - container.clientHeight / 2;
-
-            container.scrollTo({
-              left: Math.max(0, scrollLeft),
-              top: Math.max(0, scrollTop),
-              behavior: 'smooth',
-            });
-          }, 50);
-        });
-      }, 50);
+          container.scrollTo({
+            left: Math.max(0, targetScrollLeft),
+            top: Math.max(0, targetScrollTop),
+            behavior: 'smooth',
+          });
+        }, 100);
+      });
     },
     [pdf]
   );
@@ -497,7 +491,7 @@ function EditorContent() {
     }
   }, [marks, isDemo, addToast]);
 
-  const createMark = useCallback((name: string, zoomLevel: number) => {
+  const createMark = useCallback((name: string, zoomLevel?: number) => {
     if (!pendingMark) return;
 
     const newMark: Mark = {
@@ -509,14 +503,16 @@ function EditorContent() {
       ny: pendingMark.ny!,
       nw: pendingMark.nw!,
       nh: pendingMark.nh!,
-      zoom_hint: zoomLevel,
+      zoom_hint: zoomLevel || null,
     };
 
     setMarks((prev) => [...prev, newMark]);
     setPendingMark(null);
     setShowNameBox(false);
     setCurrentRect(null);
-    addToast(`Mark "${name}" created with ${Math.round(zoomLevel * 100)}% zoom`, 'success');
+    
+    const zoomText = zoomLevel ? `with ${Math.round(zoomLevel * 100)}% zoom` : 'with auto zoom';
+    addToast(`Mark "${name}" created ${zoomText}`, 'success');
 
     setTimeout(() => navigateToMark(newMark), 100);
   }, [pendingMark, marks.length, addToast, navigateToMark]);

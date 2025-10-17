@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 
 type FloatingNameBoxProps = {
   position: { x: number; y: number };
-  onSave: (name: string, zoomLevel: number) => void;
+  onSave: (name: string, zoomLevel?: number) => void;
   onCancel: () => void;
 };
 
@@ -14,10 +14,11 @@ export default function FloatingNameBox({
   onCancel,
 }: FloatingNameBoxProps) {
   const [name, setName] = useState('');
-  const [zoomLevel, setZoomLevel] = useState(1.5); // Default 150%
+  const [zoomLevel, setZoomLevel] = useState<number | null>(null); // No default zoom
   const inputRef = useRef<HTMLInputElement>(null);
 
   const zoomPresets = [
+    { label: 'Auto', value: null },
     { label: '100%', value: 1.0 },
     { label: '125%', value: 1.25 },
     { label: '150%', value: 1.5 },
@@ -33,7 +34,7 @@ export default function FloatingNameBox({
 
   const handleSave = () => {
     if (name.trim()) {
-      onSave(name.trim(), zoomLevel);
+      onSave(name.trim(), zoomLevel ?? undefined);
     }
   };
 
@@ -93,7 +94,7 @@ export default function FloatingNameBox({
         }}>
           {zoomPresets.map((preset) => (
             <button
-              key={preset.value}
+              key={preset.label}
               onClick={() => setZoomLevel(preset.value)}
               className={`zoom-preset-btn ${zoomLevel === preset.value ? 'active' : ''}`}
               style={{
@@ -128,7 +129,7 @@ export default function FloatingNameBox({
           marginTop: '6px',
           fontStyle: 'italic'
         }}>
-          💡 This zoom level will be used when navigating to this mark in the viewer
+          💡 "Auto" will calculate optimal zoom based on mark size
         </div>
       </div>
 
