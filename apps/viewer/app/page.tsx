@@ -421,63 +421,63 @@ function ViewerContent() {
       const mark = marks[index];
       setCurrentMarkIndex(index);
 
-      setTimeout(() => {
-        const pageNumber = mark.page_index + 1;
-        const container = containerRef.current!;
+      const pageNumber = mark.page_index + 1;
+      const container = containerRef.current!;
 
-        pdf.getPage(pageNumber).then((page) => {
+      pdf.getPage(pageNumber).then((page) => {
+        // Use zoom_hint or calculate zoom to fill viewport
+        let targetZoom;
+        
+        if (mark.zoom_hint) {
+          targetZoom = clampZoom(mark.zoom_hint);
+        } else {
           const vp1 = page.getViewport({ scale: 1 });
           const rectAt1 = {
-            x: mark.nx * vp1.width,
-            y: mark.ny * vp1.height,
             w: mark.nw * vp1.width,
             h: mark.nh * vp1.height,
           };
+          
+          // Calculate zoom to make mark fill 80% of viewport
+          const zoomX = (container.clientWidth * 0.8) / rectAt1.w;
+          const zoomY = (container.clientHeight * 0.8) / rectAt1.h;
+          targetZoom = clampZoom(Math.min(zoomX, zoomY));
+        }
 
-          const targetZoom =
-            mark.zoom_hint ??
-            computeZoomForRect(
-              { w: container.clientWidth, h: container.clientHeight },
-              { w: vp1.width, h: vp1.height },
-              { w: rectAt1.w, h: rectAt1.h },
-              0.75
-            );
+        setZoom(targetZoom);
 
-          setZoom(clampZoom(targetZoom));
+        setTimeout(() => {
+          const vpZ = page.getViewport({ scale: targetZoom });
+          const rectAtZ = {
+            x: mark.nx * vpZ.width,
+            y: mark.ny * vpZ.height,
+            w: mark.nw * vpZ.width,
+            h: mark.nh * vpZ.height,
+          };
 
-          setTimeout(() => {
-            const vpZ = page.getViewport({ scale: targetZoom });
-            const rectAtZ = {
-              x: mark.nx * vpZ.width,
-              y: mark.ny * vpZ.height,
-              w: mark.nw * vpZ.width,
-              h: mark.nh * vpZ.height,
-            };
+          setFlashRect({ pageNumber, ...rectAtZ });
+          setTimeout(() => setFlashRect(null), 1200);
 
-            setFlashRect({ pageNumber, ...rectAtZ });
-            setTimeout(() => setFlashRect(null), 1200);
+          // Calculate cumulative page offset
+          let pageTop = 0;
+          for (let i = 0; i < mark.page_index; i++) {
+            pageTop += (pageHeightsRef.current[i] || 0) + 16;
+          }
 
-            // Calculate page top position
-            let pageTop = 0;
-            for (let i = 0; i < mark.page_index; i++) {
-              pageTop += (pageHeightsRef.current[i] || 0) + 16;
-            }
+          // Calculate center of marked area
+          const markCenterX = rectAtZ.x + rectAtZ.w / 2;
+          const markCenterY = rectAtZ.y + rectAtZ.h / 2;
 
-            // Center the marked rectangle in the viewport
-            const markCenterX = rectAtZ.x + rectAtZ.w / 2;
-            const markCenterY = rectAtZ.y + rectAtZ.h / 2;
-            
-            const scrollLeft = markCenterX - container.clientWidth / 2;
-            const scrollTop = pageTop + markCenterY - container.clientHeight / 2;
+          // Center the mark in viewport
+          const targetScrollLeft = markCenterX - container.clientWidth / 2;
+          const targetScrollTop = pageTop + markCenterY - container.clientHeight / 2;
 
-            container.scrollTo({
-              left: Math.max(0, scrollLeft),
-              top: Math.max(0, scrollTop),
-              behavior: 'smooth',
-            });
-          }, 60);
-        });
-      }, 50);
+          container.scrollTo({
+            left: Math.max(0, targetScrollLeft),
+            top: Math.max(0, targetScrollTop),
+            behavior: 'smooth',
+          });
+        }, 100);
+      });
     },
     [marks, pdf]
   );

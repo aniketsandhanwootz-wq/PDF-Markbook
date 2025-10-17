@@ -35,19 +35,28 @@ export default function MarkList({
 }: MarkListProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
-  const [editZoom, setEditZoom] = useState<number>(1.5);
+  const [editZoom, setEditZoom] = useState<number | null>(null);
 
-  const zoomPresets = [1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0];
+  const zoomPresets = [
+    { label: 'Auto', value: null },
+    { label: '100%', value: 1.0 },
+    { label: '125%', value: 1.25 },
+    { label: '150%', value: 1.5 },
+    { label: '175%', value: 1.75 },
+    { label: '200%', value: 2.0 },
+    { label: '250%', value: 2.5 },
+    { label: '300%', value: 3.0 },
+  ];
 
   const handleEditStart = (mark: Mark) => {
     setEditingId(mark.mark_id || null);
     setEditName(mark.name);
-    setEditZoom(mark.zoom_hint || 1.5);
+    setEditZoom(mark.zoom_hint || null);
   };
 
   const handleEditSave = (markId: string) => {
     if (editName.trim()) {
-      onUpdate(markId, { name: editName.trim(), zoom_hint: editZoom });
+      onUpdate(markId, { name: editName.trim(), zoom_hint: editZoom || null });
     }
     setEditingId(null);
   };
@@ -55,7 +64,7 @@ export default function MarkList({
   const handleEditCancel = () => {
     setEditingId(null);
     setEditName('');
-    setEditZoom(1.5);
+    setEditZoom(null);
   };
 
   return (
@@ -110,20 +119,20 @@ export default function MarkList({
                     }}>
                       {zoomPresets.map((preset) => (
                         <button
-                          key={preset}
-                          onClick={() => setEditZoom(preset)}
+                          key={preset.label}
+                          onClick={() => setEditZoom(preset.value)}
                           style={{
                             padding: '4px 8px',
                             fontSize: '11px',
-                            border: editZoom === preset ? '2px solid #1976d2' : '1px solid #ddd',
-                            background: editZoom === preset ? '#e3f2fd' : 'white',
-                            color: editZoom === preset ? '#1976d2' : '#666',
+                            border: editZoom === preset.value ? '2px solid #1976d2' : '1px solid #ddd',
+                            background: editZoom === preset.value ? '#e3f2fd' : 'white',
+                            color: editZoom === preset.value ? '#1976d2' : '#666',
                             borderRadius: '3px',
                             cursor: 'pointer',
-                            fontWeight: editZoom === preset ? '600' : '400',
+                            fontWeight: editZoom === preset.value ? '600' : '400',
                           }}
                         >
-                          {Math.round(preset * 100)}%
+                          {preset.label}
                         </button>
                       ))}
                     </div>
@@ -143,7 +152,7 @@ export default function MarkList({
                     <div className="mark-name">{mark.name}</div>
                     <div className="mark-page">
                       Page {mark.page_index + 1}
-                      {mark.zoom_hint && (
+                      {mark.zoom_hint ? (
                         <span style={{ 
                           marginLeft: '8px', 
                           fontSize: '11px',
@@ -154,6 +163,18 @@ export default function MarkList({
                           fontWeight: '500'
                         }}>
                           🔍 {Math.round(mark.zoom_hint * 100)}%
+                        </span>
+                      ) : (
+                        <span style={{ 
+                          marginLeft: '8px', 
+                          fontSize: '11px',
+                          background: '#f5f5f5',
+                          color: '#666',
+                          padding: '2px 6px',
+                          borderRadius: '3px',
+                          fontWeight: '500'
+                        }}>
+                          🔍 Auto
                         </span>
                       )}
                     </div>
