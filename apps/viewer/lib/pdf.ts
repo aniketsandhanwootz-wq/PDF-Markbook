@@ -1,3 +1,39 @@
+// Debounce utility for zoom operations
+export function debounce<T extends (...args: any[]) => any>(
+  func: T,
+  wait: number
+): (...args: Parameters<T>) => void {
+  let timeout: NodeJS.Timeout | null = null;
+  
+  return function executedFunction(...args: Parameters<T>) {
+    const later = () => {
+      timeout = null;
+      func(...args);
+    };
+    
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+    timeout = setTimeout(later, wait);
+  };
+}
+
+// Throttle utility for high-frequency events
+export function throttle<T extends (...args: any[]) => any>(
+  func: T,
+  limit: number
+): (...args: Parameters<T>) => void {
+  let inThrottle: boolean;
+  
+  return function executedFunction(...args: Parameters<T>) {
+    if (!inThrottle) {
+      func(...args);
+      inThrottle = true;
+      setTimeout(() => (inThrottle = false), limit);
+    }
+  };
+}
+
 export function clampZoom(zoom: number): number {
   return Math.max(0.25, Math.min(6.0, zoom));
 }
@@ -23,7 +59,7 @@ export function computeZoomForRect(
 }
 
 /**
- * Smoothly scroll so that rect is centered vertically within the container.
+ * Smoothly scroll so that rect is centered within the container.
  */
 export function scrollToRect(
   container: HTMLElement,
@@ -40,3 +76,33 @@ export function scrollToRect(
     behavior: 'smooth',
   });
 }
+
+/**
+ * Calculate if a page is visible in the viewport
+ */
+export function isPageVisible(
+  pageTop: number,
+  pageHeight: number,
+  scrollTop: number,
+  viewportHeight: number,
+  buffer = 200
+): boolean {
+  const pageBottom = pageTop + pageHeight;
+  const viewportTop = scrollTop - buffer;
+  const viewportBottom = scrollTop + viewportHeight + buffer;
+  
+  return pageBottom >= viewportTop && pageTop <= viewportBottom;
+}
+
+/**
+ * Request idle callback polyfill
+ */
+export const requestIdleCallback =
+  typeof window !== 'undefined' && 'requestIdleCallback' in window
+    ? window.requestIdleCallback
+    : (callback: IdleRequestCallback) => setTimeout(callback, 1);
+
+export const cancelIdleCallback =
+  typeof window !== 'undefined' && 'cancelIdleCallback' in window
+    ? window.cancelIdleCallback
+    : (id: number) => clearTimeout(id);

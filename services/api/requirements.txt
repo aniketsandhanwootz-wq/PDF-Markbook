@@ -6,3 +6,5 @@ pydantic-settings==2.6.1
 python-multipart==0.0.20
 gspread==6.1.2
 google-auth==2.35.0
+cachetools==5.3.2
+psycopg2-binary==2.9.9
