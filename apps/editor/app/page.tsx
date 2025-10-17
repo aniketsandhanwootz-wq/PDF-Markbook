@@ -1,4 +1,4 @@
- 'use client';
+'use client';
 
 import { useEffect, useState, useRef, useCallback, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
@@ -264,6 +264,11 @@ function EditorContent() {
   const [showNameBox, setShowNameBox] = useState(false);
   const [nameBoxPosition, setNameBoxPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [pendingMark, setPendingMark] = useState<Partial<Mark> | null>(null);
+  
+  // Mark editing states
+  const [editingMarkId, setEditingMarkId] = useState<string | null>(null);
+  const [editMode, setEditMode] = useState<'move' | 'resize' | null>(null);
+  const [editStart, setEditStart] = useState<{ x: number; y: number; rect: Rect } | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const pageHeightsRef = useRef<number[]>([]);
@@ -573,43 +578,54 @@ function EditorContent() {
     });
   }, [pdf]);
 
-  const handleWheel = useCallback((e: WheelEvent) => {
-    if (!e.ctrlKey && !e.metaKey) return;
-    e.preventDefault();
+  // Wheel zoom - prevent browser zoom, only zoom PDF (SLOWER SPEED)
+  useEffect(() => {
+    const handleWheel = (e: WheelEvent) => {
+      const container = containerRef.current;
+      if (!container) return;
 
-    const container = containerRef.current;
-    if (!container) return;
+      // Check if event is within PDF container
+      const target = e.target as HTMLElement;
+      if (!container.contains(target)) return;
 
-    const rect = container.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
-    const scrollLeft = container.scrollLeft;
-    const scrollTop = container.scrollTop;
-    const contentX = scrollLeft + mouseX;
-    const contentY = scrollTop + mouseY;
-    const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
+      // Check if it's a zoom gesture
+      if (!e.ctrlKey && !e.metaKey) return;
 
-    setZoom((prevZoom) => {
-      const newZoom = clampZoom(prevZoom * zoomFactor);
-      const scale = newZoom / prevZoom;
+      // STOP browser zoom
+      e.preventDefault();
+      e.stopPropagation();
 
-      setTimeout(() => {
-        if (container) {
+      const rect = container.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+      const scrollLeft = container.scrollLeft;
+      const scrollTop = container.scrollTop;
+      const contentX = scrollLeft + mouseX;
+      const contentY = scrollTop + mouseY;
+      
+      // SLOWER zoom speed - reduced from 0.9/1.1 to 0.95/1.05
+      const zoomFactor = e.deltaY > 0 ? 0.95 : 1.05;
+
+      setZoom((prevZoom) => {
+        const newZoom = clampZoom(prevZoom * zoomFactor);
+        const scale = newZoom / prevZoom;
+
+        requestAnimationFrame(() => {
           container.scrollLeft = contentX * scale - mouseX;
           container.scrollTop = contentY * scale - mouseY;
-        }
-      }, 0);
+        });
 
-      return newZoom;
-    });
+        return newZoom;
+      });
+    };
+
+    // Add to DOCUMENT to catch before browser
+    document.addEventListener('wheel', handleWheel, { passive: false, capture: true });
+    
+    return () => {
+      document.removeEventListener('wheel', handleWheel, { capture: true });
+    };
   }, []);
-
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-    container.addEventListener('wheel', handleWheel, { passive: false });
-    return () => container.removeEventListener('wheel', handleWheel);
-  }, [handleWheel]);
 
   const handleMouseDown = useCallback(
     (e: React.MouseEvent, pageIndex: number) => {
@@ -620,21 +636,99 @@ function EditorContent() {
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
 
+      // Check if clicking on existing mark overlay
+      const clickedOverlay = markOverlays.find(overlay => {
+        if (overlay.pageIndex !== pageIndex) return false;
+        const { left, top, width, height } = overlay.style;
+        return x >= left && x <= left + width && y >= top && y <= top + height;
+      });
+
+      if (clickedOverlay) {
+        // Start editing existing mark
+        const mark = marks.find(m => m.mark_id === clickedOverlay.markId);
+        if (mark) {
+          setEditingMarkId(clickedOverlay.markId);
+          const { left, top, width, height } = clickedOverlay.style;
+          
+          // Check if near edge (resize) or center (move)
+          const isNearEdge = 
+            x < left + 10 || x > left + width - 10 ||
+            y < top + 10 || y > top + height - 10;
+          
+          setEditMode(isNearEdge ? 'resize' : 'move');
+          setEditStart({
+            x,
+            y,
+            rect: { x: left, y: top, w: width, h: height }
+          });
+          e.stopPropagation();
+          return;
+        }
+      }
+
+      // Normal drawing mode
       setIsDrawing(true);
       setDrawStart({ x, y, pageIndex });
       setCurrentRect(null);
     },
-    [pdf, showNameBox]
+    [pdf, showNameBox, markOverlays, marks]
   );
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent, pageIndex: number) => {
-      if (!isDrawing || !drawStart || drawStart.pageIndex !== pageIndex) return;
-
       const target = e.currentTarget as HTMLElement;
       const rect = target.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
+
+      // Handle mark editing (move/resize)
+      if (editingMarkId && editStart && editMode) {
+        const dx = x - editStart.x;
+        const dy = y - editStart.y;
+
+        if (editMode === 'move') {
+          // Move the mark
+          const newX = Math.max(0, editStart.rect.x + dx);
+          const newY = Math.max(0, editStart.rect.y + dy);
+          
+          // Update mark overlay temporarily
+          setMarkOverlays(prev => prev.map(overlay => {
+            if (overlay.markId === editingMarkId) {
+              return {
+                ...overlay,
+                style: {
+                  ...overlay.style,
+                  left: newX,
+                  top: newY
+                }
+              };
+            }
+            return overlay;
+          }));
+        } else if (editMode === 'resize') {
+          // Resize the mark
+          const newW = Math.max(20, editStart.rect.w + dx);
+          const newH = Math.max(20, editStart.rect.h + dy);
+          
+          setMarkOverlays(prev => prev.map(overlay => {
+            if (overlay.markId === editingMarkId) {
+              return {
+                ...overlay,
+                style: {
+                  ...overlay.style,
+                  width: newW,
+                  height: newH
+                }
+              };
+            }
+            return overlay;
+          }));
+        }
+        return;
+      }
+
+      // Handle normal drawing
+      if (!isDrawing || !drawStart || drawStart.pageIndex !== pageIndex) return;
 
       const left = Math.min(drawStart.x, x);
       const top = Math.min(drawStart.y, y);
@@ -643,11 +737,37 @@ function EditorContent() {
 
       setCurrentRect({ x: left, y: top, w: width, h: height });
     },
-    [isDrawing, drawStart]
+    [isDrawing, drawStart, editingMarkId, editStart, editMode]
   );
 
   const handleMouseUp = useCallback(
     (e: React.MouseEvent, pageIndex: number) => {
+      // Handle mark editing finish
+      if (editingMarkId && editMode) {
+        const overlay = markOverlays.find(o => o.markId === editingMarkId);
+        if (overlay) {
+          const target = e.currentTarget as HTMLElement;
+          const pageWidth = target.clientWidth;
+          const pageHeight = target.clientHeight;
+
+          // Update the actual mark with new normalized coordinates
+          const updatedMark: Partial<Mark> = {
+            nx: overlay.style.left / pageWidth,
+            ny: overlay.style.top / pageHeight,
+            nw: overlay.style.width / pageWidth,
+            nh: overlay.style.height / pageHeight,
+          };
+
+          updateMark(editingMarkId, updatedMark);
+        }
+
+        setEditingMarkId(null);
+        setEditMode(null);
+        setEditStart(null);
+        return;
+      }
+
+      // Handle normal drawing finish
       if (!isDrawing || !drawStart || !currentRect || drawStart.pageIndex !== pageIndex) {
         setIsDrawing(false);
         return;
@@ -686,7 +806,7 @@ function EditorContent() {
       setShowNameBox(true);
       setIsDrawing(false);
     },
-    [isDrawing, drawStart, currentRect]
+    [isDrawing, drawStart, currentRect, editingMarkId, editMode, markOverlays, updateMark]
   );
 
   const handlePageReady = useCallback((pageNumber: number, height: number) => {
@@ -755,7 +875,7 @@ function EditorContent() {
           onFit={fitToWidthZoom}
         />
 
-        <div className="pdf-surface-wrap" ref={containerRef}>
+        <div className="pdf-surface-wrap" ref={containerRef} style={{ touchAction: 'pan-y pan-x' }}>
           <div className="pdf-surface">
             {Array.from({ length: numPages }, (_, i) => i + 1).map((pageNum) => (
               <div
@@ -784,6 +904,7 @@ function EditorContent() {
                       top: currentRect.y,
                       width: currentRect.w,
                       height: currentRect.h,
+                      pointerEvents: 'none'
                     }}
                   />
                 )}
@@ -792,9 +913,21 @@ function EditorContent() {
                   .map((overlay) => (
                     <div
                       key={overlay.markId}
-                      className={`mark-rect ${selectedMarkId === overlay.markId ? 'selected' : ''}`}
-                      style={overlay.style}
-                      onClick={() => {
+                      className={`mark-rect ${selectedMarkId === overlay.markId ? 'selected' : ''} ${editingMarkId === overlay.markId ? 'editing' : ''}`}
+                      style={{
+                        position: 'absolute',
+                        left: overlay.style.left,
+                        top: overlay.style.top,
+                        width: overlay.style.width,
+                        height: overlay.style.height,
+                        border: editingMarkId === overlay.markId ? '3px dashed #1976d2' : '2px solid #4caf50',
+                        background: editingMarkId === overlay.markId ? 'rgba(25, 118, 210, 0.2)' : 'rgba(76, 175, 80, 0.15)',
+                        cursor: editingMarkId === overlay.markId ? (editMode === 'move' ? 'move' : 'nwse-resize') : 'pointer',
+                        transition: editingMarkId === overlay.markId ? 'none' : 'all 0.2s',
+                        zIndex: editingMarkId === overlay.markId ? 10 : 5,
+                      }}
+                      onClick={(e) => {
+                        if (editingMarkId) return;
                         const mark = marks.find((m) => m.mark_id === overlay.markId);
                         if (mark) navigateToMark(mark);
                       }}

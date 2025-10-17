@@ -519,52 +519,53 @@ function ViewerContent() {
     });
   }, [pdf]);
 
-  // Wheel zoom with Ctrl/Cmd
-  const handleWheel = useCallback(
-    (e: WheelEvent) => {
-      if (!e.ctrlKey && !e.metaKey) return;
-      e.preventDefault();
-
+  // Wheel zoom - prevent browser zoom, only zoom PDF
+  useEffect(() => {
+    const handleWheel = (e: WheelEvent) => {
       const container = containerRef.current;
       if (!container) return;
+
+      // Check if event is within PDF container
+      const target = e.target as HTMLElement;
+      if (!container.contains(target)) return;
+
+      // Check if it's a zoom gesture
+      if (!e.ctrlKey && !e.metaKey) return;
+
+      // STOP browser zoom
+      e.preventDefault();
+      e.stopPropagation();
 
       const rect = container.getBoundingClientRect();
       const mouseX = e.clientX - rect.left;
       const mouseY = e.clientY - rect.top;
-
       const scrollLeft = container.scrollLeft;
       const scrollTop = container.scrollTop;
-
       const contentX = scrollLeft + mouseX;
       const contentY = scrollTop + mouseY;
-
-      const delta = e.deltaY;
-      const zoomFactor = delta > 0 ? 0.9 : 1.1;
+      
+      const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
 
       setZoom((prevZoom) => {
         const newZoom = clampZoom(prevZoom * zoomFactor);
         const scale = newZoom / prevZoom;
 
-        setTimeout(() => {
-          if (container) {
-            container.scrollLeft = contentX * scale - mouseX;
-            container.scrollTop = contentY * scale - mouseY;
-          }
-        }, 0);
+        requestAnimationFrame(() => {
+          container.scrollLeft = contentX * scale - mouseX;
+          container.scrollTop = contentY * scale - mouseY;
+        });
 
         return newZoom;
       });
-    },
-    []
-  );
+    };
 
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
-    container.addEventListener('wheel', handleWheel, { passive: false });
-    return () => container.removeEventListener('wheel', handleWheel);
-  }, [handleWheel]);
+    // Add to DOCUMENT to catch before browser
+    document.addEventListener('wheel', handleWheel, { passive: false, capture: true });
+    
+    return () => {
+      document.removeEventListener('wheel', handleWheel, { capture: true });
+    };
+  }, []);
 
   // Handle page ready callback
   const handlePageReady = useCallback((pageNumber: number, height: number) => {
@@ -627,7 +628,7 @@ function ViewerContent() {
           canNext={currentMarkIndex < marks.length - 1}
         />
 
-        <div className="pdf-surface-wrap" ref={containerRef}>
+        <div className="pdf-surface-wrap" ref={containerRef} style={{ touchAction: 'pan-y pan-x' }}>
           <div className="pdf-surface">
             {Array.from({ length: numPages }, (_, i) => i + 1).map((pageNum) => (
               <PageCanvas
