@@ -439,18 +439,24 @@ function EditorContent() {
             setFlashRect({ pageNumber, ...rectAtZ });
             setTimeout(() => setFlashRect(null), 1200);
 
+            // Calculate page top position
             let pageTop = 0;
             for (let i = 0; i < mark.page_index; i++) {
               pageTop += (pageHeightsRef.current[i] || 0) + 16;
             }
 
-            scrollToRect(
-              container,
-              pageTop,
-              undefined,
-              rectAtZ,
-              { w: container.clientWidth, h: container.clientHeight }
-            );
+            // Center the marked rectangle in the viewport
+            const markCenterX = rectAtZ.x + rectAtZ.w / 2;
+            const markCenterY = rectAtZ.y + rectAtZ.h / 2;
+            
+            const scrollLeft = markCenterX - container.clientWidth / 2;
+            const scrollTop = pageTop + markCenterY - container.clientHeight / 2;
+
+            container.scrollTo({
+              left: Math.max(0, scrollLeft),
+              top: Math.max(0, scrollTop),
+              behavior: 'smooth',
+            });
           }, 50);
         });
       }, 50);
@@ -491,7 +497,7 @@ function EditorContent() {
     }
   }, [marks, isDemo, addToast]);
 
-  const createMark = useCallback((name: string) => {
+  const createMark = useCallback((name: string, zoomLevel: number) => {
     if (!pendingMark) return;
 
     const newMark: Mark = {
@@ -503,13 +509,14 @@ function EditorContent() {
       ny: pendingMark.ny!,
       nw: pendingMark.nw!,
       nh: pendingMark.nh!,
+      zoom_hint: zoomLevel,
     };
 
     setMarks((prev) => [...prev, newMark]);
     setPendingMark(null);
     setShowNameBox(false);
     setCurrentRect(null);
-    addToast(`Mark "${name}" created`, 'success');
+    addToast(`Mark "${name}" created with ${Math.round(zoomLevel * 100)}% zoom`, 'success');
 
     setTimeout(() => navigateToMark(newMark), 100);
   }, [pendingMark, marks.length, addToast, navigateToMark]);
@@ -804,7 +811,7 @@ function EditorContent() {
           {showNameBox && (
             <FloatingNameBox
               position={nameBoxPosition}
-              onSave={createMark}
+              onSave={(name, zoomLevel) => createMark(name, zoomLevel)}
               onCancel={() => {
                 setShowNameBox(false);
                 setPendingMark(null);

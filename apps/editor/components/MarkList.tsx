@@ -35,15 +35,19 @@ export default function MarkList({
 }: MarkListProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
+  const [editZoom, setEditZoom] = useState<number>(1.5);
+
+  const zoomPresets = [1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0];
 
   const handleEditStart = (mark: Mark) => {
     setEditingId(mark.mark_id || null);
     setEditName(mark.name);
+    setEditZoom(mark.zoom_hint || 1.5);
   };
 
   const handleEditSave = (markId: string) => {
     if (editName.trim()) {
-      onUpdate(markId, { name: editName.trim() });
+      onUpdate(markId, { name: editName.trim(), zoom_hint: editZoom });
     }
     setEditingId(null);
   };
@@ -51,6 +55,7 @@ export default function MarkList({
   const handleEditCancel = () => {
     setEditingId(null);
     setEditName('');
+    setEditZoom(1.5);
   };
 
   return (
@@ -68,17 +73,61 @@ export default function MarkList({
             >
               {isEditing ? (
                 <div className="mark-edit">
-                  <input
-                    type="text"
-                    value={editName}
-                    onChange={(e) => setEditName(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') handleEditSave(mark.mark_id!);
-                      if (e.key === 'Escape') handleEditCancel();
-                    }}
-                    autoFocus
-                    className="mark-edit-input"
-                  />
+                  <div style={{ marginBottom: '8px' }}>
+                    <label style={{ 
+                      fontSize: '11px', 
+                      color: '#666', 
+                      display: 'block',
+                      marginBottom: '4px' 
+                    }}>
+                      Name
+                    </label>
+                    <input
+                      type="text"
+                      value={editName}
+                      onChange={(e) => setEditName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleEditSave(mark.mark_id!);
+                        if (e.key === 'Escape') handleEditCancel();
+                      }}
+                      autoFocus
+                      className="mark-edit-input"
+                    />
+                  </div>
+                  <div style={{ marginBottom: '8px' }}>
+                    <label style={{ 
+                      fontSize: '11px', 
+                      color: '#666', 
+                      display: 'block',
+                      marginBottom: '4px' 
+                    }}>
+                      Zoom Level
+                    </label>
+                    <div style={{ 
+                      display: 'flex', 
+                      gap: '4px', 
+                      flexWrap: 'wrap' 
+                    }}>
+                      {zoomPresets.map((preset) => (
+                        <button
+                          key={preset}
+                          onClick={() => setEditZoom(preset)}
+                          style={{
+                            padding: '4px 8px',
+                            fontSize: '11px',
+                            border: editZoom === preset ? '2px solid #1976d2' : '1px solid #ddd',
+                            background: editZoom === preset ? '#e3f2fd' : 'white',
+                            color: editZoom === preset ? '#1976d2' : '#666',
+                            borderRadius: '3px',
+                            cursor: 'pointer',
+                            fontWeight: editZoom === preset ? '600' : '400',
+                          }}
+                        >
+                          {Math.round(preset * 100)}%
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                   <div className="mark-edit-actions">
                     <button onClick={() => handleEditSave(mark.mark_id!)} className="btn-sm">
                       ✓
@@ -92,7 +141,22 @@ export default function MarkList({
                 <>
                   <div className="mark-info" onClick={() => onSelect(mark)}>
                     <div className="mark-name">{mark.name}</div>
-                    <div className="mark-page">Page {mark.page_index + 1}</div>
+                    <div className="mark-page">
+                      Page {mark.page_index + 1}
+                      {mark.zoom_hint && (
+                        <span style={{ 
+                          marginLeft: '8px', 
+                          fontSize: '11px',
+                          background: '#e3f2fd',
+                          color: '#1976d2',
+                          padding: '2px 6px',
+                          borderRadius: '3px',
+                          fontWeight: '500'
+                        }}>
+                          🔍 {Math.round(mark.zoom_hint * 100)}%
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <div className="mark-actions">
                     <button
