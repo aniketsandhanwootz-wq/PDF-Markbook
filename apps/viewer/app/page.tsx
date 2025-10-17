@@ -7,7 +7,7 @@ import type { PDFDocumentProxy } from 'pdfjs-dist';
 import PageCanvas from '../components/PageCanvas';
 import MarkList from '../components/MarkList';
 import ZoomToolbar from '../components/ZoomToolbar';
-import { clampZoom, fitToWidth, scrollToRect } from '../lib/pdf';
+import { clampZoom, computeZoomForRect, scrollToRect } from '../lib/pdf';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
@@ -33,14 +33,270 @@ type FlashRect = {
   h: number;
 } | null;
 
+type MarkSetInfo = {
+  id: string;
+  pdf_url: string;
+  name: string;
+};
+
+// Setup Screen Component for Viewer
+function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string) => void }) {
+  const [pdfUrl, setPdfUrl] = useState('');
+  const [markSetId, setMarkSetId] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [availableMarkSets, setAvailableMarkSets] = useState<MarkSetInfo[]>([]);
+  const [error, setError] = useState('');
+  const [loadingMarkSets, setLoadingMarkSets] = useState(true);
+
+  const samplePdfs = [
+    {
+      name: 'Mozilla TracemonKey (Sample)',
+      url: 'https://mozilla.github.io/pdf.js/web/compressed.tracemonkey-pldi-09.pdf'
+    },
+    {
+      name: 'PDF.js Sample',
+      url: 'https://raw.githubusercontent.com/mozilla/pdf.js/ba2edeae/examples/learning/helloworld.pdf'
+    }
+  ];
+
+  // Load available mark sets on mount
+  useEffect(() => {
+    const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
+    fetch(`${apiBase}/mark-sets`)
+      .then(res => res.json())
+      .then((data: MarkSetInfo[]) => {
+        setAvailableMarkSets(data);
+        setLoadingMarkSets(false);
+      })
+      .catch(err => {
+        console.error('Failed to load mark sets:', err);
+        setLoadingMarkSets(false);
+      });
+  }, []);
+
+  const handleStart = () => {
+    if (!pdfUrl.trim()) {
+      setError('Please enter a PDF URL or select a mark set');
+      return;
+    }
+
+    setIsLoading(true);
+    setError('');
+
+    onStart(pdfUrl.trim(), markSetId.trim());
+  };
+
+  const handleSelectMarkSet = (markSet: MarkSetInfo) => {
+    setPdfUrl(markSet.pdf_url);
+    setMarkSetId(markSet.id);
+  };
+
+  return (
+    <div style={{
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      minHeight: '100vh',
+      background: '#f5f5f5',
+      padding: '20px'
+    }}>
+      <div style={{
+        background: 'white',
+        borderRadius: '8px',
+        boxShadow: '0 2px 12px rgba(0,0,0,0.1)',
+        padding: '40px',
+        maxWidth: '600px',
+        width: '100%'
+      }}>
+        <h1 style={{ fontSize: '24px', fontWeight: '600', marginBottom: '8px' }}>
+          PDF Mark Viewer
+        </h1>
+        <p style={{ color: '#666', marginBottom: '32px' }}>
+          View and navigate marks on PDF documents
+        </p>
+
+        {/* Available Mark Sets */}
+        {availableMarkSets.length > 0 && (
+          <div style={{ marginBottom: '32px' }}>
+            <label style={{ display: 'block', fontWeight: '500', marginBottom: '12px' }}>
+              📋 Available Mark Sets
+            </label>
+            <div style={{
+              border: '1px solid #ddd',
+              borderRadius: '4px',
+              maxHeight: '200px',
+              overflowY: 'auto'
+            }}>
+              {availableMarkSets.map((markSet) => (
+                <div
+                  key={markSet.id}
+                  onClick={() => handleSelectMarkSet(markSet)}
+                  style={{
+                    padding: '12px',
+                    borderBottom: '1px solid #f0f0f0',
+                    cursor: 'pointer',
+                    background: markSetId === markSet.id ? '#e3f2fd' : 'white',
+                    transition: 'background 0.2s'
+                  }}
+                  onMouseEnter={(e) => {
+                    if (markSetId !== markSet.id) {
+                      e.currentTarget.style.background = '#f9f9f9';
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (markSetId !== markSet.id) {
+                      e.currentTarget.style.background = 'white';
+                    }
+                  }}
+                >
+                  <div style={{ fontWeight: '500', marginBottom: '4px' }}>
+                    {markSet.name}
+                  </div>
+                  <div style={{ fontSize: '12px', color: '#666', wordBreak: 'break-all' }}>
+                    {markSet.pdf_url.substring(0, 60)}...
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {loadingMarkSets && (
+          <div style={{ 
+            textAlign: 'center', 
+            padding: '20px', 
+            color: '#666',
+            marginBottom: '24px' 
+          }}>
+            Loading mark sets...
+          </div>
+        )}
+
+        <div style={{ 
+          borderTop: '2px solid #f0f0f0', 
+          paddingTop: '24px',
+          marginTop: availableMarkSets.length > 0 ? '0' : '0'
+        }}>
+          <label style={{ display: 'block', fontWeight: '500', marginBottom: '8px' }}>
+            🔗 Or Enter PDF URL
+          </label>
+          <input
+            type="text"
+            value={pdfUrl}
+            onChange={(e) => setPdfUrl(e.target.value)}
+            placeholder="https://example.com/document.pdf"
+            style={{
+              width: '100%',
+              padding: '12px',
+              border: '1px solid #ddd',
+              borderRadius: '4px',
+              fontSize: '14px'
+            }}
+          />
+          <div style={{ marginTop: '8px', fontSize: '12px', color: '#666' }}>
+            Sample PDFs:
+          </div>
+          <div style={{ display: 'flex', gap: '8px', marginTop: '4px', flexWrap: 'wrap' }}>
+            {samplePdfs.map((sample, idx) => (
+              <button
+                key={idx}
+                onClick={() => setPdfUrl(sample.url)}
+                style={{
+                  padding: '6px 12px',
+                  fontSize: '12px',
+                  border: '1px solid #1976d2',
+                  background: 'white',
+                  color: '#1976d2',
+                  borderRadius: '4px',
+                  cursor: 'pointer'
+                }}
+              >
+                {sample.name}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ marginTop: '24px', marginBottom: '24px' }}>
+          <label style={{ display: 'block', fontWeight: '500', marginBottom: '8px' }}>
+            🏷️ Mark Set ID (Optional)
+          </label>
+          <input
+            type="text"
+            value={markSetId}
+            onChange={(e) => setMarkSetId(e.target.value)}
+            placeholder="Leave empty to view PDF without marks"
+            style={{
+              width: '100%',
+              padding: '12px',
+              border: '1px solid #ddd',
+              borderRadius: '4px',
+              fontSize: '14px'
+            }}
+          />
+        </div>
+
+        {error && (
+          <div style={{
+            padding: '12px',
+            background: '#ffebee',
+            color: '#c62828',
+            borderRadius: '4px',
+            marginBottom: '24px',
+            fontSize: '14px'
+          }}>
+            {error}
+          </div>
+        )}
+
+        <button
+          onClick={handleStart}
+          disabled={isLoading}
+          style={{
+            width: '100%',
+            padding: '14px',
+            background: isLoading ? '#ccc' : '#1976d2',
+            color: 'white',
+            border: 'none',
+            borderRadius: '4px',
+            fontSize: '16px',
+            fontWeight: '600',
+            cursor: isLoading ? 'not-allowed' : 'pointer'
+          }}
+        >
+          {isLoading ? 'Loading...' : 'Open PDF'}
+        </button>
+
+        <div style={{
+          marginTop: '24px',
+          padding: '16px',
+          background: '#f9f9f9',
+          borderRadius: '4px',
+          fontSize: '13px',
+          color: '#666'
+        }}>
+          <strong>💡 Tips:</strong>
+          <ul style={{ marginTop: '8px', paddingLeft: '20px' }}>
+            <li>Select a mark set from the list above to view with marks</li>
+            <li>Or enter a PDF URL directly to view without marks</li>
+            <li>Use Ctrl/Cmd + Scroll to zoom in/out</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Main Viewer Component
 function ViewerContent() {
   const searchParams = useSearchParams();
+  const [showSetup, setShowSetup] = useState(true);
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [numPages, setNumPages] = useState(0);
   const [marks, setMarks] = useState<Mark[]>([]);
   const [currentMarkIndex, setCurrentMarkIndex] = useState(-1);
   const [zoom, setZoom] = useState(1.0);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [flashRect, setFlashRect] = useState<FlashRect>(null);
@@ -48,14 +304,33 @@ function ViewerContent() {
   const containerRef = useRef<HTMLDivElement>(null);
   const pageHeightsRef = useRef<number[]>([]);
 
-  // Parse query params
   const isDemo = searchParams?.get('demo') === '1';
+  const pdfUrlParam = searchParams?.get('pdf_url') || '';
+  const markSetIdParam = searchParams?.get('mark_set_id') || '';
+
+  // Check if we should show setup screen
+  useEffect(() => {
+    if (isDemo || pdfUrlParam) {
+      setShowSetup(false);
+    }
+  }, [isDemo, pdfUrlParam]);
+
+  const handleSetupComplete = (url: string, setId: string) => {
+    const params = new URLSearchParams();
+    params.set('pdf_url', url);
+    if (setId) {
+      params.set('mark_set_id', setId);
+    }
+    const newUrl = `${window.location.pathname}?${params.toString()}`;
+    window.location.href = newUrl;
+  };
+
   const pdfUrl = isDemo
     ? 'https://mozilla.github.io/pdf.js/web/compressed.tracemonkey-pldi-09.pdf'
-    : searchParams?.get('pdf_url') || '';
-  const markSetId = searchParams?.get('mark_set_id') || '';
+    : pdfUrlParam || 'https://mozilla.github.io/pdf.js/web/compressed.tracemonkey-pldi-09.pdf';
 
-  // Demo marks
+  const markSetId = markSetIdParam;
+
   const demoMarks: Mark[] = [
     {
       mark_id: 'demo-1',
@@ -83,6 +358,8 @@ function ViewerContent() {
 
   // Load PDF
   useEffect(() => {
+    if (showSetup) return;
+    
     if (!pdfUrl) {
       setError('No PDF URL provided');
       setLoading(false);
@@ -104,16 +381,21 @@ function ViewerContent() {
         setError('Failed to load PDF');
         setLoading(false);
       });
-  }, [pdfUrl]);
+  }, [pdfUrl, showSetup]);
 
   // Load marks
   useEffect(() => {
+    if (showSetup) return;
+
     if (isDemo) {
       setMarks(demoMarks);
       return;
     }
 
-    if (!markSetId) return;
+    if (!markSetId) {
+      setMarks([]);
+      return;
+    }
 
     const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
     fetch(`${apiBase}/mark-sets/${markSetId}/marks`)
@@ -127,77 +409,72 @@ function ViewerContent() {
       })
       .catch((err) => {
         console.error('Marks fetch error:', err);
+        setMarks([]);
       });
-  }, [markSetId, isDemo]);
+  }, [markSetId, isDemo, showSetup]);
 
   // Navigate to mark
-  // Navigate to mark
-    const navigateToMark = useCallback(
-      (index: number) => {
-        if (!pdf || index < 0 || index >= marks.length) return;
+  const navigateToMark = useCallback(
+    (index: number) => {
+      if (!pdf || index < 0 || index >= marks.length) return;
 
-        const mark = marks[index];
-        setCurrentMarkIndex(index);
+      const mark = marks[index];
+      setCurrentMarkIndex(index);
 
-        setTimeout(() => {
-          const pageNumber = mark.page_index + 1;
-          const container = containerRef.current!;
+      setTimeout(() => {
+        const pageNumber = mark.page_index + 1;
+        const container = containerRef.current!;
 
-          pdf.getPage(pageNumber).then((page) => {
-            // 1) Compute rect @ scale=1
-            const vp1 = page.getViewport({ scale: 1 });
-            const rectAt1 = {
-              x: mark.nx * vp1.width,
-              y: mark.ny * vp1.height,
-              w: mark.nw * vp1.width,
-              h: mark.nh * vp1.height,
+        pdf.getPage(pageNumber).then((page) => {
+          const vp1 = page.getViewport({ scale: 1 });
+          const rectAt1 = {
+            x: mark.nx * vp1.width,
+            y: mark.ny * vp1.height,
+            w: mark.nw * vp1.width,
+            h: mark.nh * vp1.height,
+          };
+
+          const targetZoom =
+            mark.zoom_hint ??
+            computeZoomForRect(
+              { w: container.clientWidth, h: container.clientHeight },
+              { w: vp1.width, h: vp1.height },
+              { w: rectAt1.w, h: rectAt1.h },
+              0.75
+            );
+
+          setZoom(clampZoom(targetZoom));
+
+          setTimeout(() => {
+            const vpZ = page.getViewport({ scale: targetZoom });
+            const rectAtZ = {
+              x: mark.nx * vpZ.width,
+              y: mark.ny * vpZ.height,
+              w: mark.nw * vpZ.width,
+              h: mark.nh * vpZ.height,
             };
 
-            // 2) Use zoom_hint if provided, else compute optimal zoom
-            const targetZoom =
-              mark.zoom_hint ??
-              computeZoomForRect(
-                { w: container.clientWidth, h: container.clientHeight },
-                { w: vp1.width, h: vp1.height },
-                { w: rectAt1.w, h: rectAt1.h },
-                0.75
-              );
+            setFlashRect({ pageNumber, ...rectAtZ });
+            setTimeout(() => setFlashRect(null), 1200);
 
-            setZoom(clampZoom(targetZoom));
+            let pageTop = 0;
+            for (let i = 0; i < mark.page_index; i++) {
+              pageTop += (pageHeightsRef.current[i] || 0) + 16;
+            }
 
-            // 3) After zoom update, compute pixel rect at targetZoom and scroll
-            setTimeout(() => {
-              const vpZ = page.getViewport({ scale: targetZoom });
-              const rectAtZ = {
-                x: mark.nx * vpZ.width,
-                y: mark.ny * vpZ.height,
-                w: mark.nw * vpZ.width,
-                h: mark.nh * vpZ.height,
-              };
-
-              // Flash highlight
-              setFlashRect({ pageNumber, ...rectAtZ });
-              setTimeout(() => setFlashRect(null), 1200);
-
-              // Compute vertical page top
-              let pageTop = 0;
-              for (let i = 0; i < mark.page_index; i++) {
-                pageTop += (pageHeightsRef.current[i] || 0) + 16;
-              }
-
-              scrollToRect(
-                container,
-                pageTop,
-                undefined,
-                rectAtZ,
-                { w: container.clientWidth, h: container.clientHeight }
-              );
-            }, 60);
-          });
-        }, 50);
-      },
-      [marks, pdf]
-    );
+            scrollToRect(
+              container,
+              pageTop,
+              undefined,
+              rectAtZ,
+              { w: container.clientWidth, h: container.clientHeight }
+            );
+          }, 60);
+        });
+      }, 50);
+    },
+    [marks, pdf]
+  );
     
   // Previous/Next mark
   const prevMark = useCallback(() => {
@@ -231,7 +508,7 @@ function ViewerContent() {
     pdf.getPage(1).then((page) => {
       const viewport = page.getViewport({ scale: 1.0 });
       const containerWidth = containerRef.current!.clientWidth - 32;
-      const newZoom = fitToWidth(containerWidth, viewport.width);
+      const newZoom = containerWidth / viewport.width;
       setZoom(clampZoom(newZoom));
     });
   }, [pdf]);
@@ -287,6 +564,10 @@ function ViewerContent() {
   const handlePageReady = useCallback((pageNumber: number, height: number) => {
     pageHeightsRef.current[pageNumber - 1] = height;
   }, []);
+
+  if (showSetup) {
+    return <ViewerSetupScreen onStart={handleSetupComplete} />;
+  }
 
   if (loading) {
     return (
