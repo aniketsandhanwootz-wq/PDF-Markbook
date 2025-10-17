@@ -2,38 +2,41 @@ export function clampZoom(zoom: number): number {
   return Math.max(0.25, Math.min(6.0, zoom));
 }
 
+/**
+ * Returns a zoom that makes rectSize fit within containerSize,
+ * given the pageSize at scale=1. Adds paddingRatio (0..1) around the rect.
+ */
 export function computeZoomForRect(
-  container: { w: number; h: number },
-  pageSizeAtScale1: { w: number; h: number },
-  rectAtScale1: { w: number; h: number },
-  fill = 0.75
+  containerSize: { w: number; h: number },
+  pageSizeAt1: { w: number; h: number },
+  rectSizeAt1: { w: number; h: number },
+  paddingRatio = 0.1
 ): number {
-  const sx = (container.w * fill) / Math.max(1, rectAtScale1.w);
-  const sy = (container.h * fill) / Math.max(1, rectAtScale1.h);
-  return clampZoom(Math.min(sx, sy));
+  const padW = rectSizeAt1.w * paddingRatio;
+  const padH = rectSizeAt1.h * paddingRatio;
+  const neededW = rectSizeAt1.w + padW * 2;
+  const neededH = rectSizeAt1.h + padH * 2;
+
+  const scaleX = containerSize.w / neededW;
+  const scaleY = containerSize.h / neededH;
+  return clampZoom(Math.min(scaleX, scaleY));
 }
 
 /**
- * Scroll so the rect is centered in both axes.
- * pageTopPx = Y offset (in scroll content) where the current page starts.
- * pageWidthPx = width of the page at the CURRENT zoom.
+ * Smoothly scroll so that rect is centered vertically within the container.
  */
 export function scrollToRect(
-  containerEl: HTMLElement,
-  pageTopPx: number,
-  pageWidthPx: number,
-  rectPxAtCurrentZoom: { x: number; y: number; w: number; h: number },
+  container: HTMLElement,
+  pageTop: number,
+  _pageWidthPxOrRectLeft: number | undefined | null,
+  rectPx: { x: number; y: number; w: number; h: number },
   viewportSize: { w: number; h: number }
-) {
-  const rectCenterY = pageTopPx + rectPxAtCurrentZoom.y + rectPxAtCurrentZoom.h / 2;
-  const targetTop = Math.max(0, rectCenterY - viewportSize.h / 2);
+): void {
+  const rectCenterY = pageTop + rectPx.y + rectPx.h / 2;
+  const targetScrollTop = rectCenterY - viewportSize.h / 2;
 
-  // If page narrower than container, no need to scroll horizontally.
-  let targetLeft = 0;
-  if (pageWidthPx > viewportSize.w) {
-    const rectCenterX = rectPxAtCurrentZoom.x + rectPxAtCurrentZoom.w / 2;
-    targetLeft = Math.max(0, rectCenterX - viewportSize.w / 2);
-  }
-
-  containerEl.scrollTo({ top: targetTop, left: targetLeft, behavior: 'smooth' });
+  container.scrollTo({
+    top: Math.max(0, targetScrollTop),
+    behavior: 'smooth',
+  });
 }

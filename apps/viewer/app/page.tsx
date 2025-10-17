@@ -139,9 +139,9 @@ function ViewerContent() {
         const mark = marks[index];
         setCurrentMarkIndex(index);
 
-        // Wait for state update, then compute zoom and scroll
         setTimeout(() => {
           const pageNumber = mark.page_index + 1;
+          const container = containerRef.current!;
 
           pdf.getPage(pageNumber).then((page) => {
             // 1) Compute rect @ scale=1
@@ -153,23 +153,21 @@ function ViewerContent() {
               h: mark.nh * vp1.height,
             };
 
-            // 2) Decide the best zoom for this rect
-            const container = containerRef.current!;
-            const targetZoom2 = computeZoomForRect(
-              { w: container.clientWidth, h: container.clientHeight },
-              { w: vp1.width, h: vp1.height },
-              { w: rectAt1.w, h: rectAt1.h },
-              0.75
-            );
+            // 2) Use zoom_hint if provided, else compute optimal zoom
+            const targetZoom =
+              mark.zoom_hint ??
+              computeZoomForRect(
+                { w: container.clientWidth, h: container.clientHeight },
+                { w: vp1.width, h: vp1.height },
+                { w: rectAt1.w, h: rectAt1.h },
+                0.75
+              );
 
-            // Apply the new zoom
-            setZoom(targetZoom2);
+            setZoom(clampZoom(targetZoom));
 
-            // 3) After the zoom is applied in the DOM, scroll & flash
+            // 3) After zoom update, compute pixel rect at targetZoom and scroll
             setTimeout(() => {
-              const vpZ = page.getViewport({ scale: targetZoom2 });
-              const pageWidthPx = vpZ.width;
-
+              const vpZ = page.getViewport({ scale: targetZoom });
               const rectAtZ = {
                 x: mark.nx * vpZ.width,
                 y: mark.ny * vpZ.height,
@@ -177,24 +175,24 @@ function ViewerContent() {
                 h: mark.nh * vpZ.height,
               };
 
-              // flash
+              // Flash highlight
               setFlashRect({ pageNumber, ...rectAtZ });
               setTimeout(() => setFlashRect(null), 1200);
 
-              // compute vertical page top across previous pages
+              // Compute vertical page top
               let pageTop = 0;
               for (let i = 0; i < mark.page_index; i++) {
-                pageTop += (pageHeightsRef.current[i] || 0) + 16; // 16px gap
+                pageTop += (pageHeightsRef.current[i] || 0) + 16;
               }
 
               scrollToRect(
                 container,
                 pageTop,
-                pageWidthPx,
+                undefined,
                 rectAtZ,
                 { w: container.clientWidth, h: container.clientHeight }
               );
-            }, 50);
+            }, 60);
           });
         }, 50);
       },

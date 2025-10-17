@@ -208,66 +208,66 @@ function EditorContent() {
   }, [pdf, marks, zoom]);
 
   // Navigate to mark
-  const navigateToMark = useCallback(
-    (mark: Mark) => {
-      if (!pdf) return;
+  // Navigate to mark
+    const navigateToMark = useCallback(
+      (mark: Mark) => {
+        if (!pdf) return;
 
-      setSelectedMarkId(mark.mark_id || null);
+        setSelectedMarkId(mark.mark_id || null);
 
-      setTimeout(() => {
-        const pageNumber = mark.page_index + 1;
-
-        pdf.getPage(pageNumber).then((page) => {
-          const vp1 = page.getViewport({ scale: 1 });
-          const rectAt1 = {
-            x: mark.nx * vp1.width,
-            y: mark.ny * vp1.height,
-            w: mark.nw * vp1.width,
-            h: mark.nh * vp1.height,
-          };
-
+        setTimeout(() => {
+          const pageNumber = mark.page_index + 1;
           const container = containerRef.current!;
-          const targetZoom = computeZoomForRect(
-            { w: container.clientWidth, h: container.clientHeight },
-            { w: vp1.width, h: vp1.height },
-            { w: rectAt1.w, h: rectAt1.h },
-            0.75
-          );
 
-          setZoom(targetZoom);
-
-          setTimeout(() => {
-            const vpZ = page.getViewport({ scale: targetZoom });
-            const pageWidthPx = vpZ.width;
-
-            const rectAtZ = {
-              x: mark.nx * vpZ.width,
-              y: mark.ny * vpZ.height,
-              w: mark.nw * vpZ.width,
-              h: mark.nh * vpZ.height,
+          pdf.getPage(pageNumber).then((page) => {
+            const vp1 = page.getViewport({ scale: 1 });
+            const rectAt1 = {
+              x: mark.nx * vp1.width,
+              y: mark.ny * vp1.height,
+              w: mark.nw * vp1.width,
+              h: mark.nh * vp1.height,
             };
 
-            setFlashRect({ pageNumber, ...rectAtZ });
-            setTimeout(() => setFlashRect(null), 1200);
-
-            let pageTop = 0;
-            for (let i = 0; i < mark.page_index; i++) {
-              pageTop += (pageHeightsRef.current[i] || 0) + 16;
-            }
-
-            scrollToRect(
-              container,
-              pageTop,
-              pageWidthPx,
-              rectAtZ,
-              { w: container.clientWidth, h: container.clientHeight }
+            const targetZoom = computeZoomForRect(
+              { w: container.clientWidth, h: container.clientHeight },
+              { w: vp1.width, h: vp1.height },
+              { w: rectAt1.w, h: rectAt1.h },
+              0.75
             );
-          }, 50);
-        });
-      }, 50);
-    },
-    [pdf]
-  );
+
+            setZoom(targetZoom);
+
+            setTimeout(() => {
+              const vpZ = page.getViewport({ scale: targetZoom });
+
+              const rectAtZ = {
+                x: mark.nx * vpZ.width,
+                y: mark.ny * vpZ.height,
+                w: mark.nw * vpZ.width,
+                h: mark.nh * vpZ.height,
+              };
+
+              setFlashRect({ pageNumber, ...rectAtZ });
+              setTimeout(() => setFlashRect(null), 1200);
+
+              let pageTop = 0;
+              for (let i = 0; i < mark.page_index; i++) {
+                pageTop += (pageHeightsRef.current[i] || 0) + 16;
+              }
+
+              scrollToRect(
+                container,
+                pageTop,
+                undefined, // compatibility param
+                rectAtZ,
+                { w: container.clientWidth, h: container.clientHeight }
+              );
+            }, 50);
+          });
+        }, 50);
+      },
+      [pdf]
+    );
 
   // Save marks
   const saveMarks = useCallback(async () => {
