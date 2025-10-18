@@ -306,7 +306,7 @@ body {
   gap: 16px;
   width: max-content;
   margin: 0 auto;
-  min-width: 100%;
+ /* min-width: 100%; */
 }
 
 .page-container {
