@@ -222,11 +222,14 @@ body {
   background: white;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
   margin: 0 auto;
+  width: fit-content;  /* ← ADD THIS */
 }
 
 .page-canvas {
   display: block;
   position: relative;
+  max-width: 100%;  /* ← ADD THIS */
+  height: auto;     /* ← ADD THIS */
 }
 
 .page-overlay {
