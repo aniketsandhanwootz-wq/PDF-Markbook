@@ -28,9 +28,9 @@ export default function FloatingNameBox({
     { label: '300%', value: 3.0 },
   ];
 
-  useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
+    useEffect(() => {
+    inputRef.current?.focus({ preventScroll: true });
+    }, []);
 
   const handleSave = () => {
     if (name.trim()) {
@@ -38,13 +38,17 @@ export default function FloatingNameBox({
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+    const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
-      handleSave();
+        e.preventDefault();
+        e.stopPropagation();
+        handleSave();
     } else if (e.key === 'Escape') {
-      onCancel();
+        e.preventDefault();
+        e.stopPropagation();
+        onCancel();
     }
-  };
+    };
 
   return (
     <div

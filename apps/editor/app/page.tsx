@@ -426,6 +426,7 @@ function EditorContent() {
 
         setZoom(targetZoom);
 
+        // Wait for zoom to take effect and pages to re-render
         setTimeout(() => {
           const vpZ = page.getViewport({ scale: targetZoom });
           const rectAtZ = {
@@ -438,26 +439,44 @@ function EditorContent() {
           setFlashRect({ pageNumber, ...rectAtZ });
           setTimeout(() => setFlashRect(null), 1200);
 
-          // Calculate cumulative page offset
-          let pageTop = 0;
+          // Calculate cumulative page offset using CURRENT page heights at new zoom
+          let pageTop = 16; // Initial padding
           for (let i = 0; i < mark.page_index; i++) {
-            pageTop += (pageHeightsRef.current[i] || 0) + 16;
+            // Recalculate page height at current zoom instead of using cached values
+            pdf.getPage(i + 1).then(p => {
+              const vp = p.getViewport({ scale: targetZoom });
+              pageTop += vp.height + 16; // 16px gap between pages
+            });
           }
 
-          // Calculate center of marked area
-          const markCenterX = rectAtZ.x + rectAtZ.w / 2;
-          const markCenterY = rectAtZ.y + rectAtZ.h / 2;
+          // Better approach: directly calculate using the new zoom
+          const calculateScrollPosition = async () => {
+            let calculatedPageTop = 16;
+            
+            // Calculate cumulative height of all previous pages
+            for (let i = 0; i < mark.page_index; i++) {
+              const p = await pdf.getPage(i + 1);
+              const vp = p.getViewport({ scale: targetZoom });
+              calculatedPageTop += vp.height + 16;
+            }
 
-          // Center the mark in viewport
-          const targetScrollLeft = markCenterX - container.clientWidth / 2;
-          const targetScrollTop = pageTop + markCenterY - container.clientHeight / 2;
+            // Calculate center of marked area
+            const markCenterX = rectAtZ.x + rectAtZ.w / 2;
+            const markCenterY = rectAtZ.y + rectAtZ.h / 2;
 
-          container.scrollTo({
-            left: Math.max(0, targetScrollLeft),
-            top: Math.max(0, targetScrollTop),
-            behavior: 'smooth',
-          });
-        }, 100);
+            // Center the mark in viewport
+            const targetScrollLeft = markCenterX - container.clientWidth / 2;
+            const targetScrollTop = calculatedPageTop + markCenterY - container.clientHeight / 2;
+
+            container.scrollTo({
+              left: Math.max(0, targetScrollLeft),
+              top: Math.max(0, targetScrollTop),
+              behavior: 'smooth',
+            });
+          };
+
+          calculateScrollPosition();
+        }, 150); // Increased timeout to ensure zoom completes
       });
     },
     [pdf]
@@ -499,6 +518,11 @@ function EditorContent() {
   const createMark = useCallback((name: string, zoomLevel?: number) => {
     if (!pendingMark) return;
 
+    // SAVE scroll position BEFORE state changes
+    const container = containerRef.current;
+    const scrollLeft = container?.scrollLeft || 0;
+    const scrollTop = container?.scrollTop || 0;
+
     const newMark: Mark = {
       mark_id: `temp-${Date.now()}`,
       page_index: pendingMark.page_index!,
@@ -516,10 +540,21 @@ function EditorContent() {
     setShowNameBox(false);
     setCurrentRect(null);
     
+    // RESTORE scroll position immediately to prevent jump
+    requestAnimationFrame(() => {
+      if (container) {
+        container.scrollLeft = scrollLeft;
+        container.scrollTop = scrollTop;
+      }
+      
+      // THEN navigate to the new mark after a brief delay
+      setTimeout(() => {
+        navigateToMark(newMark);
+      }, 150);
+    });
+    
     const zoomText = zoomLevel ? `with ${Math.round(zoomLevel * 100)}% zoom` : 'with auto zoom';
     addToast(`Mark "${name}" created ${zoomText}`, 'success');
-
-    setTimeout(() => navigateToMark(newMark), 100);
   }, [pendingMark, marks.length, addToast, navigateToMark]);
 
   const updateMark = useCallback((markId: string, updates: Partial<Mark>) => {
