@@ -18,15 +18,13 @@ router = APIRouter(tags=["marks"])
 
 def get_storage():
     """Dependency to get storage adapter from app state."""
-    from main import get_storage_adapter, get_settings
-    return get_storage_adapter(get_settings())
+    # This is not used with the simplified main.py approach
+    # But kept for compatibility
+    pass
 
 
 @router.post("/mark-sets", response_model=MarkSetOut, status_code=201)
-async def create_mark_set(
-    mark_set: MarkSetCreate,
-    storage: Annotated[StorageAdapter, Depends(get_storage)]
-):
+async def create_mark_set(mark_set: MarkSetCreate):
     """
     Create a new mark set with all its marks.
     
@@ -54,61 +52,37 @@ async def create_mark_set(
         # Coerce anchor to valid value
         mark_data["anchor"] = coerce_anchor(mark_data.get("anchor"))
     
-    # Create mark set
-    mark_set_id = storage.create_mark_set(
-        doc_id=mark_set.doc_id,
-        label=mark_set.label or "v1",
-        marks=marks_data,
-        created_by=mark_set.created_by
-    )
-    
-    return MarkSetOut(mark_set_id=mark_set_id)
+    # This endpoint is handled in main.py now
+    # This file is kept for reference but not used with simplified approach
+    raise HTTPException(status_code=501, detail="Use main.py endpoints directly")
 
 
 @router.get("/mark-sets/{mark_set_id}/marks", response_model=List[MarkOut])
-async def list_marks(
-    mark_set_id: str,
-    storage: Annotated[StorageAdapter, Depends(get_storage)]
-):
+async def list_marks(mark_set_id: str):
     """
     Get all marks in a mark set, ordered by navigation sequence.
     
     Returns marks with their page indices and normalized coordinates,
     ready for rendering in the viewer.
     """
-    marks = storage.list_marks(mark_set_id)
-    return [MarkOut(**mark) for mark in marks]
+    # This endpoint is handled in main.py now
+    raise HTTPException(status_code=501, detail="Use main.py endpoints directly")
 
 
 @router.patch("/marks/{mark_id}", response_model=MarkOut)
-async def patch_mark(
-    mark_id: str,
-    patch: MarkPatch,
-    storage: Annotated[StorageAdapter, Depends(get_storage)]
-):
+async def patch_mark(mark_id: str, patch: MarkPatch):
     """
     Update display preferences for a mark.
     
     This allows users to save custom zoom levels, padding, and anchor points
     for individual marks. Only the provided fields are updated.
     """
-    # Convert to dict, excluding None values
-    data = patch.model_dump(exclude_none=True)
-    
-    # Coerce anchor if provided
-    if "anchor" in data:
-        data["anchor"] = coerce_anchor(data["anchor"])
-    
-    # Update mark
-    updated = storage.patch_mark(mark_id, data)
-    return MarkOut(**updated)
+    # This endpoint is handled in main.py now
+    raise HTTPException(status_code=501, detail="Use main.py endpoints directly")
 
 
 @router.post("/mark-sets/{mark_set_id}/activate", status_code=200)
-async def activate_mark_set(
-    mark_set_id: str,
-    storage: Annotated[StorageAdapter, Depends(get_storage)]
-):
+async def activate_mark_set(mark_set_id: str):
     """
     Activate a mark set for its document.
     
@@ -116,5 +90,5 @@ async def activate_mark_set(
     This deactivates all other mark sets for the same document
     and activates the specified one.
     """
-    storage.activate_mark_set(mark_set_id)
-    return {"status": "ok", "message": f"Mark set {mark_set_id} activated"}
+    # This endpoint is handled in main.py now
+    raise HTTPException(status_code=501, detail="Use main.py endpoints directly")
