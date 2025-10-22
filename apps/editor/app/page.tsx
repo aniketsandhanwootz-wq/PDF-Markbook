@@ -403,84 +403,76 @@ function EditorContent() {
     updateOverlays();
   }, [pdf, marks, zoom]);
 
-  const navigateToMark = useCallback(
-    (mark: Mark) => {
-      if (!pdf) return;
+const navigateToMark = useCallback(
+  async (mark: Mark) => {
+    if (!pdf || !containerRef.current) return;
 
-      setSelectedMarkId(mark.mark_id || null);
+    setSelectedMarkId(mark.mark_id || null);
 
-      const pageNumber = mark.page_index + 1;
-      const container = containerRef.current!;
+    const pageNumber = mark.page_index + 1;
+    const container = containerRef.current;
 
-      pdf.getPage(pageNumber).then((page) => {
-        const vp1 = page.getViewport({ scale: 1 });
-        const rectAt1 = {
-          w: mark.nw * vp1.width,
-          h: mark.nh * vp1.height,
-        };
+    try {
+      const page = await pdf.getPage(pageNumber);
+      const vp1 = page.getViewport({ scale: 1 });
+      const rectAt1 = {
+        w: mark.nw * vp1.width,
+        h: mark.nh * vp1.height,
+      };
 
-        // Calculate zoom to make mark fill 80% of viewport
-        const zoomX = (container.clientWidth * 0.8) / rectAt1.w;
-        const zoomY = (container.clientHeight * 0.8) / rectAt1.h;
-        const targetZoom = clampZoom(Math.min(zoomX, zoomY));
+      // Calculate zoom to make mark fill 80% of viewport
+      const zoomX = (container.clientWidth * 0.8) / rectAt1.w;
+      const zoomY = (container.clientHeight * 0.8) / rectAt1.h;
+      const targetZoom = clampZoom(Math.min(zoomX, zoomY));
 
-        setZoom(targetZoom);
+      // Set zoom first
+      setZoom(targetZoom);
 
-        // Wait for zoom to take effect and pages to re-render
-        setTimeout(() => {
-          const vpZ = page.getViewport({ scale: targetZoom });
-          const rectAtZ = {
-            x: mark.nx * vpZ.width,
-            y: mark.ny * vpZ.height,
-            w: mark.nw * vpZ.width,
-            h: mark.nh * vpZ.height,
-          };
+      // Wait for zoom to apply and pages to re-render
+      await new Promise(resolve => setTimeout(resolve, 200));
 
-          setFlashRect({ pageNumber, ...rectAtZ });
-          setTimeout(() => setFlashRect(null), 1200);
+      // Now calculate positions at the NEW zoom level
+      const vpZ = page.getViewport({ scale: targetZoom });
+      const rectAtZ = {
+        x: mark.nx * vpZ.width,
+        y: mark.ny * vpZ.height,
+        w: mark.nw * vpZ.width,
+        h: mark.nh * vpZ.height,
+      };
 
-          // Calculate cumulative page offset using CURRENT page heights at new zoom
-          let pageTop = 16; // Initial padding
-          for (let i = 0; i < mark.page_index; i++) {
-            // Recalculate page height at current zoom instead of using cached values
-            pdf.getPage(i + 1).then(p => {
-              const vp = p.getViewport({ scale: targetZoom });
-              pageTop += vp.height + 16; // 16px gap between pages
-            });
-          }
+      // Flash the mark
+      setFlashRect({ pageNumber, ...rectAtZ });
+      setTimeout(() => setFlashRect(null), 1200);
 
-          // Better approach: directly calculate using the new zoom
-          const calculateScrollPosition = async () => {
-            let calculatedPageTop = 16;
-            
-            // Calculate cumulative height of all previous pages
-            for (let i = 0; i < mark.page_index; i++) {
-              const p = await pdf.getPage(i + 1);
-              const vp = p.getViewport({ scale: targetZoom });
-              calculatedPageTop += vp.height + 16;
-            }
+      // Calculate cumulative page offset at NEW zoom
+      let cumulativeTop = 16; // Initial padding
+      
+      for (let i = 0; i < mark.page_index; i++) {
+        const prevPage = await pdf.getPage(i + 1);
+        const prevVp = prevPage.getViewport({ scale: targetZoom });
+        cumulativeTop += prevVp.height + 16; // Height + gap
+      }
 
-            // Calculate center of marked area
-            const markCenterX = rectAtZ.x + rectAtZ.w / 2;
-            const markCenterY = rectAtZ.y + rectAtZ.h / 2;
+      // Calculate center of marked area
+      const markCenterX = rectAtZ.x + rectAtZ.w / 2;
+      const markCenterY = rectAtZ.y + rectAtZ.h / 2;
 
-            // Center the mark in viewport
-            const targetScrollLeft = markCenterX - container.clientWidth / 2;
-            const targetScrollTop = calculatedPageTop + markCenterY - container.clientHeight / 2;
+      // Center the mark in viewport
+      const targetScrollLeft = markCenterX - container.clientWidth / 2;
+      const targetScrollTop = cumulativeTop + markCenterY - container.clientHeight / 2;
 
-            container.scrollTo({
-              left: Math.max(0, targetScrollLeft),
-              top: Math.max(0, targetScrollTop),
-              behavior: 'smooth',
-            });
-          };
-
-          calculateScrollPosition();
-        }, 150); // Increased timeout to ensure zoom completes
+      // Scroll to position
+      container.scrollTo({
+        left: Math.max(0, targetScrollLeft),
+        top: Math.max(0, targetScrollTop),
+        behavior: 'smooth',
       });
-    },
-    [pdf]
-  );
+    } catch (error) {
+      console.error('Navigation error:', error);
+    }
+  },
+  [pdf]
+);
 
   const saveMarks = useCallback(async () => {
     if (isDemo) {
@@ -515,47 +507,37 @@ function EditorContent() {
     }
   }, [marks, isDemo, addToast]);
 
-  const createMark = useCallback((name: string, zoomLevel?: number) => {
-    if (!pendingMark) return;
+const createMark = useCallback((name: string, zoomLevel?: number) => {
+  if (!pendingMark || !pdf) return;
 
-    // SAVE scroll position BEFORE state changes
-    const container = containerRef.current;
-    const scrollLeft = container?.scrollLeft || 0;
-    const scrollTop = container?.scrollTop || 0;
+  const newMark: Mark = {
+    mark_id: `temp-${Date.now()}`,
+    page_index: pendingMark.page_index!,
+    order_index: marks.length,
+    name,
+    nx: pendingMark.nx!,
+    ny: pendingMark.ny!,
+    nw: pendingMark.nw!,
+    nh: pendingMark.nh!,
+    zoom_hint: zoomLevel || null,
+  };
 
-    const newMark: Mark = {
-      mark_id: `temp-${Date.now()}`,
-      page_index: pendingMark.page_index!,
-      order_index: marks.length,
-      name,
-      nx: pendingMark.nx!,
-      ny: pendingMark.ny!,
-      nw: pendingMark.nw!,
-      nh: pendingMark.nh!,
-      zoom_hint: zoomLevel || null,
-    };
+  setMarks((prev) => [...prev, newMark]);
+  setPendingMark(null);
+  setShowNameBox(false);
+  setCurrentRect(null);
+  
+  const zoomText = zoomLevel ? `with ${Math.round(zoomLevel * 100)}% zoom` : 'with auto zoom';
+  addToast(`Mark "${name}" created ${zoomText}`, 'success');
 
-    setMarks((prev) => [...prev, newMark]);
-    setPendingMark(null);
-    setShowNameBox(false);
-    setCurrentRect(null);
-    
-    // RESTORE scroll position immediately to prevent jump
-    requestAnimationFrame(() => {
-      if (container) {
-        container.scrollLeft = scrollLeft;
-        container.scrollTop = scrollTop;
-      }
-      
-      // THEN navigate to the new mark after a brief delay
-      setTimeout(() => {
-        navigateToMark(newMark);
-      }, 150);
-    });
-    
-    const zoomText = zoomLevel ? `with ${Math.round(zoomLevel * 100)}% zoom` : 'with auto zoom';
-    addToast(`Mark "${name}" created ${zoomText}`, 'success');
-  }, [pendingMark, marks.length, addToast, navigateToMark]);
+  // Navigate after state updates
+  requestAnimationFrame(() => {
+    setTimeout(() => {
+      navigateToMark(newMark);
+    }, 50);
+  });
+}, [pendingMark, marks.length, addToast, navigateToMark, pdf]);
+
 
   const updateMark = useCallback((markId: string, updates: Partial<Mark>) => {
     setMarks((prev) =>
