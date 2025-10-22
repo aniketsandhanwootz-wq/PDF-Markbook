@@ -3,16 +3,28 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 
+type SearchResult = {
+  pageNumber: number;
+  index: number;
+  text: string;
+  items: Array<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  }>;
+};
+
 type PDFSearchProps = {
   pdf: PDFDocumentProxy | null;
   isOpen: boolean;
   onClose: () => void;
-  onResultFound?: (pageNumber: number, rect: { x: number; y: number; w: number; h: number }) => void;
+  onResultFound?: (pageNumber: number, highlights: SearchResult['items']) => void;
 };
 
 export default function PDFSearch({ pdf, isOpen, onClose, onResultFound }: PDFSearchProps) {
   const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [currentResultIndex, setCurrentResultIndex] = useState(-1);
   const [isSearching, setIsSearching] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -24,16 +36,20 @@ export default function PDFSearch({ pdf, isOpen, onClose, onResultFound }: PDFSe
     }
   }, [isOpen]);
 
-  // Perform search
+  // Perform search with exact position calculation
   const performSearch = useCallback(async () => {
     if (!pdf || !searchQuery.trim()) {
       setSearchResults([]);
       setCurrentResultIndex(-1);
+      if (onResultFound) {
+        onResultFound(1, []);
+      }
       return;
     }
 
     setIsSearching(true);
-    const results: any[] = [];
+    const results: SearchResult[] = [];
+    const query = searchQuery.toLowerCase();
 
     try {
       const numPages = pdf.numPages;
@@ -41,25 +57,103 @@ export default function PDFSearch({ pdf, isOpen, onClose, onResultFound }: PDFSe
       for (let pageNum = 1; pageNum <= numPages; pageNum++) {
         const page = await pdf.getPage(pageNum);
         const textContent = await page.getTextContent();
-        
-        // Combine all text items
-        const pageText = textContent.items
-          .map((item: any) => item.str)
-          .join(' ')
-          .toLowerCase();
+        const viewport = page.getViewport({ scale: 1.0 });
 
-        const query = searchQuery.toLowerCase();
+        // Build complete text string with positions
+        let fullText = '';
+        const charPositions: Array<{
+          char: string;
+          x: number;
+          y: number;
+          width: number;
+          height: number;
+        }> = [];
+
+        for (const item of textContent.items) {
+          if ('str' in item) {
+            const transform = item.transform;
+            const fontSize = Math.sqrt(transform[2] * transform[2] + transform[3] * transform[3]);
+            const x = transform[4];
+            const y = viewport.height - transform[5]; // Flip Y coordinate
+
+            for (let i = 0; i < item.str.length; i++) {
+              const char = item.str[i];
+              const charWidth = (item.width / item.str.length);
+              
+              charPositions.push({
+                char,
+                x: x + (i * charWidth),
+                y: y - fontSize,
+                width: charWidth,
+                height: fontSize,
+              });
+
+              fullText += char;
+            }
+
+            // Add space between items
+            fullText += ' ';
+            charPositions.push({
+              char: ' ',
+              x: x + item.width,
+              y: y - fontSize,
+              width: 5,
+              height: fontSize,
+            });
+          }
+        }
+
+        // Find all occurrences in this page
+        const lowerText = fullText.toLowerCase();
         let startIndex = 0;
 
-        // Find all occurrences on this page
         while (true) {
-          const index = pageText.indexOf(query, startIndex);
+          const index = lowerText.indexOf(query, startIndex);
           if (index === -1) break;
+
+          // Get bounding boxes for this match
+          const matchChars = charPositions.slice(index, index + query.length);
+          
+          // Group adjacent characters into rectangles
+          const rects: SearchResult['items'] = [];
+          
+          if (matchChars.length > 0) {
+            let currentRect = {
+              x: matchChars[0].x,
+              y: matchChars[0].y,
+              width: matchChars[0].width,
+              height: matchChars[0].height,
+            };
+
+            for (let i = 1; i < matchChars.length; i++) {
+              const char = matchChars[i];
+              const prevChar = matchChars[i - 1];
+
+              // Check if this character is on the same line and adjacent
+              if (Math.abs(char.y - prevChar.y) < 2 && 
+                  char.x - (prevChar.x + prevChar.width) < 10) {
+                // Extend current rectangle
+                currentRect.width = (char.x + char.width) - currentRect.x;
+              } else {
+                // Start new rectangle
+                rects.push({ ...currentRect });
+                currentRect = {
+                  x: char.x,
+                  y: char.y,
+                  width: char.width,
+                  height: char.height,
+                };
+              }
+            }
+
+            rects.push(currentRect);
+          }
 
           results.push({
             pageNumber: pageNum,
             index,
-            text: pageText.substring(Math.max(0, index - 20), index + query.length + 20),
+            text: fullText.substring(Math.max(0, index - 20), index + query.length + 20),
+            items: rects,
           });
 
           startIndex = index + 1;
@@ -69,9 +163,9 @@ export default function PDFSearch({ pdf, isOpen, onClose, onResultFound }: PDFSe
       setSearchResults(results);
       setCurrentResultIndex(results.length > 0 ? 0 : -1);
 
-      // Navigate to first result
+      // Navigate to first result with highlights
       if (results.length > 0 && onResultFound) {
-        onResultFound(results[0].pageNumber, { x: 0, y: 0, w: 0, h: 0 });
+        onResultFound(results[0].pageNumber, results[0].items);
       }
     } catch (error) {
       console.error('Search error:', error);
@@ -86,7 +180,7 @@ export default function PDFSearch({ pdf, isOpen, onClose, onResultFound }: PDFSe
     const nextIndex = (currentResultIndex + 1) % searchResults.length;
     setCurrentResultIndex(nextIndex);
     if (onResultFound) {
-      onResultFound(searchResults[nextIndex].pageNumber, { x: 0, y: 0, w: 0, h: 0 });
+      onResultFound(searchResults[nextIndex].pageNumber, searchResults[nextIndex].items);
     }
   }, [searchResults, currentResultIndex, onResultFound]);
 
@@ -95,7 +189,7 @@ export default function PDFSearch({ pdf, isOpen, onClose, onResultFound }: PDFSe
     const prevIndex = currentResultIndex === 0 ? searchResults.length - 1 : currentResultIndex - 1;
     setCurrentResultIndex(prevIndex);
     if (onResultFound) {
-      onResultFound(searchResults[prevIndex].pageNumber, { x: 0, y: 0, w: 0, h: 0 });
+      onResultFound(searchResults[prevIndex].pageNumber, searchResults[prevIndex].items);
     }
   }, [searchResults, currentResultIndex, onResultFound]);
 
@@ -114,8 +208,18 @@ export default function PDFSearch({ pdf, isOpen, onClose, onResultFound }: PDFSe
       }
     } else if (e.key === 'Escape') {
       onClose();
+      if (onResultFound) {
+        onResultFound(1, []); // Clear highlights
+      }
     }
   };
+
+  // Clear highlights when closing
+  useEffect(() => {
+    if (!isOpen && onResultFound) {
+      onResultFound(1, []);
+    }
+  }, [isOpen, onResultFound]);
 
   if (!isOpen) return null;
 
@@ -152,7 +256,12 @@ export default function PDFSearch({ pdf, isOpen, onClose, onResultFound }: PDFSe
           onBlur={(e) => e.target.style.borderColor = '#ccc'}
         />
         <button
-          onClick={onClose}
+          onClick={() => {
+            onClose();
+            if (onResultFound) {
+              onResultFound(1, []);
+            }
+          }}
           style={{
             padding: '8px 12px',
             border: 'none',

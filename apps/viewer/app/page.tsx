@@ -303,7 +303,8 @@ function ViewerContent() {
   const [flashRect, setFlashRect] = useState<FlashRect>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [showSearch, setShowSearch] = useState(false);
-    
+  const [searchHighlights, setSearchHighlights] = useState<Array<{ x: number; y: number; width: number; height: number }>>([]);
+  const [highlightPageNumber, setHighlightPageNumber] = useState<number>(0); 
   const containerRef = useRef<HTMLDivElement>(null);
   const pageHeightsRef = useRef<number[]>([]);
 
@@ -651,9 +652,11 @@ function ViewerContent() {
     pageHeightsRef.current[pageNumber - 1] = height;
   }, []);
 
-    const handleSearchResult = useCallback((pageNumber: number, rect: any) => {
-      jumpToPage(pageNumber);
-    }, [jumpToPage]);
+  const handleSearchResult = useCallback((pageNumber: number, highlights: any[]) => {
+    setHighlightPageNumber(pageNumber);
+    setSearchHighlights(highlights);
+    jumpToPage(pageNumber);
+  }, [jumpToPage]);
 
   if (showSetup) {
     return <ViewerSetupScreen onStart={handleSetupComplete} />;
@@ -717,23 +720,49 @@ function ViewerContent() {
         <div className="pdf-surface-wrap" ref={containerRef} style={{ touchAction: 'pan-y pan-x' }}>
           <div className="pdf-surface">
             {Array.from({ length: numPages }, (_, i) => i + 1).map((pageNum) => (
-              <PageCanvas
-                key={pageNum}
-                pdf={pdf}
-                pageNumber={pageNum}
-                zoom={zoom}
-                onReady={(height) => handlePageReady(pageNum, height)}
-                flashRect={
-                  flashRect?.pageNumber === pageNum
-                    ? {
-                        x: flashRect.x,
-                        y: flashRect.y,
-                        w: flashRect.w,
-                        h: flashRect.h,
-                      }
-                    : null
-                }
-              />
+<div style={{ position: 'relative' }}>
+                <PageCanvas
+                  key={pageNum}
+                  pdf={pdf}
+                  pageNumber={pageNum}
+                  zoom={zoom}
+                  onReady={(height) => handlePageReady(pageNum, height)}
+                  flashRect={
+                    flashRect?.pageNumber === pageNum
+                      ? {
+                          x: flashRect.x,
+                          y: flashRect.y,
+                          w: flashRect.w,
+                          h: flashRect.h,
+                        }
+                      : null
+                  }
+                />
+                
+                {/* Search Highlights */}
+                {highlightPageNumber === pageNum && searchHighlights.map((highlight, idx) => {
+                  const page = pdf.getPage(pageNum);
+                  return page.then((p) => {
+                    const vp = p.getViewport({ scale: zoom });
+                    return (
+                      <div
+                        key={idx}
+                        style={{
+                          position: 'absolute',
+                          left: highlight.x * zoom,
+                          top: highlight.y * zoom,
+                          width: highlight.width * zoom,
+                          height: highlight.height * zoom,
+                          background: 'rgba(255, 235, 59, 0.4)',
+                          border: '1px solid rgba(255, 193, 7, 0.8)',
+                          pointerEvents: 'none',
+                          zIndex: 100,
+                        }}
+                      />
+                    );
+                  });
+                }).filter(Boolean)}
+              </div>
             ))}
           </div>
         </div>

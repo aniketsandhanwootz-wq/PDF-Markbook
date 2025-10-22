@@ -260,6 +260,8 @@ function EditorContent() {
   const [markOverlays, setMarkOverlays] = useState<MarkOverlay[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
   const [showSearch, setShowSearch] = useState(false);
+  const [searchHighlights, setSearchHighlights] = useState<Array<{ x: number; y: number; width: number; height: number }>>([]);
+  const [highlightPageNumber, setHighlightPageNumber] = useState<number>(0);
 
   const [isDrawing, setIsDrawing] = useState(false);
   const [drawStart, setDrawStart] = useState<{ x: number; y: number; pageIndex: number } | null>(null);
@@ -939,9 +941,11 @@ function EditorContent() {
     pageHeightsRef.current[pageNumber - 1] = height;
   }, []);
 
-      const handleSearchResult = useCallback((pageNumber: number, rect: any) => {
-      jumpToPage(pageNumber);
-    }, [jumpToPage]);
+const handleSearchResult = useCallback((pageNumber: number, highlights: any[]) => {
+  setHighlightPageNumber(pageNumber);
+  setSearchHighlights(highlights);
+  jumpToPage(pageNumber);
+}, [jumpToPage]);
 
   if (showSetup) {
     return <SetupScreen onStart={handleSetupComplete} />;
@@ -1029,6 +1033,24 @@ function EditorContent() {
                       : null
                   }
                 />
+                
+                {/* Search Highlights */}
+                {highlightPageNumber === pageNum && searchHighlights.map((highlight, idx) => (
+                  <div
+                    key={`highlight-${idx}`}
+                    style={{
+                      position: 'absolute',
+                      left: highlight.x * zoom,
+                      top: highlight.y * zoom,
+                      width: highlight.width * zoom,
+                      height: highlight.height * zoom,
+                      background: 'rgba(255, 235, 59, 0.4)',
+                      border: '1px solid rgba(255, 193, 7, 0.8)',
+                      pointerEvents: 'none',
+                      zIndex: 100,
+                    }}
+                  />
+                ))}
                 {isDrawing && drawStart?.pageIndex === pageNum - 1 && currentRect && (
                   <div
                     className="drawing-rect"
