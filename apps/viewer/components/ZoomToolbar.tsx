@@ -15,8 +15,6 @@ type ZoomToolbarProps = {
   currentPage?: number;
   totalPages?: number;
   onPageJump?: (page: number) => void;
-  currentMarkIndex?: number;
-  totalMarks?: number;
 };
 
 export default function ZoomToolbar({
@@ -32,8 +30,6 @@ export default function ZoomToolbar({
   currentPage,
   totalPages,
   onPageJump,
-  currentMarkIndex,
-  totalMarks,
 }: ZoomToolbarProps) {
   const [pageInput, setPageInput] = useState('');
 
@@ -88,23 +84,6 @@ export default function ZoomToolbar({
         </div>
       )}
 
-      {/* Mark Counter */}
-      {totalMarks !== undefined && totalMarks > 0 && (
-        <div className="mark-counter" style={{
-          display: 'flex',
-          alignItems: 'center',
-          padding: '8px 16px',
-          background: '#f0f7ff',
-          borderRadius: '4px',
-          fontSize: '14px',
-          fontWeight: '600',
-          color: '#1976d2',
-          border: '1px solid #bde0ff'
-        }}>
-          <span style={{ marginRight: '4px' }}>📍</span>
-          Mark {currentMarkIndex !== undefined && currentMarkIndex >= 0 ? currentMarkIndex + 1 : 0} of {totalMarks}
-        </div>
-      )}
 
       {/* Page Navigation Input */}
       {onPageJump && totalPages && (

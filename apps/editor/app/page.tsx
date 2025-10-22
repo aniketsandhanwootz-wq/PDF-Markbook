@@ -10,6 +10,7 @@ import ZoomToolbar from '../components/ZoomToolbar';
 import Toast from '../components/Toast';
 import FloatingNameBox from '../components/FloatingNameBox';
 import { clampZoom, computeZoomForRect, scrollToRect } from '../lib/pdf';
+import PDFSearch from '../components/PDFSearch';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
@@ -258,6 +259,7 @@ function EditorContent() {
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [markOverlays, setMarkOverlays] = useState<MarkOverlay[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
+  const [showSearch, setShowSearch] = useState(false);
 
   const [isDrawing, setIsDrawing] = useState(false);
   const [drawStart, setDrawStart] = useState<{ x: number; y: number; pageIndex: number } | null>(null);
@@ -739,7 +741,18 @@ function EditorContent() {
       document.removeEventListener('wheel', handleWheel, { capture: true });
     };
   }, []);
+    // Ctrl+F / Cmd+F to open search
+    useEffect(() => {
+      const handleKeyDown = (e: KeyboardEvent) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+          e.preventDefault();
+          setShowSearch(true);
+        }
+      };
 
+      document.addEventListener('keydown', handleKeyDown);
+      return () => document.removeEventListener('keydown', handleKeyDown);
+    }, []);
   const handleMouseDown = useCallback(
     (e: React.MouseEvent, pageIndex: number) => {
       if (!pdf || showNameBox) return;
@@ -926,6 +939,10 @@ function EditorContent() {
     pageHeightsRef.current[pageNumber - 1] = height;
   }, []);
 
+      const handleSearchResult = useCallback((pageNumber: number, rect: any) => {
+      jumpToPage(pageNumber);
+    }, [jumpToPage]);
+
   if (showSetup) {
     return <SetupScreen onStart={handleSetupComplete} />;
   }
@@ -1064,6 +1081,13 @@ function EditorContent() {
               }}
             />
           )}
+                    {/* PDF Search Component */}
+          <PDFSearch
+            pdf={pdf}
+            isOpen={showSearch}
+            onClose={() => setShowSearch(false)}
+            onResultFound={handleSearchResult}
+          />
         </div>
       </div>
 

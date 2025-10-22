@@ -8,6 +8,7 @@ import PageCanvas from '../components/PageCanvas';
 import MarkList from '../components/MarkList';
 import ZoomToolbar from '../components/ZoomToolbar';
 import { clampZoom, computeZoomForRect, scrollToRect } from '../lib/pdf';
+import PDFSearch from '../components/PDFSearch';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
@@ -301,7 +302,8 @@ function ViewerContent() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [flashRect, setFlashRect] = useState<FlashRect>(null);
   const [currentPage, setCurrentPage] = useState(1);
-  
+  const [showSearch, setShowSearch] = useState(false);
+    
   const containerRef = useRef<HTMLDivElement>(null);
   const pageHeightsRef = useRef<number[]>([]);
 
@@ -631,11 +633,27 @@ function ViewerContent() {
       document.removeEventListener('wheel', handleWheel, { capture: true });
     };
   }, []);
+  // Ctrl+F / Cmd+F to open search
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+        e.preventDefault();
+        setShowSearch(true);
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // Handle page ready callback
   const handlePageReady = useCallback((pageNumber: number, height: number) => {
     pageHeightsRef.current[pageNumber - 1] = height;
   }, []);
+
+    const handleSearchResult = useCallback((pageNumber: number, rect: any) => {
+      jumpToPage(pageNumber);
+    }, [jumpToPage]);
 
   if (showSetup) {
     return <ViewerSetupScreen onStart={handleSetupComplete} />;
@@ -694,8 +712,6 @@ function ViewerContent() {
           currentPage={currentPage}
           totalPages={numPages}
           onPageJump={jumpToPage}
-          currentMarkIndex={currentMarkIndex}
-          totalMarks={marks.length}
         />
 
         <div className="pdf-surface-wrap" ref={containerRef} style={{ touchAction: 'pan-y pan-x' }}>
@@ -721,6 +737,13 @@ function ViewerContent() {
             ))}
           </div>
         </div>
+                {/* PDF Search Component */}
+        <PDFSearch
+          pdf={pdf}
+          isOpen={showSearch}
+          onClose={() => setShowSearch(false)}
+          onResultFound={handleSearchResult}
+        />
       </div>
     </div>
   );
