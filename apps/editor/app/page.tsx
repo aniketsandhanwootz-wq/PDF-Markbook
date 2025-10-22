@@ -257,6 +257,7 @@ function EditorContent() {
   const [flashRect, setFlashRect] = useState<FlashRect>(null);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [markOverlays, setMarkOverlays] = useState<MarkOverlay[]>([]);
+  const [currentPage, setCurrentPage] = useState(1);
 
   const [isDrawing, setIsDrawing] = useState(false);
   const [drawStart, setDrawStart] = useState<{ x: number; y: number; pageIndex: number } | null>(null);
@@ -403,76 +404,118 @@ function EditorContent() {
     updateOverlays();
   }, [pdf, marks, zoom]);
 
-const navigateToMark = useCallback(
-  async (mark: Mark) => {
-    if (!pdf || !containerRef.current) return;
-
-    setSelectedMarkId(mark.mark_id || null);
-
-    const pageNumber = mark.page_index + 1;
+  // ✅ NEW: Track current page while scrolling
+  useEffect(() => {
     const container = containerRef.current;
+    if (!container || !pdf) return;
 
-    try {
-      const page = await pdf.getPage(pageNumber);
-      const vp1 = page.getViewport({ scale: 1 });
-      const rectAt1 = {
-        w: mark.nw * vp1.width,
-        h: mark.nh * vp1.height,
-      };
+    const handleScroll = () => {
+      let accumulatedHeight = 16;
+      let foundPage = 1;
 
-      // Calculate zoom to make mark fill 80% of viewport
-      const zoomX = (container.clientWidth * 0.8) / rectAt1.w;
-      const zoomY = (container.clientHeight * 0.8) / rectAt1.h;
-      const targetZoom = clampZoom(Math.min(zoomX, zoomY));
-
-      // Set zoom first
-      setZoom(targetZoom);
-
-      // Wait for zoom to apply and pages to re-render
-      await new Promise(resolve => setTimeout(resolve, 200));
-
-      // Now calculate positions at the NEW zoom level
-      const vpZ = page.getViewport({ scale: targetZoom });
-      const rectAtZ = {
-        x: mark.nx * vpZ.width,
-        y: mark.ny * vpZ.height,
-        w: mark.nw * vpZ.width,
-        h: mark.nh * vpZ.height,
-      };
-
-      // Flash the mark
-      setFlashRect({ pageNumber, ...rectAtZ });
-      setTimeout(() => setFlashRect(null), 1200);
-
-      // Calculate cumulative page offset at NEW zoom
-      let cumulativeTop = 16; // Initial padding
-      
-      for (let i = 0; i < mark.page_index; i++) {
-        const prevPage = await pdf.getPage(i + 1);
-        const prevVp = prevPage.getViewport({ scale: targetZoom });
-        cumulativeTop += prevVp.height + 16; // Height + gap
+      for (let i = 0; i < numPages; i++) {
+        const pageHeight = pageHeightsRef.current[i] || 0;
+        if (container.scrollTop < accumulatedHeight + pageHeight / 2) {
+          foundPage = i + 1;
+          break;
+        }
+        accumulatedHeight += pageHeight + 16;
       }
 
-      // Calculate center of marked area
-      const markCenterX = rectAtZ.x + rectAtZ.w / 2;
-      const markCenterY = rectAtZ.y + rectAtZ.h / 2;
+      setCurrentPage(foundPage);
+    };
 
-      // Center the mark in viewport
-      const targetScrollLeft = markCenterX - container.clientWidth / 2;
-      const targetScrollTop = cumulativeTop + markCenterY - container.clientHeight / 2;
+    container.addEventListener('scroll', handleScroll);
+    handleScroll(); // Initial call
 
-      // Scroll to position
+    return () => container.removeEventListener('scroll', handleScroll);
+  }, [pdf, numPages]);
+
+  const navigateToMark = useCallback(
+    (mark: Mark) => {
+      if (!pdf) return;
+
+      setSelectedMarkId(mark.mark_id || null);
+
+      const pageNumber = mark.page_index + 1;
+      const container = containerRef.current!;
+
+      pdf.getPage(pageNumber).then((page) => {
+        const vp1 = page.getViewport({ scale: 1 });
+        const rectAt1 = {
+          w: mark.nw * vp1.width,
+          h: mark.nh * vp1.height,
+        };
+
+        // Calculate zoom to make mark fill 80% of viewport
+        const zoomX = (container.clientWidth * 0.8) / rectAt1.w;
+        const zoomY = (container.clientHeight * 0.8) / rectAt1.h;
+        const targetZoom = clampZoom(Math.min(zoomX, zoomY));
+
+        setZoom(targetZoom);
+
+        setTimeout(() => {
+          const vpZ = page.getViewport({ scale: targetZoom });
+          const rectAtZ = {
+            x: mark.nx * vpZ.width,
+            y: mark.ny * vpZ.height,
+            w: mark.nw * vpZ.width,
+            h: mark.nh * vpZ.height,
+          };
+
+          setFlashRect({ pageNumber, ...rectAtZ });
+          setTimeout(() => setFlashRect(null), 1200);
+
+          // Calculate cumulative page offset
+          let pageTop = 0;
+          for (let i = 0; i < mark.page_index; i++) {
+            pageTop += (pageHeightsRef.current[i] || 0) + 16;
+          }
+
+          // Calculate center of marked area
+          const markCenterX = rectAtZ.x + rectAtZ.w / 2;
+          const markCenterY = rectAtZ.y + rectAtZ.h / 2;
+
+          // Center the mark in viewport
+          const targetScrollLeft = markCenterX - container.clientWidth / 2;
+          const targetScrollTop = pageTop + markCenterY - container.clientHeight / 2;
+
+          container.scrollTo({
+            left: Math.max(0, targetScrollLeft),
+            top: Math.max(0, targetScrollTop),
+            behavior: 'smooth',
+          });
+        }, 100);
+      });
+    },
+    [pdf]
+  );
+
+  // ✅ NEW: Jump to specific page
+  const jumpToPage = useCallback(async (pageNumber: number) => {
+    if (!pdf || !containerRef.current) return;
+    
+    const container = containerRef.current;
+    
+    try {
+      // Calculate cumulative offset to target page
+      let cumulativeTop = 16; // Initial padding
+      
+      for (let i = 0; i < pageNumber - 1; i++) {
+        const prevPage = await pdf.getPage(i + 1);
+        const prevVp = prevPage.getViewport({ scale: zoom });
+        cumulativeTop += prevVp.height + 16;
+      }
+      
       container.scrollTo({
-        left: Math.max(0, targetScrollLeft),
-        top: Math.max(0, targetScrollTop),
+        left: 0,
+        top: cumulativeTop,
         behavior: 'smooth',
       });
     } catch (error) {
-      console.error('Navigation error:', error);
+      console.error('Jump to page error:', error);
     }
-  },
-  [pdf]
-);
+  }, [pdf, zoom]);
 
   const saveMarks = useCallback(async () => {
     if (isDemo) {
@@ -507,37 +550,90 @@ const navigateToMark = useCallback(
     }
   }, [marks, isDemo, addToast]);
 
-const createMark = useCallback((name: string, zoomLevel?: number) => {
-  if (!pendingMark || !pdf) return;
+  // ✅ NEW: Check for duplicate names and overlapping areas (client-side only - NO API calls)
+  const checkDuplicates = useCallback((name: string, pageIndex: number, nx: number, ny: number, nw: number, nh: number): string | null => {
+    // Check for duplicate names
+    const duplicateName = marks.find(m => m.name.toLowerCase() === name.toLowerCase());
+    if (duplicateName) {
+      return `⚠️ A mark named "${name}" already exists. Continue anyway?`;
+    }
 
-  const newMark: Mark = {
-    mark_id: `temp-${Date.now()}`,
-    page_index: pendingMark.page_index!,
-    order_index: marks.length,
-    name,
-    nx: pendingMark.nx!,
-    ny: pendingMark.ny!,
-    nw: pendingMark.nw!,
-    nh: pendingMark.nh!,
-    zoom_hint: zoomLevel || null,
-  };
+    // Check for overlapping marks on the same page
+    const marksOnSamePage = marks.filter(m => m.page_index === pageIndex);
+    
+    for (const existingMark of marksOnSamePage) {
+      // Calculate overlap
+      const x1 = Math.max(nx, existingMark.nx);
+      const y1 = Math.max(ny, existingMark.ny);
+      const x2 = Math.min(nx + nw, existingMark.nx + existingMark.nw);
+      const y2 = Math.min(ny + nh, existingMark.ny + existingMark.nh);
 
-  setMarks((prev) => [...prev, newMark]);
-  setPendingMark(null);
-  setShowNameBox(false);
-  setCurrentRect(null);
-  
-  const zoomText = zoomLevel ? `with ${Math.round(zoomLevel * 100)}% zoom` : 'with auto zoom';
-  addToast(`Mark "${name}" created ${zoomText}`, 'success');
+      // Check if there's overlap
+      if (x1 < x2 && y1 < y2) {
+        const overlapArea = (x2 - x1) * (y2 - y1);
+        const mark1Area = nw * nh;
+        const mark2Area = existingMark.nw * existingMark.nh;
+        const overlapPercentage = (overlapArea / Math.min(mark1Area, mark2Area)) * 100;
 
-  // Navigate after state updates
-  requestAnimationFrame(() => {
-    setTimeout(() => {
-      navigateToMark(newMark);
-    }, 50);
-  });
-}, [pendingMark, marks.length, addToast, navigateToMark, pdf]);
+        // If more than 30% overlap, warn user
+        if (overlapPercentage > 30) {
+          return `⚠️ This mark overlaps ${Math.round(overlapPercentage)}% with "${existingMark.name}". Continue anyway?`;
+        }
+      }
+    }
 
+    return null; // No duplicates found
+  }, [marks]);
+
+  const createMark = useCallback((name: string, zoomLevel?: number) => {
+    if (!pendingMark || !pdf) return;
+
+    // ✅ Check for duplicates (client-side only)
+    const duplicateWarning = checkDuplicates(
+      name,
+      pendingMark.page_index!,
+      pendingMark.nx!,
+      pendingMark.ny!,
+      pendingMark.nw!,
+      pendingMark.nh!
+    );
+
+    if (duplicateWarning) {
+      // Show confirmation dialog
+      const confirmed = window.confirm(duplicateWarning);
+      if (!confirmed) {
+        // User cancelled - keep the dialog open by not clearing state
+        return;
+      }
+    }
+
+    const newMark: Mark = {
+      mark_id: `temp-${Date.now()}`,
+      page_index: pendingMark.page_index!,
+      order_index: marks.length,
+      name,
+      nx: pendingMark.nx!,
+      ny: pendingMark.ny!,
+      nw: pendingMark.nw!,
+      nh: pendingMark.nh!,
+      zoom_hint: zoomLevel || null,
+    };
+
+    setMarks((prev) => [...prev, newMark]);
+    setPendingMark(null);
+    setShowNameBox(false);
+    setCurrentRect(null);
+    
+    const zoomText = zoomLevel ? `with ${Math.round(zoomLevel * 100)}% zoom` : 'with auto zoom';
+    addToast(`Mark "${name}" created ${zoomText}`, 'success');
+
+    // Navigate after state updates
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        navigateToMark(newMark);
+      }, 50);
+    });
+  }, [pendingMark, marks.length, addToast, navigateToMark, pdf, checkDuplicates]);
 
   const updateMark = useCallback((markId: string, updates: Partial<Mark>) => {
     setMarks((prev) =>
@@ -890,6 +986,9 @@ const createMark = useCallback((name: string, zoomLevel?: number) => {
           onZoomOut={zoomOut}
           onReset={resetZoom}
           onFit={fitToWidthZoom}
+          currentPage={currentPage}
+          totalPages={numPages}
+          onPageJump={jumpToPage}
         />
 
         <div className="pdf-surface-wrap" ref={containerRef} style={{ touchAction: 'pan-y pan-x' }}>

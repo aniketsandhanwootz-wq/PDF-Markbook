@@ -300,6 +300,7 @@ function ViewerContent() {
   const [error, setError] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [flashRect, setFlashRect] = useState<FlashRect>(null);
+  const [currentPage, setCurrentPage] = useState(1);
   
   const containerRef = useRef<HTMLDivElement>(null);
   const pageHeightsRef = useRef<number[]>([]);
@@ -413,9 +414,36 @@ function ViewerContent() {
       });
   }, [markSetId, isDemo, showSetup]);
 
-  // Navigate to mark
+  // ✅ NEW: Track current page while scrolling
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || !pdf) return;
+
+    const handleScroll = () => {
+      let accumulatedHeight = 16;
+      let foundPage = 1;
+
+      for (let i = 0; i < numPages; i++) {
+        const pageHeight = pageHeightsRef.current[i] || 0;
+        if (container.scrollTop < accumulatedHeight + pageHeight / 2) {
+          foundPage = i + 1;
+          break;
+        }
+        accumulatedHeight += pageHeight + 16;
+      }
+
+      setCurrentPage(foundPage);
+    };
+
+    container.addEventListener('scroll', handleScroll);
+    handleScroll(); // Initial call
+
+    return () => container.removeEventListener('scroll', handleScroll);
+  }, [pdf, numPages]);
+
+  // ✅ FIXED: Navigate to mark with proper zoom and scroll calculation
   const navigateToMark = useCallback(
-    (index: number) => {
+    async (index: number) => {
       if (!pdf || index < 0 || index >= marks.length) return;
 
       const mark = marks[index];
@@ -424,7 +452,9 @@ function ViewerContent() {
       const pageNumber = mark.page_index + 1;
       const container = containerRef.current!;
 
-      pdf.getPage(pageNumber).then((page) => {
+      try {
+        const page = await pdf.getPage(pageNumber);
+        
         // Use zoom_hint or calculate zoom to fill viewport
         let targetZoom;
         
@@ -445,39 +475,48 @@ function ViewerContent() {
 
         setZoom(targetZoom);
 
-        setTimeout(() => {
-          const vpZ = page.getViewport({ scale: targetZoom });
-          const rectAtZ = {
-            x: mark.nx * vpZ.width,
-            y: mark.ny * vpZ.height,
-            w: mark.nw * vpZ.width,
-            h: mark.nh * vpZ.height,
-          };
+        // Wait for zoom to apply and pages to re-render
+        await new Promise(resolve => setTimeout(resolve, 200));
 
-          setFlashRect({ pageNumber, ...rectAtZ });
-          setTimeout(() => setFlashRect(null), 1200);
+        // Now calculate positions at the NEW zoom level
+        const vpZ = page.getViewport({ scale: targetZoom });
+        const rectAtZ = {
+          x: mark.nx * vpZ.width,
+          y: mark.ny * vpZ.height,
+          w: mark.nw * vpZ.width,
+          h: mark.nh * vpZ.height,
+        };
 
-          // Calculate cumulative page offset
-          let pageTop = 0;
-          for (let i = 0; i < mark.page_index; i++) {
-            pageTop += (pageHeightsRef.current[i] || 0) + 16;
-          }
+        // Flash the mark
+        setFlashRect({ pageNumber, ...rectAtZ });
+        setTimeout(() => setFlashRect(null), 1200);
 
-          // Calculate center of marked area
-          const markCenterX = rectAtZ.x + rectAtZ.w / 2;
-          const markCenterY = rectAtZ.y + rectAtZ.h / 2;
+        // Calculate cumulative page offset at NEW zoom
+        let cumulativeTop = 16; // Initial padding
+        
+        for (let i = 0; i < mark.page_index; i++) {
+          const prevPage = await pdf.getPage(i + 1);
+          const prevVp = prevPage.getViewport({ scale: targetZoom });
+          cumulativeTop += prevVp.height + 16; // Height + gap
+        }
 
-          // Center the mark in viewport
-          const targetScrollLeft = markCenterX - container.clientWidth / 2;
-          const targetScrollTop = pageTop + markCenterY - container.clientHeight / 2;
+        // Calculate center of marked area
+        const markCenterX = rectAtZ.x + rectAtZ.w / 2;
+        const markCenterY = rectAtZ.y + rectAtZ.h / 2;
 
-          container.scrollTo({
-            left: Math.max(0, targetScrollLeft),
-            top: Math.max(0, targetScrollTop),
-            behavior: 'smooth',
-          });
-        }, 100);
-      });
+        // Center the mark in viewport
+        const targetScrollLeft = markCenterX - container.clientWidth / 2;
+        const targetScrollTop = cumulativeTop + markCenterY - container.clientHeight / 2;
+
+        // Scroll to position
+        container.scrollTo({
+          left: Math.max(0, targetScrollLeft),
+          top: Math.max(0, targetScrollTop),
+          behavior: 'smooth',
+        });
+      } catch (error) {
+        console.error('Navigation error:', error);
+      }
     },
     [marks, pdf]
   );
@@ -494,6 +533,32 @@ function ViewerContent() {
       navigateToMark(currentMarkIndex + 1);
     }
   }, [currentMarkIndex, marks.length, navigateToMark]);
+
+  // ✅ NEW: Jump to specific page
+  const jumpToPage = useCallback(async (pageNumber: number) => {
+    if (!pdf || !containerRef.current) return;
+    
+    const container = containerRef.current;
+    
+    try {
+      // Calculate cumulative offset to target page
+      let cumulativeTop = 16; // Initial padding
+      
+      for (let i = 0; i < pageNumber - 1; i++) {
+        const prevPage = await pdf.getPage(i + 1);
+        const prevVp = prevPage.getViewport({ scale: zoom });
+        cumulativeTop += prevVp.height + 16;
+      }
+      
+      container.scrollTo({
+        left: 0,
+        top: cumulativeTop,
+        behavior: 'smooth',
+      });
+    } catch (error) {
+      console.error('Jump to page error:', error);
+    }
+  }, [pdf, zoom]);
 
   // Zoom controls
   const zoomIn = useCallback(() => {
@@ -544,7 +609,7 @@ function ViewerContent() {
       const contentX = scrollLeft + mouseX;
       const contentY = scrollTop + mouseY;
       
-      const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
+      const zoomFactor = e.deltaY > 0 ? 0.95 : 1.05;
 
       setZoom((prevZoom) => {
         const newZoom = clampZoom(prevZoom * zoomFactor);
@@ -626,6 +691,11 @@ function ViewerContent() {
           onNext={marks.length > 0 ? nextMark : undefined}
           canPrev={currentMarkIndex > 0}
           canNext={currentMarkIndex < marks.length - 1}
+          currentPage={currentPage}
+          totalPages={numPages}
+          onPageJump={jumpToPage}
+          currentMarkIndex={currentMarkIndex}
+          totalMarks={marks.length}
         />
 
         <div className="pdf-surface-wrap" ref={containerRef} style={{ touchAction: 'pan-y pan-x' }}>
