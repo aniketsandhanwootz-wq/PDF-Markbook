@@ -12,7 +12,7 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator, model_validator  # ✅ NEW
 from typing import List, Optional
 from sqlalchemy import create_engine, Column, String, Integer, Float, ForeignKey, event
 from sqlalchemy.ext.declarative import declarative_base
@@ -23,6 +23,8 @@ from cachetools import TTLCache
 import uuid
 import logging
 import os
+from typing import Optional
+import time
 
 # Configure logging
 logging.basicConfig(
@@ -143,22 +145,58 @@ mark_cache = TTLCache(maxsize=100, ttl=300)
 # PYDANTIC MODELS
 # ============================================================================
 
+
 class Mark(BaseModel):
     mark_id: Optional[str] = None
     page_index: int = Field(ge=0, description="Page index (0-based)")
     order_index: int = Field(ge=0, description="Display order")
     name: str = Field(min_length=1, max_length=200, description="Mark name")
-    nx: float = Field(ge=0.0, le=1.0, description="Normalized X (0-1)")
-    ny: float = Field(ge=0.0, le=1.0, description="Normalized Y (0-1)")
-    nw: float = Field(gt=0.0, le=1.0, description="Normalized width (0-1)")
-    nh: float = Field(gt=0.0, le=1.0, description="Normalized height (0-1)")
+    
+    # ✨ ENHANCED: Stricter bounds (must be > 0, not >= 0)
+    nx: float = Field(gt=0.0, le=1.0, description="Normalized X (0-1, must be > 0)")
+    ny: float = Field(gt=0.0, le=1.0, description="Normalized Y (0-1, must be > 0)")
+    nw: float = Field(gt=0.0, le=1.0, description="Normalized width (0-1, must be > 0)")
+    nh: float = Field(gt=0.0, le=1.0, description="Normalized height (0-1, must be > 0)")
+    
     zoom_hint: Optional[float] = Field(None, ge=0.25, le=6.0, description="Zoom level")
 
-    @validator('name')
+    @field_validator('name')
+    @classmethod
     def name_not_empty(cls, v):
+        """Validate name is not empty."""
         if not v or not v.strip():
             raise ValueError('Name cannot be empty')
         return v.strip()
+    
+    @model_validator(mode='after')
+    def validate_mark_bounds(self):
+        """
+        ✨ Pydantic V2: Validate mark stays within page bounds and has minimum size.
+        Uses model_validator instead of field validator with 'values'.
+        """
+        # Check right edge
+        if self.nx + self.nw > 1.0001:  # Small tolerance for floating point
+            raise ValueError(
+                f'Mark extends beyond page width: '
+                f'nx({self.nx:.4f}) + nw({self.nw:.4f}) = {self.nx + self.nw:.4f} > 1.0'
+            )
+        
+        # Check bottom edge
+        if self.ny + self.nh > 1.0001:
+            raise ValueError(
+                f'Mark extends beyond page height: '
+                f'ny({self.ny:.4f}) + nh({self.nh:.4f}) = {self.ny + self.nh:.4f} > 1.0'
+            )
+        
+        # Check minimum area (prevent invisible marks)
+        area = self.nw * self.nh
+        if area < 0.00001:  # Minimum area
+            raise ValueError(
+                f'Mark area too small ({area:.6f}). '
+                f'Mark would be invisible or unclickable.'
+            )
+        
+        return self
 
 class MarkSet(BaseModel):
     id: str
@@ -169,7 +207,8 @@ class MarkSetCreate(BaseModel):
     pdf_url: str = Field(min_length=1, max_length=2000, description="PDF URL")
     name: str = Field(min_length=1, max_length=200, description="Mark set name")
 
-    @validator('pdf_url')
+    @field_validator('pdf_url')  # ✅ NEW - Pydantic V2
+    @classmethod
     def validate_url(cls, v):
         if not v or not v.strip():
             raise ValueError('PDF URL cannot be empty')
@@ -177,12 +216,12 @@ class MarkSetCreate(BaseModel):
             raise ValueError('PDF URL must start with http:// or https://')
         return v.strip()
 
-    @validator('name')
+    @field_validator('name')  # ✅ NEW - Pydantic V2
+    @classmethod
     def name_not_empty(cls, v):
         if not v or not v.strip():
             raise ValueError('Name cannot be empty')
         return v.strip()
-
 # ============================================================================
 # STORAGE OPERATIONS (Works with both backends)
 # ============================================================================
@@ -494,7 +533,6 @@ async def global_exception_handler(request, exc):
 # ============================================================================
 # ENDPOINTS
 # ============================================================================
-
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
@@ -517,6 +555,62 @@ async def health_check():
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             content={"status": "unhealthy", "backend": STORAGE_BACKEND, "error": str(e)}
         )
+
+
+# ========== NEW: Production Health Endpoints ==========
+
+@app.get("/healthz")
+async def healthz():
+    """
+    Kubernetes-style liveness probe.
+    Fast check - is the process alive and responding?
+    Returns 200 if the application is running.
+    """
+    return {
+        "status": "ok",
+        "timestamp": time.time(),
+        "version": "3.0"
+    }
+
+
+@app.get("/readyz")
+async def readyz():
+    """
+    Kubernetes-style readiness probe.
+    Checks if the application can serve traffic (database/sheets accessible).
+    Returns 200 if ready, 503 if not ready.
+    """
+    try:
+        # Test backend connectivity with timeout
+        if STORAGE_BACKEND == "sqlite":
+            with get_db() as db:
+                db.execute("SELECT 1").fetchone()
+        
+        elif STORAGE_BACKEND == "sheets":
+            # Quick check - read single cell
+            storage_adapter.ws["mark_sets"].acell('A1')
+        
+        return {
+            "status": "ready",
+            "backend": STORAGE_BACKEND,
+            "sheets_accessible": STORAGE_BACKEND == "sheets",
+            "cache_size": len(mark_cache),
+            "timestamp": time.time()
+        }
+    
+    except Exception as e:
+        logger.error(f"Readiness check failed: {str(e)}")
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={
+                "status": "not_ready",
+                "backend": STORAGE_BACKEND,
+                "error": str(e),
+                "timestamp": time.time()
+            }
+        )
+
+# ========== End of Health Endpoints ==========
 
 @app.post("/mark-sets", response_model=MarkSet, status_code=status.HTTP_201_CREATED)
 async def create_mark_set(mark_set: MarkSetCreate):
