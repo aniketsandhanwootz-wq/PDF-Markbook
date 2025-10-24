@@ -720,7 +720,7 @@ function ViewerContent() {
         <div className="pdf-surface-wrap" ref={containerRef} style={{ touchAction: 'pan-y pan-x' }}>
           <div className="pdf-surface">
             {Array.from({ length: numPages }, (_, i) => i + 1).map((pageNum) => (
-<div style={{ position: 'relative' }}>
+  <div key={pageNum} style={{ position: 'relative' }}>
                 <PageCanvas
                   key={pageNum}
                   pdf={pdf}
@@ -739,29 +739,23 @@ function ViewerContent() {
                   }
                 />
                 
-                {/* Search Highlights */}
-                {highlightPageNumber === pageNum && searchHighlights.map((highlight, idx) => {
-                  const page = pdf.getPage(pageNum);
-                  return page.then((p) => {
-                    const vp = p.getViewport({ scale: zoom });
-                    return (
-                      <div
-                        key={idx}
-                        style={{
-                          position: 'absolute',
-                          left: highlight.x * zoom,
-                          top: highlight.y * zoom,
-                          width: highlight.width * zoom,
-                          height: highlight.height * zoom,
-                          background: 'rgba(255, 235, 59, 0.4)',
-                          border: '1px solid rgba(255, 193, 7, 0.8)',
-                          pointerEvents: 'none',
-                          zIndex: 100,
-                        }}
-                      />
-                    );
-                  });
-                }).filter(Boolean)}
+{/* Search Highlights */}
+                {highlightPageNumber === pageNum && searchHighlights.map((highlight, idx) => (
+                  <div
+                    key={`highlight-${idx}`}
+                    style={{
+                      position: 'absolute',
+                      left: highlight.x * zoom,
+                      top: highlight.y * zoom,
+                      width: highlight.width * zoom,
+                      height: highlight.height * zoom,
+                      background: 'rgba(255, 235, 59, 0.4)',
+                      border: '1px solid rgba(255, 193, 7, 0.8)',
+                      pointerEvents: 'none',
+                      zIndex: 100,
+                    }}
+                  />
+                ))}
               </div>
             ))}
           </div>
