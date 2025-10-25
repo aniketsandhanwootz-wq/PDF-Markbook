@@ -25,7 +25,22 @@ import logging
 import os
 from typing import Optional
 import time
+import contextvars
+from collections import defaultdict
 
+# ========== NEW: Request Context for Tracing ==========
+request_id_var = contextvars.ContextVar('request_id', default=None)
+request_start_time_var = contextvars.ContextVar('request_start_time', default=None)
+
+# ========== NEW: Metrics Storage ==========
+request_metrics = {
+    "total_requests": defaultdict(int),  # by endpoint
+    "total_latency": defaultdict(float),  # by endpoint
+    "status_codes": defaultdict(int),  # by status code
+    "cache_hits": 0,
+    "cache_misses": 0,
+    "sheets_calls": 0,
+}
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -153,10 +168,10 @@ class Mark(BaseModel):
     name: str = Field(min_length=1, max_length=200, description="Mark name")
     
     # ✨ ENHANCED: Stricter bounds (must be > 0, not >= 0)
-    nx: float = Field(gt=0.0, le=1.0, description="Normalized X (0-1, must be > 0)")
-    ny: float = Field(gt=0.0, le=1.0, description="Normalized Y (0-1, must be > 0)")
-    nw: float = Field(gt=0.0, le=1.0, description="Normalized width (0-1, must be > 0)")
-    nh: float = Field(gt=0.0, le=1.0, description="Normalized height (0-1, must be > 0)")
+    nx: float = Field(ge=0.0, le=1.0, description="Normalized X (0-1)")
+    ny: float = Field(ge=0.0, le=1.0, description="Normalized Y (0-1)")
+    nw: float = Field(gt=0.0, le=1.0, description="Normalized width (must be > 0)")
+    nh: float = Field(gt=0.0, le=1.0, description="Normalized height (must be > 0)")
     
     zoom_hint: Optional[float] = Field(None, ge=0.25, le=6.0, description="Zoom level")
 
@@ -512,6 +527,46 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
+# ========== NEW: Request Tracing Middleware ==========
+@app.middleware("http")
+async def request_tracing_middleware(request, call_next):
+    """Add request_id and timing to all requests."""
+    import uuid
+    
+    # Generate request ID
+    request_id = str(uuid.uuid4())[:8]
+    request_id_var.set(request_id)
+    request_start_time_var.set(time.time())
+    
+    # Process request
+    response = await call_next(request)
+    
+    # Calculate latency
+    latency = time.time() - request_start_time_var.get()
+    
+    # Log request
+    logger.info(
+        f"Request completed",
+        extra={
+            "request_id": request_id,
+            "method": request.method,
+            "path": request.url.path,
+            "status": response.status_code,
+            "latency_ms": round(latency * 1000, 2),
+        }
+    )
+    
+    # Update metrics
+    endpoint = f"{request.method} {request.url.path}"
+    request_metrics["total_requests"][endpoint] += 1
+    request_metrics["total_latency"][endpoint] += latency
+    request_metrics["status_codes"][response.status_code] += 1
+    
+    # Add request_id to response headers
+    response.headers["X-Request-ID"] = request_id
+    
+    return response
+
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:3001,http://localhost:3002").split(",")
 
 app.add_middleware(
@@ -611,6 +666,53 @@ async def readyz():
         )
 
 # ========== End of Health Endpoints ==========
+
+# ========== NEW: Metrics Endpoint ==========
+
+@app.get("/metrics")
+async def get_metrics():
+    """
+    Get application metrics.
+    Returns request counts, latencies, cache stats, and system info.
+    """
+    # Calculate average latencies
+    avg_latencies = {}
+    for endpoint, total_latency in request_metrics["total_latency"].items():
+        count = request_metrics["total_requests"][endpoint]
+        avg_latencies[endpoint] = round((total_latency / count) * 1000, 2) if count > 0 else 0
+    
+    # Cache stats
+    cache_total = request_metrics["cache_hits"] + request_metrics["cache_misses"]
+    cache_hit_rate = round((request_metrics["cache_hits"] / cache_total * 100), 2) if cache_total > 0 else 0
+    
+    return {
+        "timestamp": time.time(),
+        "uptime_seconds": round(time.time() - startup_time, 2),
+        "backend": STORAGE_BACKEND,
+        "requests": {
+            "by_endpoint": dict(request_metrics["total_requests"]),
+            "by_status": dict(request_metrics["status_codes"]),
+            "total": sum(request_metrics["total_requests"].values()),
+        },
+        "latency": {
+            "by_endpoint_ms": avg_latencies,
+            "average_ms": round(
+                sum(request_metrics["total_latency"].values()) / 
+                sum(request_metrics["total_requests"].values()) * 1000, 2
+            ) if sum(request_metrics["total_requests"].values()) > 0 else 0,
+        },
+        "cache": {
+            "hits": request_metrics["cache_hits"],
+            "misses": request_metrics["cache_misses"],
+            "hit_rate_percent": cache_hit_rate,
+            "size": len(mark_cache),
+        },
+        "sheets": {
+            "api_calls": request_metrics["sheets_calls"],
+        } if STORAGE_BACKEND == "sheets" else None,
+    }
+
+# ========== End of Metrics ==========
 
 @app.post("/mark-sets", response_model=MarkSet, status_code=status.HTTP_201_CREATED)
 async def create_mark_set(mark_set: MarkSetCreate):
@@ -723,8 +825,12 @@ async def root():
         "docs": "/docs"
     }
 
+startup_time = time.time()
+
 @app.on_event("startup")
 async def startup_event():
+    global startup_time
+    startup_time = time.time()
     logger.info("PDF Mark System API starting up...")
     logger.info(f"Storage Backend: {STORAGE_BACKEND.upper()}")
     if STORAGE_BACKEND == "sqlite":
