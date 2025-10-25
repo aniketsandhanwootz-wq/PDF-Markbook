@@ -321,12 +321,14 @@ function EditorContent() {
   useEffect(() => {
     if (showSetup) return;
     if (isDemo) {
-      const demoPdfUrl = 'https://mozilla.github.io/pdf.js/web/compressed.tracemonkey-pldi-09.pdf';
-      pdfUrl.current = demoPdfUrl;
+  const demoPdfUrl = 'https://mozilla.github.io/pdf.js/web/compressed.tracemonkey-pldi-09.pdf';
+  const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
+  const proxiedUrl = `${apiBase}/proxy-pdf?url=${encodeURIComponent(demoPdfUrl)}`;
+  pdfUrl.current = proxiedUrl;
 
-      setLoading(true);
-      pdfjsLib
-        .getDocument({ url: demoPdfUrl })
+  setLoading(true);
+  pdfjsLib
+    .getDocument({ url: proxiedUrl })
         .promise.then((loadedPdf) => {
           setPdf(loadedPdf);
           setNumPages(loadedPdf.numPages);
@@ -338,15 +340,18 @@ function EditorContent() {
           setError('Failed to load PDF');
           setLoading(false);
         });
-    } else {
-      const targetPdfUrl = pdfUrlParam;
-      pdfUrl.current = targetPdfUrl;
-      markSetId.current = urlMarkSetId;
+} else {
+  const targetPdfUrl = pdfUrlParam;
+  const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
+  const proxiedUrl = `${apiBase}/proxy-pdf?url=${encodeURIComponent(targetPdfUrl)}`;
+  
+  pdfUrl.current = proxiedUrl;
+  markSetId.current = urlMarkSetId;
 
-      setLoading(true);
+  setLoading(true);
 
-      pdfjsLib
-        .getDocument({ url: targetPdfUrl })
+  pdfjsLib
+    .getDocument({ url: proxiedUrl })
         .promise.then((loadedPdf) => {
           setPdf(loadedPdf);
           setNumPages(loadedPdf.numPages);

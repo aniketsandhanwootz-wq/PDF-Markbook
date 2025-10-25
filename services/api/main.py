@@ -11,7 +11,8 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
+import httpx
 from pydantic import BaseModel, Field, field_validator, model_validator  # ✅ NEW
 from typing import List, Optional
 from sqlalchemy import create_engine, Column, String, Integer, Float, ForeignKey, event
@@ -879,6 +880,80 @@ async def root():
         "status": "running",
         "docs": "/docs"
     }
+
+
+# ========== NEW: PDF Proxy Endpoint ==========
+
+from fastapi.responses import StreamingResponse
+import httpx
+
+@app.get("/proxy-pdf")
+async def proxy_pdf(url: str):
+    """
+    Proxy PDF files to avoid CORS issues.
+    Supports Google Drive, ArXiv, and other PDF sources.
+    """
+    try:
+        # Convert Google Drive URLs to direct download format
+        if "drive.google.com" in url:
+            # Extract file ID from various Google Drive URL formats
+            if "/file/d/" in url:
+                file_id = url.split("/file/d/")[1].split("/")[0].split("?")[0]
+            elif "id=" in url:
+                file_id = url.split("id=")[1].split("&")[0]
+            elif "/folders/" in url:
+                # ERROR: User provided a folder URL instead of file URL
+                raise HTTPException(
+                    status_code=400, 
+                    detail="❌ This is a Google Drive FOLDER URL. Please provide a FILE URL instead. Right-click the file → 'Get link' → Use that URL."
+                )
+            else:
+                raise HTTPException(status_code=400, detail="Invalid Google Drive URL format. Please use a direct file link.")
+            
+            # Use direct download URL
+            url = f"https://drive.google.com/uc?export=download&id={file_id}"
+            logger.info(f"Converted Google Drive URL to: {url}")
+        
+        # Fetch PDF with timeout
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            response = await client.get(url)
+            
+            if response.status_code != 200:
+                logger.error(f"Failed to fetch PDF: {response.status_code}")
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=f"Failed to fetch PDF: HTTP {response.status_code}"
+                )
+            
+            # Check if response is actually a PDF
+            content_type = response.headers.get("content-type", "")
+            if "pdf" not in content_type.lower() and "octet-stream" not in content_type.lower():
+                logger.warning(f"URL returned non-PDF content: {content_type}")
+                # Still try to serve it, might be a PDF without correct headers
+            
+            logger.info(f"Successfully proxied PDF from {url} ({len(response.content)} bytes)")
+            
+            return StreamingResponse(
+                iter([response.content]),
+                media_type="application/pdf",
+                headers={
+                    "Access-Control-Allow-Origin": "*",
+                    "Cache-Control": "public, max-age=3600",
+                    "Content-Length": str(len(response.content))
+                }
+            )
+    
+    except httpx.TimeoutException:
+        logger.error(f"Timeout fetching PDF: {url}")
+        raise HTTPException(status_code=504, detail="PDF fetch timeout")
+    except httpx.RequestError as e:
+        logger.error(f"Error fetching PDF: {str(e)}")
+        raise HTTPException(status_code=502, detail=f"Failed to fetch PDF: {str(e)}")
+    except Exception as e:
+        logger.error(f"Unexpected error proxying PDF: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Proxy error: {str(e)}")
+
+# ========== End of PDF Proxy ==========
 
 startup_time = time.time()
 

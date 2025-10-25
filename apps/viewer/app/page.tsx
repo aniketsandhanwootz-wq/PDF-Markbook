@@ -329,9 +329,15 @@ function ViewerContent() {
     window.location.href = newUrl;
   };
 
-  const pdfUrl = isDemo
-    ? 'https://mozilla.github.io/pdf.js/web/compressed.tracemonkey-pldi-09.pdf'
-    : pdfUrlParam || 'https://mozilla.github.io/pdf.js/web/compressed.tracemonkey-pldi-09.pdf';
+// ✅ USE PROXY FOR ALL PDFs
+const rawPdfUrl = isDemo
+  ? 'https://mozilla.github.io/pdf.js/web/compressed.tracemonkey-pldi-09.pdf'
+  : pdfUrlParam || 'https://mozilla.github.io/pdf.js/web/compressed.tracemonkey-pldi-09.pdf';
+
+const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
+const pdfUrl = rawPdfUrl 
+  ? `${apiBase}/proxy-pdf?url=${encodeURIComponent(rawPdfUrl)}`
+  : '';
 
   const markSetId = markSetIdParam;
 
