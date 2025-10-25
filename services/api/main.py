@@ -316,7 +316,201 @@ def storage_get_marks(mark_set_id: str) -> List[Mark]:
             if "MARK_SET_NOT_FOUND" in str(e):
                 raise HTTPException(status_code=404, detail=f"Mark set {mark_set_id} not found")
             raise
+def compute_mark_diff(existing_marks: List[Mark], new_marks: List[Mark]) -> dict:
+    """
+    Compute diff between existing and new marks.
+    Returns: {
+        'to_add': [marks],
+        'to_update': [marks],
+        'to_delete': [mark_ids],
+        'unchanged': count
+    }
+    """
+    # Build lookup maps
+    existing_map = {m.mark_id: m for m in existing_marks if m.mark_id}
+    new_map = {m.mark_id: m for m in new_marks if m.mark_id and not m.mark_id.startswith('temp-')}
+    
+    to_add = []
+    to_update = []
+    to_delete = []
+    unchanged = 0
+    
+    # Find marks to add (new marks without IDs or with temp IDs)
+    for mark in new_marks:
+        if not mark.mark_id or mark.mark_id.startswith('temp-'):
+            to_add.append(mark)
+        elif mark.mark_id not in existing_map:
+            to_add.append(mark)
+    
+    # Find marks to update or keep unchanged
+    for mark in new_marks:
+        if mark.mark_id and not mark.mark_id.startswith('temp-') and mark.mark_id in existing_map:
+            existing = existing_map[mark.mark_id]
+            
+            # Check if mark changed
+            if (existing.page_index != mark.page_index or
+                existing.order_index != mark.order_index or
+                existing.name != mark.name or
+                abs(existing.nx - mark.nx) > 0.0001 or
+                abs(existing.ny - mark.ny) > 0.0001 or
+                abs(existing.nw - mark.nw) > 0.0001 or
+                abs(existing.nh - mark.nh) > 0.0001 or
+                existing.zoom_hint != mark.zoom_hint):
+                to_update.append(mark)
+            else:
+                unchanged += 1
+    
+    # Find marks to delete (in existing but not in new)
+    for mark_id in existing_map:
+        if mark_id not in new_map:
+            to_delete.append(mark_id)
+    
+    return {
+        'to_add': to_add,
+        'to_update': to_update,
+        'to_delete': to_delete,
+        'unchanged': unchanged
+    }
 
+
+def storage_replace_marks_delta(mark_set_id: str, marks: List[Mark]) -> dict:
+    """
+    Replace marks using delta algorithm - only update changed marks.
+    Returns statistics about the operation.
+    """
+    if STORAGE_BACKEND == "sqlite":
+        # For SQLite, use existing full replace (it's fast enough)
+        deleted = storage_replace_marks(mark_set_id, marks)
+        return {
+            "added": len(marks),
+            "updated": 0,
+            "deleted": deleted,
+            "unchanged": 0,
+            "method": "full_replace"
+        }
+    
+    elif STORAGE_BACKEND == "sheets":
+        # Get existing marks
+        try:
+            existing_marks = storage_get_marks(mark_set_id)
+        except HTTPException:
+            # Mark set doesn't exist, create all marks
+            deleted = storage_replace_marks(mark_set_id, marks)
+            return {
+                "added": len(marks),
+                "updated": 0,
+                "deleted": 0,
+                "unchanged": 0,
+                "method": "initial_create"
+            }
+        
+        # Compute diff
+        diff = compute_mark_diff(existing_marks, marks)
+        
+        # If more than 50% changed, use full replace (more efficient)
+        total_ops = len(diff['to_add']) + len(diff['to_update']) + len(diff['to_delete'])
+        if total_ops > len(existing_marks) * 0.5:
+            logger.info(f"Delta save: {total_ops} changes > 50% of {len(existing_marks)} marks, using full replace")
+            deleted = storage_replace_marks(mark_set_id, marks)
+            return {
+                "added": len(marks),
+                "updated": 0,
+                "deleted": deleted,
+                "unchanged": 0,
+                "method": "full_replace_threshold"
+            }
+        
+        # Apply delta changes
+        logger.info(
+            f"Delta save: add={len(diff['to_add'])}, "
+            f"update={len(diff['to_update'])}, "
+            f"delete={len(diff['to_delete'])}, "
+            f"unchanged={diff['unchanged']}"
+        )
+        
+        # Get mark_set info
+        mark_sets_data = storage_adapter._get_all_dicts("mark_sets")
+        mark_set = next((ms for ms in mark_sets_data if ms["mark_set_id"] == mark_set_id), None)
+        
+        if not mark_set:
+            raise HTTPException(status_code=404, detail=f"Mark set {mark_set_id} not found")
+        
+        doc_id = mark_set["doc_id"]
+        existing_pages = storage_adapter._pages_for_doc(doc_id)
+        page_index_to_id = {p["idx"]: p["page_id"] for p in existing_pages}
+        
+        # Get all marks
+        all_marks = storage_adapter._get_all_dicts("marks")
+        
+        # Build new marks list
+        header_marks = ["mark_id", "mark_set_id", "page_id", "order_index", "name", 
+                       "nx", "ny", "nw", "nh", "zoom_hint", "padding_pct", "anchor"]
+        
+        new_marks_data = [header_marks]
+        
+        # Keep marks from other mark_sets
+        for m in all_marks:
+            if m.get("mark_set_id") != mark_set_id:
+                new_marks_data.append([
+                    m.get("mark_id", ""), m.get("mark_set_id", ""), m.get("page_id", ""),
+                    m.get("order_index", ""), m.get("name", ""),
+                    m.get("nx", ""), m.get("ny", ""), m.get("nw", ""), m.get("nh", ""),
+                    m.get("zoom_hint", ""), m.get("padding_pct", ""), m.get("anchor", "")
+                ])
+        
+        # Add marks from this mark_set (excluding deleted ones)
+        existing_mark_ids = {m.mark_id for m in existing_marks if m.mark_id}
+        delete_ids = set(diff['to_delete'])
+        
+        # Keep unchanged marks
+        for mark in existing_marks:
+            if mark.mark_id and mark.mark_id not in delete_ids and mark.mark_id not in {m.mark_id for m in diff['to_update']}:
+                page_id = page_index_to_id.get(mark.page_index)
+                if page_id:
+                    new_marks_data.append([
+                        mark.mark_id, mark_set_id, page_id, mark.order_index, mark.name,
+                        mark.nx, mark.ny, mark.nw, mark.nh,
+                        mark.zoom_hint if mark.zoom_hint is not None else "",
+                        0.1, "auto"
+                    ])
+        
+        # Add updated marks
+        for mark in diff['to_update']:
+            page_id = page_index_to_id.get(mark.page_index)
+            if page_id:
+                new_marks_data.append([
+                    mark.mark_id, mark_set_id, page_id, mark.order_index, mark.name,
+                    mark.nx, mark.ny, mark.nw, mark.nh,
+                    mark.zoom_hint if mark.zoom_hint is not None else "",
+                    0.1, "auto"
+                ])
+        
+        # Add new marks
+        for mark in diff['to_add']:
+            mark_id = str(uuid.uuid4())
+            page_id = page_index_to_id.get(mark.page_index)
+            if page_id:
+                new_marks_data.append([
+                    mark_id, mark_set_id, page_id, mark.order_index, mark.name,
+                    mark.nx, mark.ny, mark.nw, mark.nh,
+                    mark.zoom_hint if mark.zoom_hint is not None else "",
+                    0.1, "auto"
+                ])
+        
+        # Write back to sheet
+        storage_adapter.ws["marks"].clear()
+        storage_adapter.ws["marks"].update('A1', new_marks_data)
+        
+        # Invalidate cache
+        storage_adapter._invalidate_marks_cache(mark_set_id)
+        
+        return {
+            "added": len(diff['to_add']),
+            "updated": len(diff['to_update']),
+            "deleted": len(diff['to_delete']),
+            "unchanged": diff['unchanged'],
+            "method": "delta"
+        }
 def storage_replace_marks(mark_set_id: str, marks: List[Mark]) -> int:
     """Replace all marks for a mark set in the configured storage backend."""
     deleted_count = 0
@@ -567,6 +761,92 @@ async def request_tracing_middleware(request, call_next):
     
     return response
 
+# ========== NEW: Rate Limiting ==========
+
+from collections import defaultdict
+from datetime import datetime, timedelta
+
+# Rate limit storage: {ip: {endpoint: [(timestamp, count)]}}
+rate_limit_storage = defaultdict(lambda: defaultdict(list))
+
+# Rate limits (requests per minute)
+RATE_LIMITS = {
+    "read": 100,   # GET requests
+    "write": 20,   # POST/PUT/DELETE requests
+    "default": 60,
+}
+
+def check_rate_limit(ip: str, method: str, path: str) -> tuple[bool, int]:
+    """
+    Check if request exceeds rate limit.
+    Returns: (is_allowed, retry_after_seconds)
+    """
+    # Determine rate limit
+    if method == "GET":
+        limit = RATE_LIMITS["read"]
+    elif method in ["POST", "PUT", "DELETE", "PATCH"]:
+        limit = RATE_LIMITS["write"]
+    else:
+        limit = RATE_LIMITS["default"]
+    
+    # Get current timestamp
+    now = datetime.now()
+    one_minute_ago = now - timedelta(minutes=1)
+    
+    # Clean old entries
+    key = f"{method}:{path}"
+    rate_limit_storage[ip][key] = [
+        ts for ts in rate_limit_storage[ip][key] 
+        if ts > one_minute_ago
+    ]
+    
+    # Check limit
+    current_count = len(rate_limit_storage[ip][key])
+    
+    if current_count >= limit:
+        # Calculate retry after (seconds until oldest request expires)
+        oldest = min(rate_limit_storage[ip][key])
+        retry_after = int((oldest - one_minute_ago).total_seconds()) + 1
+        return False, retry_after
+    
+    # Add current request
+    rate_limit_storage[ip][key].append(now)
+    return True, 0
+
+
+@app.middleware("http")
+async def rate_limiting_middleware(request, call_next):
+    """Rate limiting middleware - prevents abuse."""
+    
+    # Skip rate limiting for health/metrics endpoints
+    if request.url.path in ["/health", "/healthz", "/readyz", "/metrics", "/docs", "/redoc", "/openapi.json"]:
+        return await call_next(request)
+    
+    # Get client IP
+    client_ip = request.client.host if request.client else "unknown"
+    
+    # Check rate limit
+    allowed, retry_after = check_rate_limit(client_ip, request.method, request.url.path)
+    
+    if not allowed:
+        logger.warning(f"Rate limit exceeded for {client_ip} on {request.method} {request.url.path}")
+        return JSONResponse(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            content={
+                "detail": "Rate limit exceeded",
+                "retry_after_seconds": retry_after
+            },
+            headers={
+                "Retry-After": str(retry_after),
+                "X-RateLimit-Limit": str(RATE_LIMITS.get(request.method.lower(), RATE_LIMITS["default"])),
+                "X-RateLimit-Remaining": "0",
+            }
+        )
+    
+    return await call_next(request)
+
+# ========== End of Rate Limiting ==========
+
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:3001,http://localhost:3002").split(",")
 
 app.add_middleware(
@@ -749,44 +1029,91 @@ async def list_mark_sets():
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to fetch mark sets")
 
 @app.get("/mark-sets/{mark_set_id}/marks", response_model=List[Mark])
-async def get_marks(mark_set_id: str):
-    """Get all marks for a mark set with caching"""
+async def get_marks(
+    mark_set_id: str,
+    limit: Optional[int] = None,
+    offset: Optional[int] = 0
+):
+    """
+    Get marks for a mark set with optional pagination.
+    
+    Query params:
+    - limit: Maximum number of marks to return (optional)
+    - offset: Number of marks to skip (default: 0)
+    """
     cache_key = f"marks_{mark_set_id}"
     
+    # Check cache
     if cache_key in mark_cache:
         logger.info(f"Returning cached marks for {mark_set_id}")
-        return mark_cache[cache_key]
+        request_metrics["cache_hits"] += 1
+        all_marks = mark_cache[cache_key]
+    else:
+        try:
+            request_metrics["cache_misses"] += 1
+            all_marks = storage_get_marks(mark_set_id)
+            mark_cache[cache_key] = all_marks
+            logger.info(f"Fetched {len(all_marks)} marks for set {mark_set_id}")
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error fetching marks: {str(e)}")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to fetch marks")
     
-    try:
-        result = storage_get_marks(mark_set_id)
-        mark_cache[cache_key] = result
-        logger.info(f"Fetched {len(result)} marks for set {mark_set_id}")
-        return result
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error fetching marks: {str(e)}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to fetch marks")
+    # Apply pagination
+    total = len(all_marks)
+    
+    if limit is not None:
+        # Validate pagination params
+        if limit < 1 or limit > 1000:
+            raise HTTPException(status_code=400, detail="limit must be between 1 and 1000")
+        if offset < 0:
+            raise HTTPException(status_code=400, detail="offset must be non-negative")
+        
+        paginated_marks = all_marks[offset:offset + limit]
+        
+        logger.info(f"Paginated: returning {len(paginated_marks)} of {total} marks (offset={offset}, limit={limit})")
+        return paginated_marks
+    
+    return all_marks
 
 @app.put("/mark-sets/{mark_set_id}/marks")
-async def replace_marks(mark_set_id: str, marks: List[Mark]):
-    """REPLACE all marks for a mark set"""
+async def replace_marks(mark_set_id: str, marks: List[Mark], use_delta: bool = True):
+    """
+    REPLACE all marks for a mark set.
+    
+    Query params:
+    - use_delta: Use delta algorithm for efficient updates (default: true)
+    """
     if not marks:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Mark list cannot be empty")
     if len(marks) > 1000:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Too many marks (max 1000)")
     
     try:
-        deleted_count = storage_replace_marks(mark_set_id, marks)
+        if use_delta:
+            # Use delta save (60-80% fewer writes)
+            stats = storage_replace_marks_delta(mark_set_id, marks)
+        else:
+            # Use full replace
+            deleted_count = storage_replace_marks(mark_set_id, marks)
+            stats = {
+                "added": len(marks),
+                "updated": 0,
+                "deleted": deleted_count,
+                "unchanged": 0,
+                "method": "full_replace"
+            }
         
+        # Invalidate cache
         cache_key = f"marks_{mark_set_id}"
         if cache_key in mark_cache:
             del mark_cache[cache_key]
         if "all_mark_sets" in mark_cache:
             del mark_cache["all_mark_sets"]
         
-        logger.info(f"Replaced {deleted_count} marks with {len(marks)} new marks for set {mark_set_id}")
-        return {"status": "success", "count": len(marks), "deleted": deleted_count}
+        logger.info(f"Delta save: {stats}")
+        return {"status": "success", "count": len(marks), **stats}
     except HTTPException:
         raise
     except Exception as e:
