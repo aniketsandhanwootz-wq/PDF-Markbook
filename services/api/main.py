@@ -954,6 +954,63 @@ async def proxy_pdf(url: str):
         raise HTTPException(status_code=500, detail=f"Proxy error: {str(e)}")
 
 # ========== End of PDF Proxy ==========
+# ========== End of PDF Proxy ==========
+
+# ========== NEW: Submissions Endpoint ==========
+
+from pydantic import BaseModel as PydanticBaseModel
+
+class SubmissionEntry(PydanticBaseModel):
+    """Single entry in a submission"""
+    mark_id: str
+    value: str
+
+class SubmissionRequest(PydanticBaseModel):
+    """Request body for submitting mark values"""
+    entries: dict[str, str]  # mark_id -> value
+
+@app.post("/mark-sets/{mark_set_id}/submissions")
+async def submit_mark_values(mark_set_id: str, submission: SubmissionRequest):
+    """
+    Submit user-entered values for marks.
+    Stores values in Google Sheets marks tab.
+    """
+    try:
+        if STORAGE_BACKEND != "sheets":
+            raise HTTPException(
+                status_code=501,
+                detail="Submissions only supported with Google Sheets backend"
+            )
+        
+        # Validate mark set exists
+        mark_sets_data = storage_adapter._get_all_dicts("mark_sets")
+        mark_set = next((ms for ms in mark_sets_data if ms["mark_set_id"] == mark_set_id), None)
+        
+        if not mark_set:
+            raise HTTPException(status_code=404, detail=f"Mark set {mark_set_id} not found")
+        
+        # Save submissions
+        result = storage_adapter.save_submissions(mark_set_id, submission.entries)
+        
+        logger.info(f"Saved {result['updated_count']} submissions for mark set {mark_set_id}")
+        
+        return {
+            "status": "success",
+            "mark_set_id": mark_set_id,
+            "updated_count": result["updated_count"],
+            "submitted_at": result["submitted_at"]
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error saving submissions: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to save submissions: {str(e)}"
+        )
+
+# ========== End of Submissions ==========
 
 startup_time = time.time()
 

@@ -274,3 +274,69 @@ body {
     min-height: 44px;
   }
 }
+/* ========== Mobile Input Panel Styles ========== */
+
+.viewer-mobile-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.pdf-viewer-section {
+  height: 75vh;
+  overflow: auto;
+  background: #525252;
+}
+
+.input-panel-section {
+  height: 25vh;
+  background: white;
+  border-top: 2px solid #ddd;
+}
+
+/* Swipeable area */
+.swipeable-pdf {
+  touch-action: pan-y pinch-zoom;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Mobile optimizations */
+@media (max-width: 768px) {
+  .viewer-mobile-layout {
+    height: 100dvh; /* Dynamic viewport height for mobile */
+  }
+
+  .pdf-viewer-section {
+    height: 75dvh;
+  }
+
+  .input-panel-section {
+    height: 25dvh;
+  }
+
+  /* Hide zoom toolbar on mobile when in input mode */
+  .viewer-mobile-layout .zoom-toolbar {
+    padding: 8px 12px;
+  }
+
+  .viewer-mobile-layout .zoom-controls {
+    display: none; /* Hide zoom controls on mobile */
+  }
+
+  .viewer-mobile-layout .page-nav {
+    font-size: 12px !important;
+  }
+}
+
+/* Review screen mobile optimizations */
+@media (max-width: 768px) {
+  .review-screen-header h2 {
+    font-size: 18px;
+  }
+
+  .review-screen-entry {
+    padding: 10px;
+    font-size: 13px;
+  }
+}

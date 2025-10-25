@@ -314,3 +314,49 @@ class SheetsAdapter(StorageAdapter):
                 updates.append({"range": a1, "values": [[val]]})
         if updates:
             self.ws["mark_sets"].batch_update(updates)
+      # ========== NEW: Save Submissions ==========
+  
+    @retry_sheets_api
+    def save_submissions(self, mark_set_id: str, entries: dict[str, str]) -> dict[str, any]:
+        """
+        Save user-submitted values to marks sheet.
+        Updates user_value, submitted_at, submitted_by columns.
+        """
+        # Ensure columns exist
+        header = self.ws["marks"].row_values(1)
+        
+        # Add new columns if they don't exist
+        new_columns_needed = []
+        if "user_value" not in header:
+            new_columns_needed.append("user_value")
+        if "submitted_at" not in header:
+            new_columns_needed.append("submitted_at")
+        if "submitted_by" not in header:
+            new_columns_needed.append("submitted_by")
+        
+        if new_columns_needed:
+            # Append new column headers
+            new_header = header + new_columns_needed
+            self.ws["marks"].update('1:1', [new_header])
+            # Update colmap
+            self.colmap["marks"] = {col: idx + 1 for idx, col in enumerate(new_header)}
+        
+        # Get current timestamp
+        submitted_at = _utc_iso()
+        updated_count = 0
+        
+        # Update each mark with its submitted value
+        for mark_id, value in entries.items():
+            row_idx = self._find_row_by_value("marks", "mark_id", mark_id)
+            if row_idx:
+                self._update_cells("marks", row_idx, {
+                    "user_value": value,
+                    "submitted_at": submitted_at,
+                    "submitted_by": "viewer_user"  # Can be made dynamic later
+                })
+                updated_count += 1
+        
+        return {
+            "updated_count": updated_count,
+            "submitted_at": submitted_at
+        }

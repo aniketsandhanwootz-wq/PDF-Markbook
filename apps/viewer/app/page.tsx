@@ -2,12 +2,16 @@
 
 import { useEffect, useState, useRef, useCallback, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { useSwipeable } from 'react-swipeable';
+import toast, { Toaster } from 'react-hot-toast';
 import * as pdfjsLib from 'pdfjs-dist';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import PageCanvas from '../components/PageCanvas';
 import MarkList from '../components/MarkList';
 import ZoomToolbar from '../components/ZoomToolbar';
-import { clampZoom, computeZoomForRect, scrollToRect } from '../lib/pdf';
+import InputPanel from '../components/InputPanel';
+import ReviewScreen from '../components/ReviewScreen';
+import { clampZoom } from '../lib/pdf';
 import PDFSearch from '../components/PDFSearch';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
@@ -295,7 +299,7 @@ function ViewerContent() {
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [numPages, setNumPages] = useState(0);
   const [marks, setMarks] = useState<Mark[]>([]);
-  const [currentMarkIndex, setCurrentMarkIndex] = useState(-1);
+  const [currentMarkIndex, setCurrentMarkIndex] = useState(0);
   const [zoom, setZoom] = useState(1.0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -304,7 +308,13 @@ function ViewerContent() {
   const [currentPage, setCurrentPage] = useState(1);
   const [showSearch, setShowSearch] = useState(false);
   const [searchHighlights, setSearchHighlights] = useState<Array<{ x: number; y: number; width: number; height: number }>>([]);
-  const [highlightPageNumber, setHighlightPageNumber] = useState<number>(0); 
+  const [highlightPageNumber, setHighlightPageNumber] = useState<number>(0);
+
+  // NEW: Input mode states
+  const [entries, setEntries] = useState<Record<string, string>>({});
+  const [showReview, setShowReview] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
   const containerRef = useRef<HTMLDivElement>(null);
   const pageHeightsRef = useRef<number[]>([]);
 
@@ -329,15 +339,15 @@ function ViewerContent() {
     window.location.href = newUrl;
   };
 
-// ✅ USE PROXY FOR ALL PDFs
-const rawPdfUrl = isDemo
-  ? 'https://mozilla.github.io/pdf.js/web/compressed.tracemonkey-pldi-09.pdf'
-  : pdfUrlParam || 'https://mozilla.github.io/pdf.js/web/compressed.tracemonkey-pldi-09.pdf';
+  // ✅ USE PROXY FOR ALL PDFs
+  const rawPdfUrl = isDemo
+    ? 'https://mozilla.github.io/pdf.js/web/compressed.tracemonkey-pldi-09.pdf'
+    : pdfUrlParam || 'https://mozilla.github.io/pdf.js/web/compressed.tracemonkey-pldi-09.pdf';
 
-const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
-const pdfUrl = rawPdfUrl 
-  ? `${apiBase}/proxy-pdf?url=${encodeURIComponent(rawPdfUrl)}`
-  : '';
+  const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
+  const pdfUrl = rawPdfUrl 
+    ? `${apiBase}/proxy-pdf?url=${encodeURIComponent(rawPdfUrl)}`
+    : '';
 
   const markSetId = markSetIdParam;
 
@@ -407,7 +417,6 @@ const pdfUrl = rawPdfUrl
       return;
     }
 
-    const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
     fetch(`${apiBase}/mark-sets/${markSetId}/marks`)
       .then((res) => {
         if (!res.ok) throw new Error('Failed to fetch marks');
@@ -416,14 +425,23 @@ const pdfUrl = rawPdfUrl
       .then((data: Mark[]) => {
         const sorted = [...data].sort((a, b) => a.order_index - b.order_index);
         setMarks(sorted);
+        
+        // Initialize entries for all marks
+        const initialEntries: Record<string, string> = {};
+        sorted.forEach(mark => {
+          if (mark.mark_id) {
+            initialEntries[mark.mark_id] = '';
+          }
+        });
+        setEntries(initialEntries);
       })
       .catch((err) => {
         console.error('Marks fetch error:', err);
         setMarks([]);
       });
-  }, [markSetId, isDemo, showSetup]);
+  }, [markSetId, isDemo, showSetup, apiBase]);
 
-  // ✅ NEW: Track current page while scrolling
+  // Track current page while scrolling
   useEffect(() => {
     const container = containerRef.current;
     if (!container || !pdf) return;
@@ -445,12 +463,12 @@ const pdfUrl = rawPdfUrl
     };
 
     container.addEventListener('scroll', handleScroll);
-    handleScroll(); // Initial call
+    handleScroll();
 
     return () => container.removeEventListener('scroll', handleScroll);
   }, [pdf, numPages]);
 
-  // ✅ FIXED: Navigate to mark with proper zoom and scroll calculation
+  // Navigate to mark with proper zoom and scroll
   const navigateToMark = useCallback(
     async (index: number) => {
       if (!pdf || index < 0 || index >= marks.length) return;
@@ -464,7 +482,6 @@ const pdfUrl = rawPdfUrl
       try {
         const page = await pdf.getPage(pageNumber);
         
-        // Use zoom_hint or calculate zoom to fill viewport
         let targetZoom;
         
         if (mark.zoom_hint) {
@@ -476,7 +493,6 @@ const pdfUrl = rawPdfUrl
             h: mark.nh * vp1.height,
           };
           
-          // Calculate zoom to make mark fill 80% of viewport
           const zoomX = (container.clientWidth * 0.8) / rectAt1.w;
           const zoomY = (container.clientHeight * 0.8) / rectAt1.h;
           targetZoom = clampZoom(Math.min(zoomX, zoomY));
@@ -484,10 +500,8 @@ const pdfUrl = rawPdfUrl
 
         setZoom(targetZoom);
 
-        // Wait for zoom to apply and pages to re-render
         await new Promise(resolve => setTimeout(resolve, 200));
 
-        // Now calculate positions at the NEW zoom level
         const vpZ = page.getViewport({ scale: targetZoom });
         const rectAtZ = {
           x: mark.nx * vpZ.width,
@@ -496,28 +510,23 @@ const pdfUrl = rawPdfUrl
           h: mark.nh * vpZ.height,
         };
 
-        // Flash the mark
         setFlashRect({ pageNumber, ...rectAtZ });
         setTimeout(() => setFlashRect(null), 1200);
 
-        // Calculate cumulative page offset at NEW zoom
-        let cumulativeTop = 16; // Initial padding
+        let cumulativeTop = 16;
         
         for (let i = 0; i < mark.page_index; i++) {
           const prevPage = await pdf.getPage(i + 1);
           const prevVp = prevPage.getViewport({ scale: targetZoom });
-          cumulativeTop += prevVp.height + 16; // Height + gap
+          cumulativeTop += prevVp.height + 16;
         }
 
-        // Calculate center of marked area
         const markCenterX = rectAtZ.x + rectAtZ.w / 2;
         const markCenterY = rectAtZ.y + rectAtZ.h / 2;
 
-        // Center the mark in viewport
         const targetScrollLeft = markCenterX - container.clientWidth / 2;
         const targetScrollTop = cumulativeTop + markCenterY - container.clientHeight / 2;
 
-        // Scroll to position
         container.scrollTo({
           left: Math.max(0, targetScrollLeft),
           top: Math.max(0, targetScrollTop),
@@ -529,7 +538,7 @@ const pdfUrl = rawPdfUrl
     },
     [marks, pdf]
   );
-    
+
   // Previous/Next mark
   const prevMark = useCallback(() => {
     if (currentMarkIndex > 0) {
@@ -540,18 +549,20 @@ const pdfUrl = rawPdfUrl
   const nextMark = useCallback(() => {
     if (currentMarkIndex < marks.length - 1) {
       navigateToMark(currentMarkIndex + 1);
+    } else {
+      // Last mark - show review screen
+      setShowReview(true);
     }
   }, [currentMarkIndex, marks.length, navigateToMark]);
 
-  // ✅ NEW: Jump to specific page
+  // Jump to specific page
   const jumpToPage = useCallback(async (pageNumber: number) => {
     if (!pdf || !containerRef.current) return;
     
     const container = containerRef.current;
     
     try {
-      // Calculate cumulative offset to target page
-      let cumulativeTop = 16; // Initial padding
+      let cumulativeTop = 16;
       
       for (let i = 0; i < pageNumber - 1; i++) {
         const prevPage = await pdf.getPage(i + 1);
@@ -568,6 +579,67 @@ const pdfUrl = rawPdfUrl
       console.error('Jump to page error:', error);
     }
   }, [pdf, zoom]);
+
+  // Update entry value
+  const handleEntryChange = useCallback((value: string) => {
+    const currentMark = marks[currentMarkIndex];
+    if (currentMark?.mark_id) {
+      setEntries(prev => ({
+        ...prev,
+        [currentMark.mark_id!]: value
+      }));
+    }
+  }, [currentMarkIndex, marks]);
+
+  // Submit all entries
+  const handleSubmit = useCallback(async () => {
+    if (!markSetId) {
+      toast.error('No mark set ID provided');
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      const response = await fetch(`${apiBase}/mark-sets/${markSetId}/submissions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entries }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to submit entries');
+      }
+
+      toast.success('✓ Entries submitted successfully!');
+      
+      // Redirect to success page or reset
+      setTimeout(() => {
+        window.location.href = '/';
+      }, 2000);
+    } catch (error) {
+      console.error('Submit error:', error);
+      toast.error('Failed to submit entries');
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [markSetId, entries, apiBase]);
+
+  // Swipe handlers
+  const swipeHandlers = useSwipeable({
+    onSwipedLeft: () => {
+      if (!showReview) {
+        nextMark();
+      }
+    },
+    onSwipedRight: () => {
+      if (!showReview) {
+        prevMark();
+      }
+    },
+    trackMouse: false,
+    trackTouch: true,
+  });
 
   // Zoom controls
   const zoomIn = useCallback(() => {
@@ -593,20 +665,17 @@ const pdfUrl = rawPdfUrl
     });
   }, [pdf]);
 
-  // Wheel zoom - prevent browser zoom, only zoom PDF
+  // Wheel zoom
   useEffect(() => {
     const handleWheel = (e: WheelEvent) => {
       const container = containerRef.current;
       if (!container) return;
 
-      // Check if event is within PDF container
       const target = e.target as HTMLElement;
       if (!container.contains(target)) return;
 
-      // Check if it's a zoom gesture
       if (!e.ctrlKey && !e.metaKey) return;
 
-      // STOP browser zoom
       e.preventDefault();
       e.stopPropagation();
 
@@ -633,14 +702,14 @@ const pdfUrl = rawPdfUrl
       });
     };
 
-    // Add to DOCUMENT to catch before browser
     document.addEventListener('wheel', handleWheel, { passive: false, capture: true });
     
     return () => {
       document.removeEventListener('wheel', handleWheel, { capture: true });
     };
   }, []);
-  // Ctrl+F / Cmd+F to open search
+
+  // Ctrl+F for search
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
@@ -653,7 +722,6 @@ const pdfUrl = rawPdfUrl
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Handle page ready callback
   const handlePageReady = useCallback((pageNumber: number, height: number) => {
     pageHeightsRef.current[pageNumber - 1] = height;
   }, []);
@@ -684,29 +752,146 @@ const pdfUrl = rawPdfUrl
     );
   }
 
+  // Show review screen
+  if (showReview) {
+    return (
+      <>
+        <ReviewScreen
+          marks={marks}
+          entries={entries}
+          onBack={() => setShowReview(false)}
+          onSubmit={handleSubmit}
+          isSubmitting={isSubmitting}
+        />
+        <Toaster position="top-center" />
+      </>
+    );
+  }
+
+  // Mobile input mode (with marks)
+  if (marks.length > 0) {
+    const currentMark = marks[currentMarkIndex];
+    const currentValue = currentMark?.mark_id ? entries[currentMark.mark_id] || '' : '';
+
+    return (
+      <div className="viewer-mobile-layout">
+        <Toaster position="top-center" />
+        
+        {/* Sidebar - collapsible */}
+        {marks.length > 0 && (
+          <div className={`sidebar ${sidebarOpen ? 'open' : 'closed'}`} style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            height: '75vh',
+            zIndex: 100
+          }}>
+            <div className="sidebar-header">
+              <button
+                className="sidebar-toggle"
+                onClick={() => setSidebarOpen(!sidebarOpen)}
+              >
+                {sidebarOpen ? '◀' : '▶'}
+              </button>
+              {sidebarOpen && <h3>Marks</h3>}
+            </div>
+            {sidebarOpen && (
+              <MarkList
+                marks={marks}
+                currentIndex={currentMarkIndex}
+                onSelect={(index) => {
+                  navigateToMark(index);
+                  setSidebarOpen(false); // Auto-close on mobile
+                }}
+              />
+            )}
+          </div>
+        )}
+
+        {/* PDF Viewer - 75% */}
+        <div className="pdf-viewer-section" {...swipeHandlers}>
+          <ZoomToolbar
+            zoom={zoom}
+            onZoomIn={zoomIn}
+            onZoomOut={zoomOut}
+            onReset={resetZoom}
+            onFit={fitToWidthZoom}
+            currentPage={currentPage}
+            totalPages={numPages}
+            onPageJump={jumpToPage}
+          />
+
+          <div className="pdf-surface-wrap swipeable-pdf" ref={containerRef}>
+            <div className="pdf-surface">
+              {Array.from({ length: numPages }, (_, i) => i + 1).map((pageNum) => (
+                <div key={pageNum} style={{ position: 'relative' }}>
+                  <PageCanvas
+                    pdf={pdf}
+                    pageNumber={pageNum}
+                    zoom={zoom}
+                    onReady={(height) => handlePageReady(pageNum, height)}
+                    flashRect={
+                      flashRect?.pageNumber === pageNum
+                        ? {
+                            x: flashRect.x,
+                            y: flashRect.y,
+                            w: flashRect.w,
+                            h: flashRect.h,
+                          }
+                        : null
+                    }
+                  />
+                  
+                  {highlightPageNumber === pageNum && searchHighlights.map((highlight, idx) => (
+                    <div
+                      key={`highlight-${idx}`}
+                      style={{
+                        position: 'absolute',
+                        left: highlight.x * zoom,
+                        top: highlight.y * zoom,
+                        width: highlight.width * zoom,
+                        height: highlight.height * zoom,
+                        background: 'rgba(255, 235, 59, 0.4)',
+                        border: '1px solid rgba(255, 193, 7, 0.8)',
+                        pointerEvents: 'none',
+                        zIndex: 100,
+                      }}
+                    />
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <PDFSearch
+            pdf={pdf}
+            isOpen={showSearch}
+            onClose={() => setShowSearch(false)}
+            onResultFound={handleSearchResult}
+          />
+        </div>
+
+        {/* Input Panel - 25% */}
+        <InputPanel
+          currentMark={currentMark}
+          currentIndex={currentMarkIndex}
+          totalMarks={marks.length}
+          value={currentValue}
+          onChange={handleEntryChange}
+          onNext={nextMark}
+          onPrev={prevMark}
+          canNext={true} // Always allow next (can skip)
+          canPrev={currentMarkIndex > 0}
+        />
+      </div>
+    );
+  }
+
+  // Desktop mode (no marks - read-only viewer)
   return (
     <div className="viewer-container">
-      {marks.length > 0 && (
-        <div className={`sidebar ${sidebarOpen ? 'open' : 'closed'}`}>
-          <div className="sidebar-header">
-            <button
-              className="sidebar-toggle"
-              onClick={() => setSidebarOpen(!sidebarOpen)}
-            >
-              {sidebarOpen ? '◀' : '▶'}
-            </button>
-            {sidebarOpen && <h3>Marks</h3>}
-          </div>
-          {sidebarOpen && (
-            <MarkList
-              marks={marks}
-              currentIndex={currentMarkIndex}
-              onSelect={navigateToMark}
-            />
-          )}
-        </div>
-      )}
-
+      <Toaster position="top-center" />
+      
       <div className="main-content">
         <ZoomToolbar
           zoom={zoom}
@@ -714,10 +899,6 @@ const pdfUrl = rawPdfUrl
           onZoomOut={zoomOut}
           onReset={resetZoom}
           onFit={fitToWidthZoom}
-          onPrev={marks.length > 0 ? prevMark : undefined}
-          onNext={marks.length > 0 ? nextMark : undefined}
-          canPrev={currentMarkIndex > 0}
-          canNext={currentMarkIndex < marks.length - 1}
           currentPage={currentPage}
           totalPages={numPages}
           onPageJump={jumpToPage}
@@ -726,47 +907,19 @@ const pdfUrl = rawPdfUrl
         <div className="pdf-surface-wrap" ref={containerRef} style={{ touchAction: 'pan-y pan-x' }}>
           <div className="pdf-surface">
             {Array.from({ length: numPages }, (_, i) => i + 1).map((pageNum) => (
-  <div key={pageNum} style={{ position: 'relative' }}>
+              <div key={pageNum} style={{ position: 'relative' }}>
                 <PageCanvas
-                  key={pageNum}
                   pdf={pdf}
                   pageNumber={pageNum}
                   zoom={zoom}
                   onReady={(height) => handlePageReady(pageNum, height)}
-                  flashRect={
-                    flashRect?.pageNumber === pageNum
-                      ? {
-                          x: flashRect.x,
-                          y: flashRect.y,
-                          w: flashRect.w,
-                          h: flashRect.h,
-                        }
-                      : null
-                  }
+                  flashRect={null}
                 />
-                
-{/* Search Highlights */}
-                {highlightPageNumber === pageNum && searchHighlights.map((highlight, idx) => (
-                  <div
-                    key={`highlight-${idx}`}
-                    style={{
-                      position: 'absolute',
-                      left: highlight.x * zoom,
-                      top: highlight.y * zoom,
-                      width: highlight.width * zoom,
-                      height: highlight.height * zoom,
-                      background: 'rgba(255, 235, 59, 0.4)',
-                      border: '1px solid rgba(255, 193, 7, 0.8)',
-                      pointerEvents: 'none',
-                      zIndex: 100,
-                    }}
-                  />
-                ))}
               </div>
             ))}
           </div>
         </div>
-                {/* PDF Search Component */}
+
         <PDFSearch
           pdf={pdf}
           isOpen={showSearch}
