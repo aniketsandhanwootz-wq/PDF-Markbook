@@ -154,7 +154,7 @@ else:
 # CACHE
 # ============================================================================
 
-mark_cache = TTLCache(maxsize=100, ttl=300)
+mark_cache = TTLCache(maxsize=100, ttl=5)  # 5-second cache (simple and fast)
 
 # ============================================================================
 # PYDANTIC MODELS
@@ -316,203 +316,9 @@ def storage_get_marks(mark_set_id: str) -> List[Mark]:
             if "MARK_SET_NOT_FOUND" in str(e):
                 raise HTTPException(status_code=404, detail=f"Mark set {mark_set_id} not found")
             raise
-def compute_mark_diff(existing_marks: List[Mark], new_marks: List[Mark]) -> dict:
-    """
-    Compute diff between existing and new marks.
-    Returns: {
-        'to_add': [marks],
-        'to_update': [marks],
-        'to_delete': [mark_ids],
-        'unchanged': count
-    }
-    """
-    # Build lookup maps
-    existing_map = {m.mark_id: m for m in existing_marks if m.mark_id}
-    new_map = {m.mark_id: m for m in new_marks if m.mark_id and not m.mark_id.startswith('temp-')}
-    
-    to_add = []
-    to_update = []
-    to_delete = []
-    unchanged = 0
-    
-    # Find marks to add (new marks without IDs or with temp IDs)
-    for mark in new_marks:
-        if not mark.mark_id or mark.mark_id.startswith('temp-'):
-            to_add.append(mark)
-        elif mark.mark_id not in existing_map:
-            to_add.append(mark)
-    
-    # Find marks to update or keep unchanged
-    for mark in new_marks:
-        if mark.mark_id and not mark.mark_id.startswith('temp-') and mark.mark_id in existing_map:
-            existing = existing_map[mark.mark_id]
-            
-            # Check if mark changed
-            if (existing.page_index != mark.page_index or
-                existing.order_index != mark.order_index or
-                existing.name != mark.name or
-                abs(existing.nx - mark.nx) > 0.0001 or
-                abs(existing.ny - mark.ny) > 0.0001 or
-                abs(existing.nw - mark.nw) > 0.0001 or
-                abs(existing.nh - mark.nh) > 0.0001 or
-                existing.zoom_hint != mark.zoom_hint):
-                to_update.append(mark)
-            else:
-                unchanged += 1
-    
-    # Find marks to delete (in existing but not in new)
-    for mark_id in existing_map:
-        if mark_id not in new_map:
-            to_delete.append(mark_id)
-    
-    return {
-        'to_add': to_add,
-        'to_update': to_update,
-        'to_delete': to_delete,
-        'unchanged': unchanged
-    }
 
-
-def storage_replace_marks_delta(mark_set_id: str, marks: List[Mark]) -> dict:
-    """
-    Replace marks using delta algorithm - only update changed marks.
-    Returns statistics about the operation.
-    """
-    if STORAGE_BACKEND == "sqlite":
-        # For SQLite, use existing full replace (it's fast enough)
-        deleted = storage_replace_marks(mark_set_id, marks)
-        return {
-            "added": len(marks),
-            "updated": 0,
-            "deleted": deleted,
-            "unchanged": 0,
-            "method": "full_replace"
-        }
-    
-    elif STORAGE_BACKEND == "sheets":
-        # Get existing marks
-        try:
-            existing_marks = storage_get_marks(mark_set_id)
-        except HTTPException:
-            # Mark set doesn't exist, create all marks
-            deleted = storage_replace_marks(mark_set_id, marks)
-            return {
-                "added": len(marks),
-                "updated": 0,
-                "deleted": 0,
-                "unchanged": 0,
-                "method": "initial_create"
-            }
-        
-        # Compute diff
-        diff = compute_mark_diff(existing_marks, marks)
-        
-        # If more than 50% changed, use full replace (more efficient)
-        total_ops = len(diff['to_add']) + len(diff['to_update']) + len(diff['to_delete'])
-        if total_ops > len(existing_marks) * 0.5:
-            logger.info(f"Delta save: {total_ops} changes > 50% of {len(existing_marks)} marks, using full replace")
-            deleted = storage_replace_marks(mark_set_id, marks)
-            return {
-                "added": len(marks),
-                "updated": 0,
-                "deleted": deleted,
-                "unchanged": 0,
-                "method": "full_replace_threshold"
-            }
-        
-        # Apply delta changes
-        logger.info(
-            f"Delta save: add={len(diff['to_add'])}, "
-            f"update={len(diff['to_update'])}, "
-            f"delete={len(diff['to_delete'])}, "
-            f"unchanged={diff['unchanged']}"
-        )
-        
-        # Get mark_set info
-        mark_sets_data = storage_adapter._get_all_dicts("mark_sets")
-        mark_set = next((ms for ms in mark_sets_data if ms["mark_set_id"] == mark_set_id), None)
-        
-        if not mark_set:
-            raise HTTPException(status_code=404, detail=f"Mark set {mark_set_id} not found")
-        
-        doc_id = mark_set["doc_id"]
-        existing_pages = storage_adapter._pages_for_doc(doc_id)
-        page_index_to_id = {p["idx"]: p["page_id"] for p in existing_pages}
-        
-        # Get all marks
-        all_marks = storage_adapter._get_all_dicts("marks")
-        
-        # Build new marks list
-        header_marks = ["mark_id", "mark_set_id", "page_id", "order_index", "name", 
-                       "nx", "ny", "nw", "nh", "zoom_hint", "padding_pct", "anchor"]
-        
-        new_marks_data = [header_marks]
-        
-        # Keep marks from other mark_sets
-        for m in all_marks:
-            if m.get("mark_set_id") != mark_set_id:
-                new_marks_data.append([
-                    m.get("mark_id", ""), m.get("mark_set_id", ""), m.get("page_id", ""),
-                    m.get("order_index", ""), m.get("name", ""),
-                    m.get("nx", ""), m.get("ny", ""), m.get("nw", ""), m.get("nh", ""),
-                    m.get("zoom_hint", ""), m.get("padding_pct", ""), m.get("anchor", "")
-                ])
-        
-        # Add marks from this mark_set (excluding deleted ones)
-        existing_mark_ids = {m.mark_id for m in existing_marks if m.mark_id}
-        delete_ids = set(diff['to_delete'])
-        
-        # Keep unchanged marks
-        for mark in existing_marks:
-            if mark.mark_id and mark.mark_id not in delete_ids and mark.mark_id not in {m.mark_id for m in diff['to_update']}:
-                page_id = page_index_to_id.get(mark.page_index)
-                if page_id:
-                    new_marks_data.append([
-                        mark.mark_id, mark_set_id, page_id, mark.order_index, mark.name,
-                        mark.nx, mark.ny, mark.nw, mark.nh,
-                        mark.zoom_hint if mark.zoom_hint is not None else "",
-                        0.1, "auto"
-                    ])
-        
-        # Add updated marks
-        for mark in diff['to_update']:
-            page_id = page_index_to_id.get(mark.page_index)
-            if page_id:
-                new_marks_data.append([
-                    mark.mark_id, mark_set_id, page_id, mark.order_index, mark.name,
-                    mark.nx, mark.ny, mark.nw, mark.nh,
-                    mark.zoom_hint if mark.zoom_hint is not None else "",
-                    0.1, "auto"
-                ])
-        
-        # Add new marks
-        for mark in diff['to_add']:
-            mark_id = str(uuid.uuid4())
-            page_id = page_index_to_id.get(mark.page_index)
-            if page_id:
-                new_marks_data.append([
-                    mark_id, mark_set_id, page_id, mark.order_index, mark.name,
-                    mark.nx, mark.ny, mark.nw, mark.nh,
-                    mark.zoom_hint if mark.zoom_hint is not None else "",
-                    0.1, "auto"
-                ])
-        
-        # Write back to sheet
-        storage_adapter.ws["marks"].clear()
-        storage_adapter.ws["marks"].update('A1', new_marks_data)
-        
-        # Invalidate cache
-        storage_adapter._invalidate_marks_cache(mark_set_id)
-        
-        return {
-            "added": len(diff['to_add']),
-            "updated": len(diff['to_update']),
-            "deleted": len(diff['to_delete']),
-            "unchanged": diff['unchanged'],
-            "method": "delta"
-        }
 def storage_replace_marks(mark_set_id: str, marks: List[Mark]) -> int:
-    """Replace all marks for a mark set in the configured storage backend."""
+    """Replace all marks for a mark set - SIMPLIFIED VERSION."""
     deleted_count = 0
     
     if STORAGE_BACKEND == "sqlite":
@@ -534,9 +340,7 @@ def storage_replace_marks(mark_set_id: str, marks: List[Mark]) -> int:
             db.flush()
     
     elif STORAGE_BACKEND == "sheets":
-        import time
-        
-        # Step 1: Get the mark_set to find its doc_id
+        # Get the mark_set to find its doc_id
         mark_sets_data = storage_adapter._get_all_dicts("mark_sets")
         mark_set = next((ms for ms in mark_sets_data if ms["mark_set_id"] == mark_set_id), None)
         
@@ -545,129 +349,77 @@ def storage_replace_marks(mark_set_id: str, marks: List[Mark]) -> int:
         
         doc_id = mark_set["doc_id"]
         
-        # Step 2: Get existing pages for this document
+        # Get existing pages for this document
         existing_pages = storage_adapter._pages_for_doc(doc_id)
         page_index_to_id = {p["idx"]: p["page_id"] for p in existing_pages}
         
-        # Step 3: Find all unique page indices needed by the marks
+        # Bootstrap any missing pages
         needed_page_indices = set(mark.page_index for mark in marks)
-        
-        # Step 4: Bootstrap any missing pages with default dimensions
         for page_idx in needed_page_indices:
             if page_idx not in page_index_to_id:
                 logger.info(f"Bootstrapping page {page_idx} for document {doc_id}")
-                
-                # Double-check if page already exists (in case cache is stale)
-                all_pages = storage_adapter._get_all_dicts("pages")
-                existing_page = next(
-                    (p for p in all_pages if p["doc_id"] == doc_id and int(p["idx"]) == page_idx),
-                    None
-                )
-                
-                if existing_page:
-                    # Page exists, just update our mapping
-                    page_index_to_id[page_idx] = existing_page["page_id"]
-                    logger.info(f"Page {page_idx} already exists with ID {existing_page['page_id']}")
-                else:
-                    # Create new page
-                    page_id = str(uuid.uuid4())
-                    storage_adapter._append_rows("pages", [[
-                        page_id,
-                        doc_id,
-                        page_idx,
-                        612.0,   # Standard Letter width
-                        792.0,   # Standard Letter height
-                        0        # No rotation
-                    ]])
-                    
-                    page_index_to_id[page_idx] = page_id
-                    
-                    # Clear the cache so next call gets fresh data
-                    storage_adapter._pages_by_doc_cache.pop(doc_id, None)
-                    
-                    logger.info(f"Created new page {page_idx} with ID {page_id}")
+                page_id = str(uuid.uuid4())
+                storage_adapter._append_rows("pages", [[
+                    page_id, doc_id, page_idx, 612.0, 792.0, 0
+                ]])
+                page_index_to_id[page_idx] = page_id
+                storage_adapter._pages_by_doc_cache.pop(doc_id, None)
         
-        # Step 5: Get all existing marks
+        # Get all existing marks
         all_marks = storage_adapter._get_all_dicts("marks")
         existing_marks_for_set = [m for m in all_marks if m.get("mark_set_id") == mark_set_id]
         deleted_count = len(existing_marks_for_set)
         
-        # Step 6: Delete old marks for this mark_set
+        # Build new marks list (keep other mark sets, replace this one)
         header_marks = ["mark_id", "mark_set_id", "page_id", "order_index", "name", 
                        "nx", "ny", "nw", "nh", "zoom_hint", "padding_pct", "anchor"]
         
         filtered_marks = [header_marks]
+        
+        # Keep marks from other mark_sets
         for m in all_marks:
             if m.get("mark_set_id") != mark_set_id:
-                # Keep marks from other mark_sets
                 filtered_marks.append([
-                    m.get("mark_id", ""),
-                    m.get("mark_set_id", ""),
-                    m.get("page_id", ""),
-                    m.get("order_index", ""),
-                    m.get("name", ""),
-                    m.get("nx", ""),
-                    m.get("ny", ""),
-                    m.get("nw", ""),
-                    m.get("nh", ""),
-                    m.get("zoom_hint", ""),
-                    m.get("padding_pct", ""),
-                    m.get("anchor", "")
+                    m.get("mark_id", ""), m.get("mark_set_id", ""), m.get("page_id", ""),
+                    m.get("order_index", ""), m.get("name", ""),
+                    m.get("nx", ""), m.get("ny", ""), m.get("nw", ""), m.get("nh", ""),
+                    m.get("zoom_hint", ""), m.get("padding_pct", ""), m.get("anchor", "")
                 ])
         
-        # Step 7: Add new marks
+        # Add new marks for this mark_set
         for mark in marks:
             mark_id = mark.mark_id if mark.mark_id and not mark.mark_id.startswith('temp-') else str(uuid.uuid4())
-            
-            # Get the page_id for this page_index
             page_id = page_index_to_id.get(mark.page_index)
             
             if not page_id:
                 logger.error(f"Could not find page_id for page_index {mark.page_index}")
                 continue
             
-            # Add the mark row
             filtered_marks.append([
-                mark_id,
-                mark_set_id,
-                page_id,
-                mark.order_index,
-                mark.name,
-                mark.nx,
-                mark.ny,
-                mark.nw,
-                mark.nh,
+                mark_id, mark_set_id, page_id, mark.order_index, mark.name,
+                mark.nx, mark.ny, mark.nw, mark.nh,
                 mark.zoom_hint if mark.zoom_hint is not None else "",
-                0.1,  # padding_pct default
-                "auto"  # anchor default
+                0.1, "auto"
             ])
-            
             logger.info(f"Added mark '{mark.name}' with ID {mark_id} on page {mark.page_index}")
         
-        # Step 8: Write everything back to the marks sheet
+        # Write everything back to the marks sheet
         storage_adapter.ws["marks"].clear()
         storage_adapter.ws["marks"].update('A1', filtered_marks)
         
         logger.info(f"Replaced {deleted_count} marks with {len(marks)} new marks in Google Sheets")
         
-        # Step 9: Update document's updated_at timestamp
+        # Update document timestamp
         current_timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        
-        # Find the document row
         doc_row_idx = storage_adapter._find_row_by_value("documents", "doc_id", doc_id)
-        
         if doc_row_idx:
-            # Update the updated_at column
-            storage_adapter._update_cells("documents", doc_row_idx, {
-                "updated_at": current_timestamp
-            })
-            logger.info(f"Updated document {doc_id} timestamp to {current_timestamp}")
+            storage_adapter._update_cells("documents", doc_row_idx, {"updated_at": current_timestamp})
         
-        # Clear document cache
+        # Clear caches
         storage_adapter._doc_cache.pop(doc_id, None)
+        storage_adapter._pages_by_doc_cache.pop(doc_id, None)
     
     return deleted_count
-
 def storage_delete_mark_set(mark_set_id: str) -> int:
     """Delete a mark set and all its marks from the configured storage backend."""
     marks_deleted = 0
@@ -1034,16 +786,10 @@ async def get_marks(
     limit: Optional[int] = None,
     offset: Optional[int] = 0
 ):
-    """
-    Get marks for a mark set with optional pagination.
-    
-    Query params:
-    - limit: Maximum number of marks to return (optional)
-    - offset: Number of marks to skip (default: 0)
-    """
+    """Get marks - with simple 5-second cache."""
     cache_key = f"marks_{mark_set_id}"
     
-    # Check cache
+    # Simple 5-second cache
     if cache_key in mark_cache:
         logger.info(f"Returning cached marks for {mark_set_id}")
         request_metrics["cache_hits"] += 1
@@ -1061,64 +807,46 @@ async def get_marks(
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to fetch marks")
     
     # Apply pagination
-    total = len(all_marks)
-    
     if limit is not None:
-        # Validate pagination params
         if limit < 1 or limit > 1000:
             raise HTTPException(status_code=400, detail="limit must be between 1 and 1000")
         if offset < 0:
             raise HTTPException(status_code=400, detail="offset must be non-negative")
         
         paginated_marks = all_marks[offset:offset + limit]
-        
-        logger.info(f"Paginated: returning {len(paginated_marks)} of {total} marks (offset={offset}, limit={limit})")
+        logger.info(f"Paginated: returning {len(paginated_marks)} of {len(all_marks)} marks")
         return paginated_marks
     
     return all_marks
 
 @app.put("/mark-sets/{mark_set_id}/marks")
-async def replace_marks(mark_set_id: str, marks: List[Mark], use_delta: bool = True):
-    """
-    REPLACE all marks for a mark set.
-    
-    Query params:
-    - use_delta: Use delta algorithm for efficient updates (default: true)
-    """
+async def replace_marks(mark_set_id: str, marks: List[Mark]):
+    """REPLACE all marks for a mark set - SIMPLIFIED (no delta save)."""
     if not marks:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Mark list cannot be empty")
     if len(marks) > 1000:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Too many marks (max 1000)")
     
     try:
-        if use_delta:
-            # Use delta save (60-80% fewer writes)
-            stats = storage_replace_marks_delta(mark_set_id, marks)
-        else:
-            # Use full replace
-            deleted_count = storage_replace_marks(mark_set_id, marks)
-            stats = {
-                "added": len(marks),
-                "updated": 0,
-                "deleted": deleted_count,
-                "unchanged": 0,
-                "method": "full_replace"
-            }
+        # Always use full replace (simple and reliable)
+        deleted_count = storage_replace_marks(mark_set_id, marks)
         
-        # Invalidate cache
-        cache_key = f"marks_{mark_set_id}"
-        if cache_key in mark_cache:
-            del mark_cache[cache_key]
-        if "all_mark_sets" in mark_cache:
-            del mark_cache["all_mark_sets"]
+        # Clear ALL caches
+        mark_cache.clear()
         
-        logger.info(f"Delta save: {stats}")
-        return {"status": "success", "count": len(marks), **stats}
+        logger.info(f"Replaced {deleted_count} marks with {len(marks)} new marks")
+        return {
+            "status": "success",
+            "count": len(marks),
+            "deleted": deleted_count,
+            "method": "full_replace"
+        }
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error replacing marks: {str(e)}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to save marks")
+        
 
 @app.delete("/mark-sets/{mark_set_id}", status_code=status.HTTP_200_OK)
 async def delete_mark_set(mark_set_id: str):
