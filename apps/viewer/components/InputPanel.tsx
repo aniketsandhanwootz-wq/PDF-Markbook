@@ -173,32 +173,27 @@ export default function InputPanel({
         </button>
         <button
           onClick={onNext}
-          disabled={!canNext}
           style={{
             flex: 1,
             padding: '14px',
             fontSize: '16px',
             fontWeight: '600',
             border: 'none',
-            background: canNext ? '#1976d2' : '#ccc',
+            background: '#1976d2',
             color: 'white',
             borderRadius: '8px',
-            cursor: canNext ? 'pointer' : 'not-allowed',
+            cursor: 'pointer',
             minHeight: '44px',
             transition: 'all 0.2s'
           }}
           onMouseEnter={(e) => {
-            if (canNext) {
-              e.currentTarget.style.background = '#1565c0';
-            }
+            e.currentTarget.style.background = '#1565c0';
           }}
           onMouseLeave={(e) => {
-            if (canNext) {
-              e.currentTarget.style.background = '#1976d2';
-            }
+            e.currentTarget.style.background = '#1976d2';
           }}
         >
-          {currentIndex < totalMarks - 1 ? 'Next →' : 'Review →'}
+          {currentIndex < totalMarks - 1 ? 'Next →' : '✓ Review & Submit'}
         </button>
       </div>
     </div>

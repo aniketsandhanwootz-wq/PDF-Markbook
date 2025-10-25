@@ -44,7 +44,7 @@ type MarkSetInfo = {
   name: string;
 };
 
-// Setup Screen Component for Viewer
+// Setup Screen Component
 function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string) => void }) {
   const [pdfUrl, setPdfUrl] = useState('');
   const [markSetId, setMarkSetId] = useState('');
@@ -64,7 +64,6 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
     }
   ];
 
-  // Load available mark sets on mount
   useEffect(() => {
     const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
     fetch(`${apiBase}/mark-sets`)
@@ -120,7 +119,6 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
           View and navigate marks on PDF documents
         </p>
 
-        {/* Available Mark Sets */}
         {availableMarkSets.length > 0 && (
           <div style={{ marginBottom: '32px' }}>
             <label style={{ display: 'block', fontWeight: '500', marginBottom: '12px' }}>
@@ -143,16 +141,6 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
                     background: markSetId === markSet.id ? '#e3f2fd' : 'white',
                     transition: 'background 0.2s'
                   }}
-                  onMouseEnter={(e) => {
-                    if (markSetId !== markSet.id) {
-                      e.currentTarget.style.background = '#f9f9f9';
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    if (markSetId !== markSet.id) {
-                      e.currentTarget.style.background = 'white';
-                    }
-                  }}
                 >
                   <div style={{ fontWeight: '500', marginBottom: '4px' }}>
                     {markSet.name}
@@ -167,21 +155,12 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
         )}
 
         {loadingMarkSets && (
-          <div style={{ 
-            textAlign: 'center', 
-            padding: '20px', 
-            color: '#666',
-            marginBottom: '24px' 
-          }}>
+          <div style={{ textAlign: 'center', padding: '20px', color: '#666', marginBottom: '24px' }}>
             Loading mark sets...
           </div>
         )}
 
-        <div style={{ 
-          borderTop: '2px solid #f0f0f0', 
-          paddingTop: '24px',
-          marginTop: availableMarkSets.length > 0 ? '0' : '0'
-        }}>
+        <div style={{ borderTop: '2px solid #f0f0f0', paddingTop: '24px' }}>
           <label style={{ display: 'block', fontWeight: '500', marginBottom: '8px' }}>
             🔗 Or Enter PDF URL
           </label>
@@ -198,28 +177,6 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
               fontSize: '14px'
             }}
           />
-          <div style={{ marginTop: '8px', fontSize: '12px', color: '#666' }}>
-            Sample PDFs:
-          </div>
-          <div style={{ display: 'flex', gap: '8px', marginTop: '4px', flexWrap: 'wrap' }}>
-            {samplePdfs.map((sample, idx) => (
-              <button
-                key={idx}
-                onClick={() => setPdfUrl(sample.url)}
-                style={{
-                  padding: '6px 12px',
-                  fontSize: '12px',
-                  border: '1px solid #1976d2',
-                  background: 'white',
-                  color: '#1976d2',
-                  borderRadius: '4px',
-                  cursor: 'pointer'
-                }}
-              >
-                {sample.name}
-              </button>
-            ))}
-          </div>
         </div>
 
         <div style={{ marginTop: '24px', marginBottom: '24px' }}>
@@ -271,22 +228,6 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
         >
           {isLoading ? 'Loading...' : 'Open PDF'}
         </button>
-
-        <div style={{
-          marginTop: '24px',
-          padding: '16px',
-          background: '#f9f9f9',
-          borderRadius: '4px',
-          fontSize: '13px',
-          color: '#666'
-        }}>
-          <strong>💡 Tips:</strong>
-          <ul style={{ marginTop: '8px', paddingLeft: '20px' }}>
-            <li>Select a mark set from the list above to view with marks</li>
-            <li>Or enter a PDF URL directly to view without marks</li>
-            <li>Use Ctrl/Cmd + Scroll to zoom in/out</li>
-          </ul>
-        </div>
       </div>
     </div>
   );
@@ -309,6 +250,7 @@ function ViewerContent() {
   const [showSearch, setShowSearch] = useState(false);
   const [searchHighlights, setSearchHighlights] = useState<Array<{ x: number; y: number; width: number; height: number }>>([]);
   const [highlightPageNumber, setHighlightPageNumber] = useState<number>(0);
+  const [isMobileInputMode, setIsMobileInputMode] = useState(false);
 
   // NEW: Input mode states
   const [entries, setEntries] = useState<Record<string, string>>({});
@@ -321,6 +263,7 @@ function ViewerContent() {
   const isDemo = searchParams?.get('demo') === '1';
   const pdfUrlParam = searchParams?.get('pdf_url') || '';
   const markSetIdParam = searchParams?.get('mark_set_id') || '';
+  const mobileParam = searchParams?.get('mobile') === '1'; // NEW: ?mobile=1 to force mobile mode
 
   // Check if we should show setup screen
   useEffect(() => {
@@ -409,11 +352,13 @@ function ViewerContent() {
 
     if (isDemo) {
       setMarks(demoMarks);
+      setIsMobileInputMode(mobileParam);
       return;
     }
 
     if (!markSetId) {
       setMarks([]);
+      setIsMobileInputMode(false);
       return;
     }
 
@@ -426,7 +371,7 @@ function ViewerContent() {
         const sorted = [...data].sort((a, b) => a.order_index - b.order_index);
         setMarks(sorted);
         
-        // Initialize entries for all marks
+        // Initialize entries
         const initialEntries: Record<string, string> = {};
         sorted.forEach(mark => {
           if (mark.mark_id) {
@@ -434,14 +379,18 @@ function ViewerContent() {
           }
         });
         setEntries(initialEntries);
+        
+        // Enable mobile input mode if ?mobile=1 or on small screens
+        setIsMobileInputMode(mobileParam || window.innerWidth < 768);
       })
       .catch((err) => {
         console.error('Marks fetch error:', err);
         setMarks([]);
+        setIsMobileInputMode(false);
       });
-  }, [markSetId, isDemo, showSetup, apiBase]);
+  }, [markSetId, isDemo, showSetup, apiBase, mobileParam]);
 
-  // Track current page while scrolling
+  // Track current page
   useEffect(() => {
     const container = containerRef.current;
     if (!container || !pdf) return;
@@ -468,8 +417,8 @@ function ViewerContent() {
     return () => container.removeEventListener('scroll', handleScroll);
   }, [pdf, numPages]);
 
-  // Navigate to mark with proper zoom and scroll
-  const navigateToMark = useCallback(
+  // Navigate to mark - FIXED
+ const navigateToMark = useCallback(
     async (index: number) => {
       if (!pdf || index < 0 || index >= marks.length) return;
 
@@ -493,8 +442,10 @@ function ViewerContent() {
             h: mark.nh * vp1.height,
           };
           
+          // Calculate container height based on mode
+          const effectiveHeight = isMobileInputMode ? container.clientHeight * 0.75 : container.clientHeight;
           const zoomX = (container.clientWidth * 0.8) / rectAt1.w;
-          const zoomY = (container.clientHeight * 0.8) / rectAt1.h;
+          const zoomY = (effectiveHeight * 0.8) / rectAt1.h;
           targetZoom = clampZoom(Math.min(zoomX, zoomY));
         }
 
@@ -525,7 +476,7 @@ function ViewerContent() {
         const markCenterY = rectAtZ.y + rectAtZ.h / 2;
 
         const targetScrollLeft = markCenterX - container.clientWidth / 2;
-        const targetScrollTop = cumulativeTop + markCenterY - container.clientHeight / 2;
+        const targetScrollTop = cumulativeTop + markCenterY - (container.clientHeight / 2);
 
         container.scrollTo({
           left: Math.max(0, targetScrollLeft),
@@ -536,10 +487,9 @@ function ViewerContent() {
         console.error('Navigation error:', error);
       }
     },
-    [marks, pdf]
+    [marks, pdf, isMobileInputMode]
   );
 
-  // Previous/Next mark
   const prevMark = useCallback(() => {
     if (currentMarkIndex > 0) {
       navigateToMark(currentMarkIndex - 1);
@@ -550,12 +500,11 @@ function ViewerContent() {
     if (currentMarkIndex < marks.length - 1) {
       navigateToMark(currentMarkIndex + 1);
     } else {
-      // Last mark - show review screen
+      // Last mark - show review
       setShowReview(true);
     }
   }, [currentMarkIndex, marks.length, navigateToMark]);
 
-  // Jump to specific page
   const jumpToPage = useCallback(async (pageNumber: number) => {
     if (!pdf || !containerRef.current) return;
     
@@ -580,7 +529,6 @@ function ViewerContent() {
     }
   }, [pdf, zoom]);
 
-  // Update entry value
   const handleEntryChange = useCallback((value: string) => {
     const currentMark = marks[currentMarkIndex];
     if (currentMark?.mark_id) {
@@ -591,7 +539,6 @@ function ViewerContent() {
     }
   }, [currentMarkIndex, marks]);
 
-  // Submit all entries
   const handleSubmit = useCallback(async () => {
     if (!markSetId) {
       toast.error('No mark set ID provided');
@@ -613,7 +560,6 @@ function ViewerContent() {
 
       toast.success('✓ Entries submitted successfully!');
       
-      // Redirect to success page or reset
       setTimeout(() => {
         window.location.href = '/';
       }, 2000);
@@ -625,15 +571,14 @@ function ViewerContent() {
     }
   }, [markSetId, entries, apiBase]);
 
-  // Swipe handlers
   const swipeHandlers = useSwipeable({
     onSwipedLeft: () => {
-      if (!showReview) {
+      if (!showReview && isMobileInputMode) {
         nextMark();
       }
     },
     onSwipedRight: () => {
-      if (!showReview) {
+      if (!showReview && isMobileInputMode) {
         prevMark();
       }
     },
@@ -641,18 +586,9 @@ function ViewerContent() {
     trackTouch: true,
   });
 
-  // Zoom controls
-  const zoomIn = useCallback(() => {
-    setZoom((z) => clampZoom(z * 1.2));
-  }, []);
-
-  const zoomOut = useCallback(() => {
-    setZoom((z) => clampZoom(z / 1.2));
-  }, []);
-
-  const resetZoom = useCallback(() => {
-    setZoom(1.0);
-  }, []);
+  const zoomIn = useCallback(() => setZoom((z) => clampZoom(z * 1.2)), []);
+  const zoomOut = useCallback(() => setZoom((z) => clampZoom(z / 1.2)), []);
+  const resetZoom = useCallback(() => setZoom(1.0), []);
 
   const fitToWidthZoom = useCallback(() => {
     if (!pdf || !containerRef.current) return;
@@ -665,7 +601,6 @@ function ViewerContent() {
     });
   }, [pdf]);
 
-  // Wheel zoom
   useEffect(() => {
     const handleWheel = (e: WheelEvent) => {
       const container = containerRef.current;
@@ -709,7 +644,6 @@ function ViewerContent() {
     };
   }, []);
 
-  // Ctrl+F for search
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
@@ -768,48 +702,45 @@ function ViewerContent() {
     );
   }
 
-  // Mobile input mode (with marks)
-  if (marks.length > 0) {
+  // Mobile input mode (75/25 split)
+ // Mobile input mode (75/25 split)
+  if (isMobileInputMode && marks.length > 0) {
     const currentMark = marks[currentMarkIndex];
     const currentValue = currentMark?.mark_id ? entries[currentMark.mark_id] || '' : '';
 
     return (
-      <div className="viewer-mobile-layout">
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
         <Toaster position="top-center" />
         
-        {/* Sidebar - collapsible */}
-        {marks.length > 0 && (
-          <div className={`sidebar ${sidebarOpen ? 'open' : 'closed'}`} style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            height: '75vh',
-            zIndex: 100
-          }}>
-            <div className="sidebar-header">
-              <button
-                className="sidebar-toggle"
-                onClick={() => setSidebarOpen(!sidebarOpen)}
-              >
-                {sidebarOpen ? '◀' : '▶'}
-              </button>
-              {sidebarOpen && <h3>Marks</h3>}
-            </div>
-            {sidebarOpen && (
-              <MarkList
-                marks={marks}
-                currentIndex={currentMarkIndex}
-                onSelect={(index) => {
-                  navigateToMark(index);
-                  setSidebarOpen(false); // Auto-close on mobile
-                }}
-              />
-            )}
+        {/* Sidebar - Fixed Position */}
+        <div className={`sidebar ${sidebarOpen ? 'open' : 'closed'}`} style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          height: '75vh',
+          zIndex: 1000,
+          boxShadow: sidebarOpen ? '4px 0 8px rgba(0,0,0,0.2)' : 'none'
+        }}>
+          <div className="sidebar-header">
+            <button className="sidebar-toggle" onClick={() => setSidebarOpen(!sidebarOpen)}>
+              {sidebarOpen ? '◀' : '▶'}
+            </button>
+            {sidebarOpen && <h3>Marks</h3>}
           </div>
-        )}
+          {sidebarOpen && (
+            <MarkList
+              marks={marks}
+              currentIndex={currentMarkIndex}
+              onSelect={(index) => {
+                navigateToMark(index);
+                setSidebarOpen(false);
+              }}
+            />
+          )}
+        </div>
 
         {/* PDF Viewer - 75% */}
-        <div className="pdf-viewer-section" {...swipeHandlers}>
+        <div style={{ height: '75vh', overflow: 'hidden', display: 'flex', flexDirection: 'column' }} {...swipeHandlers}>
           <ZoomToolbar
             zoom={zoom}
             onZoomIn={zoomIn}
@@ -821,7 +752,7 @@ function ViewerContent() {
             onPageJump={jumpToPage}
           />
 
-          <div className="pdf-surface-wrap swipeable-pdf" ref={containerRef}>
+          <div style={{ flex: 1, overflow: 'auto', background: '#525252' }} ref={containerRef}>
             <div className="pdf-surface">
               {Array.from({ length: numPages }, (_, i) => i + 1).map((pageNum) => (
                 <div key={pageNum} style={{ position: 'relative' }}>
@@ -832,43 +763,14 @@ function ViewerContent() {
                     onReady={(height) => handlePageReady(pageNum, height)}
                     flashRect={
                       flashRect?.pageNumber === pageNum
-                        ? {
-                            x: flashRect.x,
-                            y: flashRect.y,
-                            w: flashRect.w,
-                            h: flashRect.h,
-                          }
+                        ? { x: flashRect.x, y: flashRect.y, w: flashRect.w, h: flashRect.h }
                         : null
                     }
                   />
-                  
-                  {highlightPageNumber === pageNum && searchHighlights.map((highlight, idx) => (
-                    <div
-                      key={`highlight-${idx}`}
-                      style={{
-                        position: 'absolute',
-                        left: highlight.x * zoom,
-                        top: highlight.y * zoom,
-                        width: highlight.width * zoom,
-                        height: highlight.height * zoom,
-                        background: 'rgba(255, 235, 59, 0.4)',
-                        border: '1px solid rgba(255, 193, 7, 0.8)',
-                        pointerEvents: 'none',
-                        zIndex: 100,
-                      }}
-                    />
-                  ))}
                 </div>
               ))}
             </div>
           </div>
-
-          <PDFSearch
-            pdf={pdf}
-            isOpen={showSearch}
-            onClose={() => setShowSearch(false)}
-            onResultFound={handleSearchResult}
-          />
         </div>
 
         {/* Input Panel - 25% */}
@@ -880,18 +782,35 @@ function ViewerContent() {
           onChange={handleEntryChange}
           onNext={nextMark}
           onPrev={prevMark}
-          canNext={true} // Always allow next (can skip)
+          canNext={true}
           canPrev={currentMarkIndex > 0}
         />
       </div>
     );
   }
-
-  // Desktop mode (no marks - read-only viewer)
+  // Desktop mode (original viewer)
   return (
     <div className="viewer-container">
       <Toaster position="top-center" />
       
+      {marks.length > 0 && (
+        <div className={`sidebar ${sidebarOpen ? 'open' : 'closed'}`}>
+          <div className="sidebar-header">
+            <button className="sidebar-toggle" onClick={() => setSidebarOpen(!sidebarOpen)}>
+              {sidebarOpen ? '◀' : '▶'}
+            </button>
+            {sidebarOpen && <h3>Marks</h3>}
+          </div>
+          {sidebarOpen && (
+            <MarkList
+              marks={marks}
+              currentIndex={currentMarkIndex}
+              onSelect={navigateToMark}
+            />
+          )}
+        </div>
+      )}
+
       <div className="main-content">
         <ZoomToolbar
           zoom={zoom}
@@ -899,6 +818,10 @@ function ViewerContent() {
           onZoomOut={zoomOut}
           onReset={resetZoom}
           onFit={fitToWidthZoom}
+          onPrev={marks.length > 0 ? prevMark : undefined}
+          onNext={marks.length > 0 ? nextMark : undefined}
+          canPrev={currentMarkIndex > 0}
+          canNext={currentMarkIndex < marks.length - 1}
           currentPage={currentPage}
           totalPages={numPages}
           onPageJump={jumpToPage}
@@ -913,8 +836,29 @@ function ViewerContent() {
                   pageNumber={pageNum}
                   zoom={zoom}
                   onReady={(height) => handlePageReady(pageNum, height)}
-                  flashRect={null}
+                  flashRect={
+                    flashRect?.pageNumber === pageNum
+                      ? { x: flashRect.x, y: flashRect.y, w: flashRect.w, h: flashRect.h }
+                      : null
+                  }
                 />
+                
+                {highlightPageNumber === pageNum && searchHighlights.map((highlight, idx) => (
+                  <div
+                    key={`highlight-${idx}`}
+                    style={{
+                      position: 'absolute',
+                      left: highlight.x * zoom,
+                      top: highlight.y * zoom,
+                      width: highlight.width * zoom,
+                      height: highlight.height * zoom,
+                      background: 'rgba(255, 235, 59, 0.4)',
+                      border: '1px solid rgba(255, 193, 7, 0.8)',
+                      pointerEvents: 'none',
+                      zIndex: 100,
+                    }}
+                  />
+                ))}
               </div>
             ))}
           </div>
