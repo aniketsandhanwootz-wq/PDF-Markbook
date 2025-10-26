@@ -53,7 +53,6 @@ export default function ZoomToolbar({
     if (!isNaN(page) && page >= 1 && page <= totalPages) {
       onPageJump(page);
     } else {
-      // Reset to current page if invalid
       setPageInput(currentPage?.toString() || '1');
     }
   };
@@ -71,64 +70,148 @@ export default function ZoomToolbar({
   };
 
   return (
-    <div className="zoom-toolbar">
+    <div style={{
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      padding: '6px 10px',
+      background: '#fff',
+      borderBottom: '1px solid #ddd',
+      gap: '8px',
+      flexWrap: 'nowrap',
+      minHeight: '36px'
+    }}>
       {/* Mark Navigation Buttons */}
       {onPrev && onNext && (
-        <div className="mark-nav">
-          <button onClick={onPrev} disabled={!canPrev} className="toolbar-btn">
+        <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
+          <button 
+            onClick={onPrev} 
+            disabled={!canPrev} 
+            style={{
+              padding: '4px 10px',
+              border: '1px solid #ccc',
+              background: '#fff',
+              borderRadius: '4px',
+              cursor: canPrev ? 'pointer' : 'not-allowed',
+              fontSize: '12px',
+              minHeight: '28px',
+              opacity: canPrev ? 1 : 0.4
+            }}
+          >
             ◀ Prev
           </button>
-          <button onClick={onNext} disabled={!canNext} className="toolbar-btn">
+          <button 
+            onClick={onNext} 
+            disabled={!canNext}
+            style={{
+              padding: '4px 10px',
+              border: '1px solid #ccc',
+              background: '#fff',
+              borderRadius: '4px',
+              cursor: canNext ? 'pointer' : 'not-allowed',
+              fontSize: '12px',
+              minHeight: '28px',
+              opacity: canNext ? 1 : 0.4
+            }}
+          >
             Next ▶
           </button>
         </div>
       )}
 
-
-      {/* Page Navigation Input */}
+      {/* Page Navigation */}
       {onPageJump && totalPages && (
-        <div className="page-nav" style={{
+        <div style={{
           display: 'flex',
           alignItems: 'center',
-          gap: '8px',
-          padding: '0 12px'
+          gap: '4px',
+          fontSize: '12px',
+          flexShrink: 0
         }}>
-          <span style={{ fontSize: '14px', color: '#666', fontWeight: '500' }}>Page</span>
+          <span style={{ color: '#666' }}>Page</span>
           <input
             type="text"
             value={pageInput}
             onChange={handlePageInputChange}
             onKeyDown={handleKeyDown}
             onBlur={handlePageJump}
-            placeholder={currentPage?.toString() || '1'}
             style={{
-              width: '50px',
-              padding: '6px 8px',
+              width: '35px',
+              padding: '2px 4px',
               border: '1px solid #ccc',
-              borderRadius: '4px',
+              borderRadius: '3px',
               textAlign: 'center',
-              fontSize: '14px',
-              fontWeight: '500'
+              fontSize: '12px'
             }}
-            title="Jump to page (press Enter)"
           />
-          <span style={{ fontSize: '14px', color: '#666', fontWeight: '500' }}>/ {totalPages}</span>
+          <span style={{ color: '#666' }}>/ {totalPages}</span>
         </div>
       )}
 
       {/* Zoom Controls */}
-      <div className="zoom-controls">
-        <button onClick={onZoomOut} className="toolbar-btn" title="Zoom out">
+      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+        <button 
+          onClick={onZoomOut}
+          style={{
+            padding: '2px 8px',
+            border: '1px solid #ccc',
+            background: '#fff',
+            borderRadius: '3px',
+            cursor: 'pointer',
+            fontSize: '14px',
+            minHeight: '26px'
+          }}
+        >
           −
         </button>
-        <span className="zoom-label">{Math.round(zoom * 100)}%</span>
-        <button onClick={onZoomIn} className="toolbar-btn" title="Zoom in">
+        <span style={{ 
+          fontSize: '12px', 
+          fontWeight: '500', 
+          minWidth: '45px', 
+          textAlign: 'center' 
+        }}>
+          {Math.round(zoom * 100)}%
+        </span>
+        <button 
+          onClick={onZoomIn}
+          style={{
+            padding: '2px 8px',
+            border: '1px solid #ccc',
+            background: '#fff',
+            borderRadius: '3px',
+            cursor: 'pointer',
+            fontSize: '14px',
+            minHeight: '26px'
+          }}
+        >
           +
         </button>
-        <button onClick={onReset} className="toolbar-btn" title="Reset zoom (100%)">
+        <button 
+          onClick={onReset}
+          style={{
+            padding: '2px 8px',
+            border: '1px solid #ccc',
+            background: '#fff',
+            borderRadius: '3px',
+            cursor: 'pointer',
+            fontSize: '11px',
+            minHeight: '26px'
+          }}
+        >
           Reset
         </button>
-        <button onClick={onFit} className="toolbar-btn" title="Fit to width">
+        <button 
+          onClick={onFit}
+          style={{
+            padding: '2px 8px',
+            border: '1px solid #ccc',
+            background: '#fff',
+            borderRadius: '3px',
+            cursor: 'pointer',
+            fontSize: '11px',
+            minHeight: '26px'
+          }}
+        >
           Fit
         </button>
       </div>

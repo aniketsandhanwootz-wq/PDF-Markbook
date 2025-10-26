@@ -1,7 +1,5 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-
 type Mark = {
   mark_id?: string;
   page_index: number;
@@ -52,34 +50,34 @@ export default function InputPanel({
     );
   }
 
-return (
+  return (
     <div style={{
-      height: window.innerWidth <= 500 ? '30vh' : '25vh', // More space on tiny screens
+      height: '25vh',
       background: 'white',
       borderTop: '2px solid #ddd',
       display: 'flex',
-      flexDirection: 'column',
-      overflow: 'hidden'
+      flexDirection: 'column'
     }}>
- {/* Compressed Header */}
+      {/* Compressed Header - Single Line */}
       <div style={{
-        padding: '8px 12px',
+        padding: '6px 10px',
         background: '#1976d2',
         color: 'white',
         display: 'flex',
         justifyContent: 'space-between',
         alignItems: 'center',
-        gap: '12px'
+        gap: '8px',
+        flexShrink: 0
       }}>
         <div style={{ 
-          fontSize: '13px', 
+          fontSize: '12px', 
           fontWeight: '600',
           whiteSpace: 'nowrap'
         }}>
           {currentIndex + 1}/{totalMarks}
         </div>
         <div style={{ 
-          fontSize: '14px', 
+          fontSize: '13px', 
           fontWeight: '600',
           flex: 1,
           overflow: 'hidden',
@@ -90,7 +88,7 @@ return (
           {currentMark.name}
         </div>
         <div style={{ 
-          fontSize: '12px', 
+          fontSize: '11px', 
           opacity: 0.9,
           whiteSpace: 'nowrap'
         }}>
@@ -98,13 +96,13 @@ return (
         </div>
       </div>
 
-      {/* Input Field */}
+      {/* Input Field - No Extra Space */}
       <div style={{
         flex: 1,
-        padding: '12px',
+        padding: '10px',
         display: 'flex',
         flexDirection: 'column',
-        gap: '6px'
+        minHeight: 0
       }}>
         <input
           type="text"
@@ -114,12 +112,13 @@ return (
           autoFocus
           style={{
             width: '100%',
-            padding: '12px',
+            padding: '10px',
             fontSize: '16px',
             border: '2px solid #ddd',
-            borderRadius: '8px',
+            borderRadius: '6px',
             outline: 'none',
-            transition: 'border-color 0.2s'
+            transition: 'border-color 0.2s',
+            flex: 1
           }}
           onFocus={(e) => {
             e.target.style.borderColor = '#1976d2';
@@ -128,71 +127,53 @@ return (
             e.target.style.borderColor = '#ddd';
           }}
         />
-        <div style={{ fontSize: '11px', color: '#999' }}>
-          💡 Skip and come back later
-        </div>
       </div>
 
-      {/* Navigation Buttons */}
+      {/* Navigation Buttons - No Extra Space */}
       <div style={{
-        padding: '8px 12px',
+        padding: '6px 10px',
         background: '#f9f9f9',
         borderTop: '1px solid #eee',
         display: 'flex',
-        gap: '8px'
+        gap: '6px',
+        flexShrink: 0
       }}>
         <button
           onClick={onPrev}
           disabled={!canPrev}
           style={{
             flex: 1,
-            padding: '14px',
-            fontSize: '16px',
+            padding: '10px',
+            fontSize: '14px',
             fontWeight: '600',
             border: '2px solid #ddd',
             background: canPrev ? 'white' : '#f5f5f5',
             color: canPrev ? '#333' : '#999',
-            borderRadius: '8px',
+            borderRadius: '6px',
             cursor: canPrev ? 'pointer' : 'not-allowed',
-            minHeight: '44px',
+            minHeight: '40px',
             transition: 'all 0.2s'
           }}
-          onMouseEnter={(e) => {
-            if (canPrev) {
-              e.currentTarget.style.background = '#f0f0f0';
-            }
-          }}
-          onMouseLeave={(e) => {
-            if (canPrev) {
-              e.currentTarget.style.background = 'white';
-            }
-          }}
         >
-          ← Previous
+          ← Prev
         </button>
         <button
           onClick={onNext}
           style={{
             flex: 1,
-            padding: '14px',
-            fontSize: '16px',
+            padding: '10px',
+            fontSize: '14px',
             fontWeight: '600',
             border: 'none',
             background: '#1976d2',
             color: 'white',
-            borderRadius: '8px',
+            borderRadius: '6px',
             cursor: 'pointer',
-            minHeight: '44px',
+            minHeight: '40px',
             transition: 'all 0.2s'
           }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = '#1565c0';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = '#1976d2';
-          }}
         >
-          {currentIndex < totalMarks - 1 ? 'Next →' : '✓ Review & Submit'}
+          {currentIndex < totalMarks - 1 ? 'Next →' : '✓ Review'}
         </button>
       </div>
     </div>
