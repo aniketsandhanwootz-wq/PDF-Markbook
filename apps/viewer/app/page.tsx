@@ -714,54 +714,72 @@ function ViewerContent() {
       <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
         <Toaster position="top-center" />
         
-        {/* Sidebar - Fixed Position */}
-        {sidebarOpen && (
-          <div className="sidebar open" style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            height: '75vh',
-            zIndex: 1000,
-            boxShadow: '4px 0 8px rgba(0,0,0,0.2)'
-          }}>
-            <div className="sidebar-header">
-              <button className="sidebar-toggle" onClick={() => setSidebarOpen(false)}>
-                ◀
-              </button>
-              <h3>Marks</h3>
-            </div>
-            <MarkList
-              marks={marks}
-              currentIndex={currentMarkIndex}
-              onSelect={(index) => {
-                navigateToMark(index);
-                if (window.innerWidth < 768) {
-                  setSidebarOpen(false);
-                }
-              }}
-            />
-          </div>
-        )}
-
-        {/* PDF Viewer - Responsive Height */}
+        {/* PDF Viewer Section - 75vh with horizontal flex for sidebar + content */}
         <div style={{ 
           height: window.innerWidth <= 500 ? '70vh' : '75vh', 
-          overflow: 'hidden', 
-          display: 'flex', 
-          flexDirection: 'column'
-        }} {...swipeHandlers}>
-          <ZoomToolbar
-            zoom={zoom}
-            onZoomIn={zoomIn}
-            onZoomOut={zoomOut}
-            onReset={resetZoom}
-            onFit={fitToWidthZoom}
-            currentPage={currentPage}
-            totalPages={numPages}
-            onPageJump={jumpToPage}
-            showSidebarToggle={!sidebarOpen}
-            onSidebarToggle={() => setSidebarOpen(true)}
-          />
+          display: 'flex',
+          flexDirection: 'row',
+          overflow: 'hidden'
+        }}>
+          {/* Sidebar - Push layout (not overlay) */}
+          <div style={{
+            width: sidebarOpen ? '280px' : '0px',
+            minWidth: sidebarOpen ? '280px' : '0px',
+            height: '100%',
+            background: '#fff',
+            borderRight: sidebarOpen ? '1px solid #ddd' : 'none',
+            transition: 'width 0.3s ease, min-width 0.3s ease',
+            overflow: 'hidden',
+            display: 'flex',
+            flexDirection: 'column',
+            boxShadow: sidebarOpen ? '2px 0 8px rgba(0,0,0,0.1)' : 'none'
+          }}>
+            <div style={{
+              padding: '10px',
+              borderBottom: '1px solid #ddd',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              background: '#f9f9f9',
+              minHeight: '48px'
+            }}>
+              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '600' }}>Marks</h3>
+            </div>
+            <div style={{ flex: 1, overflow: 'auto' }}>
+              <MarkList
+                marks={marks}
+                currentIndex={currentMarkIndex}
+                onSelect={(index) => {
+                  navigateToMark(index);
+                  if (window.innerWidth < 768) {
+                    setSidebarOpen(false);
+                  }
+                }}
+              />
+            </div>
+          </div>
+
+          {/* PDF Viewer - Flex fills remaining space */}
+          <div style={{ 
+            flex: 1,
+            display: 'flex', 
+            flexDirection: 'column',
+            overflow: 'hidden',
+            minWidth: 0 // Important for flex shrinking
+          }} {...swipeHandlers}>
+            <ZoomToolbar
+              zoom={zoom}
+              onZoomIn={zoomIn}
+              onZoomOut={zoomOut}
+              onReset={resetZoom}
+              onFit={fitToWidthZoom}
+              currentPage={currentPage}
+              totalPages={numPages}
+              onPageJump={jumpToPage}
+              showSidebarToggle={true}
+              sidebarOpen={sidebarOpen}
+              onSidebarToggle={() => setSidebarOpen(!sidebarOpen)}
+            />
 
           <div style={{ flex: 1, overflow: 'auto', background: '#525252' }} ref={containerRef}>
             <div className="pdf-surface">
@@ -781,6 +799,7 @@ function ViewerContent() {
                 </div>
               ))}
             </div>
+          </div>
           </div>
         </div>
 

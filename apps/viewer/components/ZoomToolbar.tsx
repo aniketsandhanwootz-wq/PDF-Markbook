@@ -15,8 +15,9 @@ type ZoomToolbarProps = {
   currentPage?: number;
   totalPages?: number;
   onPageJump?: (page: number) => void;
-  // NEW: Sidebar toggle props
+  // Sidebar toggle props
   showSidebarToggle?: boolean;
+  sidebarOpen?: boolean;
   onSidebarToggle?: () => void;
 };
 
@@ -34,6 +35,7 @@ export default function ZoomToolbar({
   totalPages,
   onPageJump,
   showSidebarToggle,
+  sidebarOpen,
   onSidebarToggle,
 }: ZoomToolbarProps) {
   const [pageInput, setPageInput] = useState('');
@@ -88,32 +90,33 @@ export default function ZoomToolbar({
     }}>
       {/* Left Section: Sidebar Toggle + Mark Navigation */}
       <div style={{ display: 'flex', gap: '4px', flexShrink: 0, alignItems: 'center' }}>
-        {/* Sidebar Toggle Button */}
+        {/* Sidebar Toggle Button - Always visible */}
         {showSidebarToggle && onSidebarToggle && (
           <button
             onClick={onSidebarToggle}
             style={{
               padding: '4px 10px',
               border: '1px solid #1976d2',
-              background: '#1976d2',
+              background: sidebarOpen ? '#1565c0' : '#1976d2',
               color: 'white',
               borderRadius: '4px',
               cursor: 'pointer',
-              fontSize: '14px',
+              fontSize: '16px',
               minHeight: '28px',
+              minWidth: '36px',
               fontWeight: '600',
               display: 'flex',
               alignItems: 'center',
-              gap: '4px',
+              justifyContent: 'center',
               transition: 'all 0.2s'
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.background = '#1565c0';
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.background = '#1976d2';
+              e.currentTarget.style.background = sidebarOpen ? '#1565c0' : '#1976d2';
             }}
-            title="Show marks sidebar"
+            title={sidebarOpen ? "Close marks sidebar" : "Open marks sidebar"}
           >
             ☰
           </button>
