@@ -389,7 +389,31 @@ function ViewerContent() {
         setIsMobileInputMode(false);
       });
   }, [markSetId, isDemo, showSetup, apiBase, mobileParam]);
+// Handle window resize for responsive mobile mode
+  useEffect(() => {
+    const handleResize = () => {
+      if (marks.length > 0) {
+        // Mobile if: forced via URL param OR narrow screen OR touch device
+        const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+        const isNarrowScreen = window.innerWidth <= 900; // Increased from 768
+        const shouldBeMobile = mobileParam || isNarrowScreen || isTouchDevice;
+        
+        console.log('📱 Mobile detection:', {
+          width: window.innerWidth,
+          isTouchDevice,
+          isNarrowScreen,
+          shouldBeMobile
+        });
+        
+        setIsMobileInputMode(shouldBeMobile);
+      }
+    };
 
+    window.addEventListener('resize', handleResize);
+    handleResize(); // Call once on mount
+
+    return () => window.removeEventListener('resize', handleResize);
+  }, [marks.length, mobileParam]);
   // Track current page
   useEffect(() => {
     const container = containerRef.current;
@@ -497,10 +521,17 @@ function ViewerContent() {
   }, [currentMarkIndex, navigateToMark]);
 
   const nextMark = useCallback(() => {
+    console.log('🔵 nextMark called', {
+      currentIndex: currentMarkIndex,
+      totalMarks: marks.length,
+      isLastMark: currentMarkIndex >= marks.length - 1
+    });
+
     if (currentMarkIndex < marks.length - 1) {
+      console.log('→ Going to next mark');
       navigateToMark(currentMarkIndex + 1);
     } else {
-      // Last mark - show review
+      console.log('✓ Showing review screen');
       setShowReview(true);
     }
   }, [currentMarkIndex, marks.length, navigateToMark]);
@@ -733,14 +764,22 @@ function ViewerContent() {
               currentIndex={currentMarkIndex}
               onSelect={(index) => {
                 navigateToMark(index);
-                setSidebarOpen(false);
+                // Don't auto-close on desktop, only on mobile
+                if (window.innerWidth < 768) {
+                  setSidebarOpen(false);
+                }
               }}
             />
           )}
         </div>
 
-        {/* PDF Viewer - 75% */}
-        <div style={{ height: '75vh', overflow: 'hidden', display: 'flex', flexDirection: 'column' }} {...swipeHandlers}>
+{/* PDF Viewer - Responsive Height */}
+        <div style={{ 
+          height: window.innerWidth <= 500 ? '70vh' : '75vh', 
+          overflow: 'hidden', 
+          display: 'flex', 
+          flexDirection: 'column' 
+        }} {...swipeHandlers}>
           <ZoomToolbar
             zoom={zoom}
             onZoomIn={zoomIn}

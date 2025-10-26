@@ -52,61 +52,60 @@ export default function InputPanel({
     );
   }
 
-  return (
+return (
     <div style={{
-      height: '25vh',
+      height: window.innerWidth <= 500 ? '30vh' : '25vh', // More space on tiny screens
       background: 'white',
       borderTop: '2px solid #ddd',
       display: 'flex',
       flexDirection: 'column',
       overflow: 'hidden'
     }}>
-      {/* Progress Header */}
+ {/* Compressed Header */}
       <div style={{
-        padding: '12px 16px',
+        padding: '8px 12px',
         background: '#1976d2',
         color: 'white',
         display: 'flex',
         justifyContent: 'space-between',
-        alignItems: 'center'
+        alignItems: 'center',
+        gap: '12px'
       }}>
-        <div style={{ fontSize: '14px', fontWeight: '600' }}>
-          Mark {currentIndex + 1} of {totalMarks}
+        <div style={{ 
+          fontSize: '13px', 
+          fontWeight: '600',
+          whiteSpace: 'nowrap'
+        }}>
+          {currentIndex + 1}/{totalMarks}
         </div>
-        <div style={{ fontSize: '12px', opacity: 0.9 }}>
-          {Math.round(((currentIndex + 1) / totalMarks) * 100)}% Complete
-        </div>
-      </div>
-
-      {/* Mark Name */}
-      <div style={{
-        padding: '12px 16px',
-        background: '#f9f9f9',
-        borderBottom: '1px solid #eee'
-      }}>
-        <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>
-          Mark Name:
-        </div>
-        <div style={{ fontSize: '16px', fontWeight: '600', color: '#333' }}>
+        <div style={{ 
+          fontSize: '14px', 
+          fontWeight: '600',
+          flex: 1,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          textAlign: 'center'
+        }}>
           {currentMark.name}
+        </div>
+        <div style={{ 
+          fontSize: '12px', 
+          opacity: 0.9,
+          whiteSpace: 'nowrap'
+        }}>
+          {Math.round(((currentIndex + 1) / totalMarks) * 100)}%
         </div>
       </div>
 
       {/* Input Field */}
       <div style={{
         flex: 1,
-        padding: '16px',
+        padding: '12px',
         display: 'flex',
         flexDirection: 'column',
-        gap: '8px'
+        gap: '6px'
       }}>
-        <label style={{
-          fontSize: '14px',
-          fontWeight: '500',
-          color: '#333'
-        }}>
-          Enter Value:
-        </label>
         <input
           type="text"
           value={value}
@@ -129,18 +128,18 @@ export default function InputPanel({
             e.target.style.borderColor = '#ddd';
           }}
         />
-        <div style={{ fontSize: '12px', color: '#999' }}>
-          💡 Tip: You can skip and come back later
+        <div style={{ fontSize: '11px', color: '#999' }}>
+          💡 Skip and come back later
         </div>
       </div>
 
       {/* Navigation Buttons */}
       <div style={{
-        padding: '12px 16px',
+        padding: '8px 12px',
         background: '#f9f9f9',
         borderTop: '1px solid #eee',
         display: 'flex',
-        gap: '12px'
+        gap: '8px'
       }}>
         <button
           onClick={onPrev}
