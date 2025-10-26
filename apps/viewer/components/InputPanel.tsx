@@ -58,7 +58,7 @@ export default function InputPanel({
       display: 'flex',
       flexDirection: 'column'
     }}>
-      {/* Compressed Header - Single Line */}
+      {/* Compressed Header */}
       <div style={{
         padding: '6px 10px',
         background: '#1976d2',
@@ -96,13 +96,12 @@ export default function InputPanel({
         </div>
       </div>
 
-      {/* Input Field - No Extra Space */}
+      {/* Compact Input Field */}
       <div style={{
-        flex: 1,
         padding: '10px',
         display: 'flex',
-        flexDirection: 'column',
-        minHeight: 0
+        alignItems: 'center',
+        flex: 1
       }}>
         <input
           type="text"
@@ -112,13 +111,13 @@ export default function InputPanel({
           autoFocus
           style={{
             width: '100%',
-            padding: '10px',
+            padding: '8px 10px',
             fontSize: '16px',
             border: '2px solid #ddd',
             borderRadius: '6px',
             outline: 'none',
             transition: 'border-color 0.2s',
-            flex: 1
+            height: '38px'
           }}
           onFocus={(e) => {
             e.target.style.borderColor = '#1976d2';
@@ -129,7 +128,7 @@ export default function InputPanel({
         />
       </div>
 
-      {/* Navigation Buttons - No Extra Space */}
+      {/* Navigation Buttons */}
       <div style={{
         padding: '6px 10px',
         background: '#f9f9f9',

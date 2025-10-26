@@ -53,17 +53,6 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
   const [error, setError] = useState('');
   const [loadingMarkSets, setLoadingMarkSets] = useState(true);
 
-  const samplePdfs = [
-    {
-      name: 'Mozilla TracemonKey (Sample)',
-      url: 'https://mozilla.github.io/pdf.js/web/compressed.tracemonkey-pldi-09.pdf'
-    },
-    {
-      name: 'PDF.js Sample',
-      url: 'https://raw.githubusercontent.com/mozilla/pdf.js/ba2edeae/examples/learning/helloworld.pdf'
-    }
-  ];
-
   useEffect(() => {
     const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
     fetch(`${apiBase}/mark-sets`)
@@ -252,7 +241,7 @@ function ViewerContent() {
   const [highlightPageNumber, setHighlightPageNumber] = useState<number>(0);
   const [isMobileInputMode, setIsMobileInputMode] = useState(false);
 
-  // NEW: Input mode states
+  // Input mode states
   const [entries, setEntries] = useState<Record<string, string>>({});
   const [showReview, setShowReview] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -263,7 +252,7 @@ function ViewerContent() {
   const isDemo = searchParams?.get('demo') === '1';
   const pdfUrlParam = searchParams?.get('pdf_url') || '';
   const markSetIdParam = searchParams?.get('mark_set_id') || '';
-  const mobileParam = searchParams?.get('mobile') === '1'; // NEW: ?mobile=1 to force mobile mode
+  const mobileParam = searchParams?.get('mobile') === '1';
 
   // Check if we should show setup screen
   useEffect(() => {
@@ -282,7 +271,6 @@ function ViewerContent() {
     window.location.href = newUrl;
   };
 
-  // ✅ USE PROXY FOR ALL PDFs
   const rawPdfUrl = isDemo
     ? 'https://mozilla.github.io/pdf.js/web/compressed.tracemonkey-pldi-09.pdf'
     : pdfUrlParam || 'https://mozilla.github.io/pdf.js/web/compressed.tracemonkey-pldi-09.pdf';
@@ -380,7 +368,6 @@ function ViewerContent() {
         });
         setEntries(initialEntries);
         
-        // Enable mobile input mode if ?mobile=1 or on small screens
         setIsMobileInputMode(mobileParam || window.innerWidth < 768);
       })
       .catch((err) => {
@@ -389,31 +376,25 @@ function ViewerContent() {
         setIsMobileInputMode(false);
       });
   }, [markSetId, isDemo, showSetup, apiBase, mobileParam]);
-// Handle window resize for responsive mobile mode
+
+  // Handle window resize
   useEffect(() => {
     const handleResize = () => {
       if (marks.length > 0) {
-        // Mobile if: forced via URL param OR narrow screen OR touch device
         const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-        const isNarrowScreen = window.innerWidth <= 900; // Increased from 768
+        const isNarrowScreen = window.innerWidth <= 900;
         const shouldBeMobile = mobileParam || isNarrowScreen || isTouchDevice;
-        
-        console.log('📱 Mobile detection:', {
-          width: window.innerWidth,
-          isTouchDevice,
-          isNarrowScreen,
-          shouldBeMobile
-        });
         
         setIsMobileInputMode(shouldBeMobile);
       }
     };
 
     window.addEventListener('resize', handleResize);
-    handleResize(); // Call once on mount
+    handleResize();
 
     return () => window.removeEventListener('resize', handleResize);
   }, [marks.length, mobileParam]);
+
   // Track current page
   useEffect(() => {
     const container = containerRef.current;
@@ -441,8 +422,8 @@ function ViewerContent() {
     return () => container.removeEventListener('scroll', handleScroll);
   }, [pdf, numPages]);
 
-  // Navigate to mark - FIXED
- const navigateToMark = useCallback(
+  // Navigate to mark
+  const navigateToMark = useCallback(
     async (index: number) => {
       if (!pdf || index < 0 || index >= marks.length) return;
 
@@ -466,7 +447,6 @@ function ViewerContent() {
             h: mark.nh * vp1.height,
           };
           
-          // Calculate container height based on mode
           const effectiveHeight = isMobileInputMode ? container.clientHeight * 0.75 : container.clientHeight;
           const zoomX = (container.clientWidth * 0.8) / rectAt1.w;
           const zoomY = (effectiveHeight * 0.8) / rectAt1.h;
@@ -521,17 +501,9 @@ function ViewerContent() {
   }, [currentMarkIndex, navigateToMark]);
 
   const nextMark = useCallback(() => {
-    console.log('🔵 nextMark called', {
-      currentIndex: currentMarkIndex,
-      totalMarks: marks.length,
-      isLastMark: currentMarkIndex >= marks.length - 1
-    });
-
     if (currentMarkIndex < marks.length - 1) {
-      console.log('→ Going to next mark');
       navigateToMark(currentMarkIndex + 1);
     } else {
-      console.log('✓ Showing review screen');
       setShowReview(true);
     }
   }, [currentMarkIndex, marks.length, navigateToMark]);
@@ -734,7 +706,6 @@ function ViewerContent() {
   }
 
   // Mobile input mode (75/25 split)
- // Mobile input mode (75/25 split)
   if (isMobileInputMode && marks.length > 0) {
     const currentMark = marks[currentMarkIndex];
     const currentValue = currentMark?.mark_id ? entries[currentMark.mark_id] || '' : '';
@@ -744,41 +715,40 @@ function ViewerContent() {
         <Toaster position="top-center" />
         
         {/* Sidebar - Fixed Position */}
-        <div className={`sidebar ${sidebarOpen ? 'open' : 'closed'}`} style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          height: '75vh',
-          zIndex: 1000,
-          boxShadow: sidebarOpen ? '4px 0 8px rgba(0,0,0,0.2)' : 'none'
-        }}>
-          <div className="sidebar-header">
-            <button className="sidebar-toggle" onClick={() => setSidebarOpen(!sidebarOpen)}>
-              {sidebarOpen ? '◀' : '▶'}
-            </button>
-            {sidebarOpen && <h3>Marks</h3>}
-          </div>
-          {sidebarOpen && (
+        {sidebarOpen && (
+          <div className="sidebar open" style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            height: '75vh',
+            zIndex: 1000,
+            boxShadow: '4px 0 8px rgba(0,0,0,0.2)'
+          }}>
+            <div className="sidebar-header">
+              <button className="sidebar-toggle" onClick={() => setSidebarOpen(false)}>
+                ◀
+              </button>
+              <h3>Marks</h3>
+            </div>
             <MarkList
               marks={marks}
               currentIndex={currentMarkIndex}
               onSelect={(index) => {
                 navigateToMark(index);
-                // Don't auto-close on desktop, only on mobile
                 if (window.innerWidth < 768) {
                   setSidebarOpen(false);
                 }
               }}
             />
-          )}
-        </div>
+          </div>
+        )}
 
-{/* PDF Viewer - Responsive Height */}
+        {/* PDF Viewer - Responsive Height */}
         <div style={{ 
           height: window.innerWidth <= 500 ? '70vh' : '75vh', 
           overflow: 'hidden', 
           display: 'flex', 
-          flexDirection: 'column' 
+          flexDirection: 'column'
         }} {...swipeHandlers}>
           <ZoomToolbar
             zoom={zoom}
@@ -789,6 +759,8 @@ function ViewerContent() {
             currentPage={currentPage}
             totalPages={numPages}
             onPageJump={jumpToPage}
+            showSidebarToggle={!sidebarOpen}
+            onSidebarToggle={() => setSidebarOpen(true)}
           />
 
           <div style={{ flex: 1, overflow: 'auto', background: '#525252' }} ref={containerRef}>
@@ -827,6 +799,7 @@ function ViewerContent() {
       </div>
     );
   }
+
   // Desktop mode (original viewer)
   return (
     <div className="viewer-container">

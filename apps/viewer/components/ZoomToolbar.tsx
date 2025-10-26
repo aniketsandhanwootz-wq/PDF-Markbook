@@ -15,6 +15,9 @@ type ZoomToolbarProps = {
   currentPage?: number;
   totalPages?: number;
   onPageJump?: (page: number) => void;
+  // NEW: Sidebar toggle props
+  showSidebarToggle?: boolean;
+  onSidebarToggle?: () => void;
 };
 
 export default function ZoomToolbar({
@@ -30,6 +33,8 @@ export default function ZoomToolbar({
   currentPage,
   totalPages,
   onPageJump,
+  showSidebarToggle,
+  onSidebarToggle,
 }: ZoomToolbarProps) {
   const [pageInput, setPageInput] = useState('');
 
@@ -81,45 +86,79 @@ export default function ZoomToolbar({
       flexWrap: 'nowrap',
       minHeight: '36px'
     }}>
-      {/* Mark Navigation Buttons */}
-      {onPrev && onNext && (
-        <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
-          <button 
-            onClick={onPrev} 
-            disabled={!canPrev} 
+      {/* Left Section: Sidebar Toggle + Mark Navigation */}
+      <div style={{ display: 'flex', gap: '4px', flexShrink: 0, alignItems: 'center' }}>
+        {/* Sidebar Toggle Button */}
+        {showSidebarToggle && onSidebarToggle && (
+          <button
+            onClick={onSidebarToggle}
             style={{
               padding: '4px 10px',
-              border: '1px solid #ccc',
-              background: '#fff',
+              border: '1px solid #1976d2',
+              background: '#1976d2',
+              color: 'white',
               borderRadius: '4px',
-              cursor: canPrev ? 'pointer' : 'not-allowed',
-              fontSize: '12px',
+              cursor: 'pointer',
+              fontSize: '14px',
               minHeight: '28px',
-              opacity: canPrev ? 1 : 0.4
+              fontWeight: '600',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+              transition: 'all 0.2s'
             }}
-          >
-            ◀ Prev
-          </button>
-          <button 
-            onClick={onNext} 
-            disabled={!canNext}
-            style={{
-              padding: '4px 10px',
-              border: '1px solid #ccc',
-              background: '#fff',
-              borderRadius: '4px',
-              cursor: canNext ? 'pointer' : 'not-allowed',
-              fontSize: '12px',
-              minHeight: '28px',
-              opacity: canNext ? 1 : 0.4
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = '#1565c0';
             }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = '#1976d2';
+            }}
+            title="Show marks sidebar"
           >
-            Next ▶
+            ☰
           </button>
-        </div>
-      )}
+        )}
 
-      {/* Page Navigation */}
+        {/* Mark Navigation Buttons */}
+        {onPrev && onNext && (
+          <>
+            <button 
+              onClick={onPrev} 
+              disabled={!canPrev} 
+              style={{
+                padding: '4px 10px',
+                border: '1px solid #ccc',
+                background: '#fff',
+                borderRadius: '4px',
+                cursor: canPrev ? 'pointer' : 'not-allowed',
+                fontSize: '12px',
+                minHeight: '28px',
+                opacity: canPrev ? 1 : 0.4
+              }}
+            >
+              ◀ Prev
+            </button>
+            <button 
+              onClick={onNext} 
+              disabled={!canNext}
+              style={{
+                padding: '4px 10px',
+                border: '1px solid #ccc',
+                background: '#fff',
+                borderRadius: '4px',
+                cursor: canNext ? 'pointer' : 'not-allowed',
+                fontSize: '12px',
+                minHeight: '28px',
+                opacity: canNext ? 1 : 0.4
+              }}
+            >
+              Next ▶
+            </button>
+          </>
+        )}
+      </div>
+
+      {/* Center Section: Page Navigation */}
       {onPageJump && totalPages && (
         <div style={{
           display: 'flex',
@@ -148,7 +187,7 @@ export default function ZoomToolbar({
         </div>
       )}
 
-      {/* Zoom Controls */}
+      {/* Right Section: Zoom Controls */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
         <button 
           onClick={onZoomOut}
