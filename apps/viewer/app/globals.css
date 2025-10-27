@@ -198,23 +198,20 @@ body {
   text-align: center;
 }
 
-/* PDF Surface */
 .pdf-surface-wrap {
   flex: 1;
   overflow: auto;
   background: #525252;
   padding: 16px;
-  touch-action: pan-y pinch-zoom;
+  touch-action: pan-x pan-y pinch-zoom;
 }
 
 .pdf-surface {
-  display: flex;
+  display: inline-flex;
   flex-direction: column;
   align-items: center;
   gap: 16px;
-  width: max-content;
-  margin: 0 auto;
- /* min-width: 100%; */
+  min-width: min-content;
 }
 
 .page-wrapper {

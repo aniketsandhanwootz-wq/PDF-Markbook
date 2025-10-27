@@ -53,6 +53,17 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
   const [error, setError] = useState('');
   const [loadingMarkSets, setLoadingMarkSets] = useState(true);
 
+  const samplePdfs = [
+    {
+      name: 'Mozilla TracemonKey (Sample)',
+      url: 'https://mozilla.github.io/pdf.js/web/compressed.tracemonkey-pldi-09.pdf'
+    },
+    {
+      name: 'PDF.js Sample',
+      url: 'https://raw.githubusercontent.com/mozilla/pdf.js/ba2edeae/examples/learning/helloworld.pdf'
+    }
+  ];
+
   useEffect(() => {
     const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
     fetch(`${apiBase}/mark-sets`)
@@ -241,7 +252,7 @@ function ViewerContent() {
   const [highlightPageNumber, setHighlightPageNumber] = useState<number>(0);
   const [isMobileInputMode, setIsMobileInputMode] = useState(false);
 
-  // Input mode states
+  // NEW: Input mode states
   const [entries, setEntries] = useState<Record<string, string>>({});
   const [showReview, setShowReview] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -368,6 +379,7 @@ function ViewerContent() {
         });
         setEntries(initialEntries);
         
+        // Enable mobile input mode if ?mobile=1 or on small screens
         setIsMobileInputMode(mobileParam || window.innerWidth < 768);
       })
       .catch((err) => {
@@ -377,7 +389,7 @@ function ViewerContent() {
       });
   }, [markSetId, isDemo, showSetup, apiBase, mobileParam]);
 
-  // Handle window resize
+  // Handle window resize for responsive mobile mode
   useEffect(() => {
     const handleResize = () => {
       if (marks.length > 0) {
@@ -721,6 +733,7 @@ function ViewerContent() {
           flexDirection: 'row',
           overflow: 'hidden'
         }}>
+
           {/* Sidebar - Push layout (not overlay) */}
           <div style={{
             width: sidebarOpen ? '280px' : '0px',
@@ -728,7 +741,7 @@ function ViewerContent() {
             height: '100%',
             background: '#fff',
             borderRight: sidebarOpen ? '1px solid #ddd' : 'none',
-            transition: 'width 0.3s ease, min-width 0.3s ease',
+            transition: 'width 0.15s ease-out, min-width 0.15s ease-out',
             overflow: 'hidden',
             display: 'flex',
             flexDirection: 'column',
@@ -743,8 +756,72 @@ function ViewerContent() {
               background: '#f9f9f9',
               minHeight: '48px'
             }}>
-              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '600' }}>Marks</h3>
+              <button
+                onClick={() => setSidebarOpen(false)}
+                style={{
+                  width: '32px',
+                  height: '32px',
+                  border: 'none',
+                  background: 'transparent',
+                  color: '#5f6368',
+                  borderRadius: '0',
+                  cursor: 'pointer',
+                  fontSize: '20px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: 0,
+                  flexShrink: 0
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = 'rgba(60,64,67,0.08)';
+                  e.currentTarget.style.borderRadius = '50%';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'transparent';
+                  e.currentTarget.style.borderRadius = '0';
+                }}
+                title="Close sidebar"
+              >
+                ☰
+              </button>
+              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '600', flex: 1 }}>Marks</h3>
             </div>
+ {/* Toggle button when sidebar is closed - integrated look */}
+          {!sidebarOpen && (
+            <button
+              onClick={() => setSidebarOpen(true)}
+              style={{
+                position: 'absolute',
+                top: '6px',
+                left: '10px',
+                zIndex: 1002,
+                width: '32px',
+                height: '32px',
+                border: 'none',
+                background: 'white',
+                color: '#5f6368',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontSize: '20px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
+                padding: 0,
+                border: '1px solid #ddd'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = '#f5f5f5';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'white';
+              }}
+              title="Open sidebar"
+            >
+              ☰
+            </button>
+          )}
             <div style={{ flex: 1, overflow: 'auto' }}>
               <MarkList
                 marks={marks}
@@ -765,7 +842,7 @@ function ViewerContent() {
             display: 'flex', 
             flexDirection: 'column',
             overflow: 'hidden',
-            minWidth: 0 // Important for flex shrinking
+            minWidth: 0
           }} {...swipeHandlers}>
             <ZoomToolbar
               zoom={zoom}
@@ -776,13 +853,15 @@ function ViewerContent() {
               currentPage={currentPage}
               totalPages={numPages}
               onPageJump={jumpToPage}
-              showSidebarToggle={true}
-              sidebarOpen={sidebarOpen}
-              onSidebarToggle={() => setSidebarOpen(!sidebarOpen)}
             />
 
-          <div style={{ flex: 1, overflow: 'auto', background: '#525252' }} ref={containerRef}>
-            <div className="pdf-surface">
+           <div style={{ 
+  flex: 1, 
+  overflow: 'auto', 
+  background: '#525252',
+  WebkitOverflowScrolling: 'touch'
+}} ref={containerRef}>
+            <div className="pdf-surface" style={{ maxWidth: '100%' }}>
               {Array.from({ length: numPages }, (_, i) => i + 1).map((pageNum) => (
                 <div key={pageNum} style={{ position: 'relative' }}>
                   <PageCanvas
