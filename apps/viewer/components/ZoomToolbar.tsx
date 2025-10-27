@@ -90,6 +90,29 @@ export default function ZoomToolbar({
     }}>
       {/* Left Section: Sidebar Toggle + Mark Navigation */}
       <div style={{ display: 'flex', gap: '4px', flexShrink: 0, alignItems: 'center' }}>
+        {/* Sidebar Toggle - Only show when closed */}
+        {showSidebarToggle && !sidebarOpen && onSidebarToggle && (
+          <button
+            onClick={onSidebarToggle}
+            style={{
+              padding: '4px 8px',
+              border: '1px solid #ccc',
+              background: '#fff',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontSize: '16px',
+              minHeight: '28px',
+              minWidth: '32px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}
+            title="Open sidebar"
+          >
+            ☰
+          </button>
+        )}
+        
         {/* Mark Navigation Buttons */}
         {onPrev && onNext && (
           <>

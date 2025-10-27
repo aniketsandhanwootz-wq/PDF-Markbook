@@ -787,41 +787,7 @@ function ViewerContent() {
               </button>
               <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '600', flex: 1 }}>Marks</h3>
             </div>
- {/* Toggle button when sidebar is closed - integrated look */}
-          {!sidebarOpen && (
-            <button
-              onClick={() => setSidebarOpen(true)}
-              style={{
-                position: 'absolute',
-                top: '6px',
-                left: '10px',
-                zIndex: 1002,
-                width: '32px',
-                height: '32px',
-                border: 'none',
-                background: 'white',
-                color: '#5f6368',
-                borderRadius: '4px',
-                cursor: 'pointer',
-                fontSize: '20px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
-                padding: 0,
-                border: '1px solid #ddd'
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = '#f5f5f5';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'white';
-              }}
-              title="Open sidebar"
-            >
-              ☰
-            </button>
-          )}
+
             <div style={{ flex: 1, overflow: 'auto' }}>
               <MarkList
                 marks={marks}
@@ -853,15 +819,18 @@ function ViewerContent() {
               currentPage={currentPage}
               totalPages={numPages}
               onPageJump={jumpToPage}
+              showSidebarToggle={true}
+              sidebarOpen={sidebarOpen}
+              onSidebarToggle={() => setSidebarOpen(!sidebarOpen)}
             />
 
            <div style={{ 
-  flex: 1, 
-  overflow: 'auto', 
-  background: '#525252',
-  WebkitOverflowScrolling: 'touch'
-}} ref={containerRef}>
-            <div className="pdf-surface" style={{ maxWidth: '100%' }}>
+            flex: 1, 
+            overflow: 'auto', 
+            background: '#525252',
+            WebkitOverflowScrolling: 'touch'
+          }} ref={containerRef}>
+            <div className="pdf-surface">
               {Array.from({ length: numPages }, (_, i) => i + 1).map((pageNum) => (
                 <div key={pageNum} style={{ position: 'relative' }}>
                   <PageCanvas
