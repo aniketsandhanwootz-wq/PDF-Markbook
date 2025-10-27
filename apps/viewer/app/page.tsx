@@ -452,93 +452,126 @@ function ViewerContent() {
   }, [pdf, numPages]);
 
   // Navigate to mark - CANVAS-BASED CENTERING with scroll anchoring fix
-  const navigateToMark = useCallback(
-    async (index: number) => {
-      if (!pdf || index < 0 || index >= marks.length) return;
+const navigateToMark = useCallback(
+  async (index: number) => {
+    if (!pdf || index < 0 || index >= marks.length) return;
 
-      const mark = marks[index];
-      setCurrentMarkIndex(index);
+    const mark = marks[index];
+    setCurrentMarkIndex(index);
 
-      const pageNumber = mark.page_index + 1;
-      const container = containerRef.current!;
-      
-      try {
-        const page = await pdf.getPage(pageNumber);
+    const pageNumber = mark.page_index + 1;
+    const container = containerRef.current;
+    if (!container) return;
+    
+    try {
+      const page = await pdf.getPage(pageNumber);
 
-        // 1) Decide zoom (respect zoom_hint if provided)
-        let targetZoom: number;
-        if (mark.zoom_hint) {
-          targetZoom = clampZoom(mark.zoom_hint);
-        } else {
-          const vp1 = page.getViewport({ scale: 1 });
-          const rectW = mark.nw * vp1.width;
-          const rectH = mark.nh * vp1.height;
-          const zoomX = (container.clientWidth * 0.8) / rectW;
-          const zoomY = (container.clientHeight * 0.8) / rectH;
-          targetZoom = clampZoom(Math.min(zoomX, zoomY));
-        }
-
-        // 2) Apply zoom and wait for the canvas to actually lay out to that size
-        setZoom(targetZoom);
-        const vpZ = page.getViewport({ scale: targetZoom });
-
-        const pageEl = pageElsRef.current[mark.page_index];
-        if (!pageEl) return;
-
-        // Wait until the inner canvas matches the expected CSS size for vpZ
-        await waitForCanvasLayout(pageEl, Math.round(vpZ.width), Math.round(vpZ.height));
-        // one more paint to be safe
-        await new Promise((r) => requestAnimationFrame(r));
-
-        // 3) Compute mark rect at target zoom (page-local coords)
-        const markOnPage = {
-          x: mark.nx * vpZ.width,
-          y: mark.ny * vpZ.height,
-          w: mark.nw * vpZ.width,
-          h: mark.nh * vpZ.height,
-        };
-        const markCenter = {
-          x: markOnPage.x + markOnPage.w / 2,
-          y: markOnPage.y + markOnPage.h / 2,
-        };
-
-        // 4) Use the CANVAS rect (not wrapper) for precise offsets
-        const canvas = (pageEl.querySelector('canvas') as HTMLCanvasElement) || pageEl;
-        const containerRect = container.getBoundingClientRect();
-        const canvasRect = canvas.getBoundingClientRect();
-
-        const pageLeftInScroll = container.scrollLeft + (canvasRect.left - containerRect.left);
-        const pageTopInScroll = container.scrollTop + (canvasRect.top - containerRect.top);
-
-        let targetLeft = pageLeftInScroll + markCenter.x - container.clientWidth / 2;
-        let targetTop = pageTopInScroll + markCenter.y - container.clientHeight / 2;
-
-        // 5) Clamp and apply (disable smooth here to avoid anchoring fights)
-        ({ left: targetLeft, top: targetTop } = clampScroll(container, targetLeft, targetTop));
-        container.scrollTo({ left: Math.round(targetLeft), top: Math.round(targetTop), behavior: 'auto' });
-
-        // 6) Small retry if layout shifts again (rare)
-        for (let i = 0; i < 2; i++) {
-          await sleep(80);
-          const cr = (canvas as HTMLCanvasElement).getBoundingClientRect();
-          const pl = container.scrollLeft + (cr.left - containerRect.left);
-          const pt = container.scrollTop + (cr.top - containerRect.top);
-          let L = pl + markCenter.x - container.clientWidth / 2;
-          let T = pt + markCenter.y - container.clientHeight / 2;
-          ({ left: L, top: T } = clampScroll(container, L, T));
-          container.scrollTo({ left: Math.round(L), top: Math.round(T), behavior: 'auto' });
-        }
-
-        // 7) Flash
-        setFlashRect({ pageNumber, x: markOnPage.x, y: markOnPage.y, w: markOnPage.w, h: markOnPage.h });
-        setTimeout(() => setFlashRect(null), 1200);
-      } catch (e) {
-        console.error('Navigation error:', e);
+      // 1) Decide zoom (respect zoom_hint if provided)
+      let targetZoom: number;
+      if (mark.zoom_hint) {
+        targetZoom = clampZoom(mark.zoom_hint);
+      } else {
+        const vp1 = page.getViewport({ scale: 1 });
+        const rectW = mark.nw * vp1.width;
+        const rectH = mark.nh * vp1.height;
+        const zoomX = (container.clientWidth * 0.8) / rectW;
+        const zoomY = (container.clientHeight * 0.8) / rectH;
+        targetZoom = clampZoom(Math.min(zoomX, zoomY));
       }
-    },
-    [marks, pdf]
-  );
 
+      // Check if we're actually changing zoom
+      const isZoomChange = Math.abs(zoom - targetZoom) > 0.01;
+
+      // 2) Apply zoom and wait for layout if changing
+      if (isZoomChange) {
+        setZoom(targetZoom);
+      }
+      
+      const vpZ = page.getViewport({ scale: targetZoom });
+      const pageEl = pageElsRef.current[mark.page_index];
+      if (!pageEl) return;
+
+      // Wait for canvas layout only if zoom changed
+      if (isZoomChange) {
+        await waitForCanvasLayout(pageEl, Math.round(vpZ.width), Math.round(vpZ.height));
+        await new Promise((r) => requestAnimationFrame(r));
+      }
+
+      // 3) Compute mark rect at target zoom (page-local CSS coords)
+      const markOnPage = {
+        x: mark.nx * vpZ.width,
+        y: mark.ny * vpZ.height,
+        w: mark.nw * vpZ.width,
+        h: mark.nh * vpZ.height,
+      };
+      const markCenter = {
+        x: markOnPage.x + markOnPage.w / 2,
+        y: markOnPage.y + markOnPage.h / 2,
+      };
+
+      // 4) Get CANVAS DOMRect (not wrapper - canvas is the actual render target)
+      const canvas = pageEl.querySelector('canvas[data-visible="true"]') as HTMLCanvasElement;
+      if (!canvas) return;
+      
+      const containerRect = container.getBoundingClientRect();
+      const canvasRect = canvas.getBoundingClientRect();
+
+      // Convert canvas position to scroll-space coordinates
+      const pageLeftInScroll = container.scrollLeft + (canvasRect.left - containerRect.left);
+      const pageTopInScroll = container.scrollTop + (canvasRect.top - containerRect.top);
+
+      // Calculate target scroll to center the mark
+      let targetLeft = pageLeftInScroll + markCenter.x - container.clientWidth / 2;
+      let targetTop = pageTopInScroll + markCenter.y - container.clientHeight / 2;
+
+      // 5) Clamp to valid scroll bounds
+      ({ left: targetLeft, top: targetTop } = clampScroll(container, targetLeft, targetTop));
+      
+      // Use 'auto' (instant) to prevent browser re-anchoring during layout changes
+      container.scrollTo({ 
+        left: Math.round(targetLeft), 
+        top: Math.round(targetTop), 
+        behavior: 'auto' 
+      });
+
+      // 6) Retry up to 2 times if layout shifts (handles late reflows)
+      for (let i = 0; i < 2; i++) {
+        await sleep(80);
+        
+        const freshCanvasRect = canvas.getBoundingClientRect();
+        const freshContainerRect = container.getBoundingClientRect();
+        
+        const pl = container.scrollLeft + (freshCanvasRect.left - freshContainerRect.left);
+        const pt = container.scrollTop + (freshCanvasRect.top - freshContainerRect.top);
+        
+        let L = pl + markCenter.x - container.clientWidth / 2;
+        let T = pt + markCenter.y - container.clientHeight / 2;
+        
+        ({ left: L, top: T } = clampScroll(container, L, T));
+        
+        container.scrollTo({ 
+          left: Math.round(L), 
+          top: Math.round(T), 
+          behavior: 'auto' 
+        });
+      }
+
+      // 7) Flash the mark
+      setFlashRect({ 
+        pageNumber, 
+        x: markOnPage.x, 
+        y: markOnPage.y, 
+        w: markOnPage.w, 
+        h: markOnPage.h 
+      });
+      setTimeout(() => setFlashRect(null), 1200);
+      
+    } catch (e) {
+      console.error('Navigation error:', e);
+    }
+  },
+  [marks, pdf, zoom]
+);
   const prevMark = useCallback(() => {
     if (currentMarkIndex > 0) {
       navigateToMark(currentMarkIndex - 1);

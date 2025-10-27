@@ -218,42 +218,44 @@ function PageCanvas({
   }, [flashRect]);
 
   return (
-    <div className="page-wrapper" style={{ position: 'relative' }}>
-      {isLoading && (
-        <div style={{
-          position: 'absolute',
-          top: '50%',
-          left: '50%',
-          transform: 'translate(-50%, -50%)',
-          color: '#666',
-          fontSize: '14px',
-          pointerEvents: 'none',
-          zIndex: 1
-        }}>
-          Loading page {pageNumber}...
-        </div>
-      )}
-      <canvas 
-        ref={frontCanvasRef} 
-        className="page-canvas" 
-        style={{ 
-          display: 'block',
-          opacity: isLoading ? 0.5 : 1,
-          transition: 'opacity 0.2s'
-        }} 
-      />
-      <canvas 
-        ref={backCanvasRef} 
-        className="page-canvas" 
-        style={{ 
-          display: 'none',
-          opacity: isLoading ? 0.5 : 1,
-          transition: 'opacity 0.2s'
-        }} 
-      />
-      <canvas ref={overlayRef} className="page-overlay" />
-    </div>
-  );
+  <div className="page-wrapper" style={{ position: 'relative' }}>
+    {isLoading && (
+      <div style={{
+        position: 'absolute',
+        top: '50%',
+        left: '50%',
+        transform: 'translate(-50%, -50%)',
+        color: '#666',
+        fontSize: '14px',
+        pointerEvents: 'none',
+        zIndex: 1
+      }}>
+        Loading page {pageNumber}...
+      </div>
+    )}
+    <canvas 
+      ref={frontCanvasRef} 
+      className="page-canvas" 
+      data-visible={currentCanvasRef.current === 'front' ? 'true' : 'false'}
+      style={{ 
+        display: currentCanvasRef.current === 'front' ? 'block' : 'none',
+        opacity: isLoading ? 0.5 : 1,
+        transition: 'opacity 0.2s'
+      }} 
+    />
+    <canvas 
+      ref={backCanvasRef} 
+      className="page-canvas" 
+      data-visible={currentCanvasRef.current === 'back' ? 'true' : 'false'}
+      style={{ 
+        display: currentCanvasRef.current === 'back' ? 'block' : 'none',
+        opacity: isLoading ? 0.5 : 1,
+        transition: 'opacity 0.2s'
+      }} 
+    />
+    <canvas ref={overlayRef} className="page-overlay" />
+  </div>
+);
 }
 
 // Memoize to prevent unnecessary re-renders

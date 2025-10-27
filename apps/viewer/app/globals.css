@@ -336,3 +336,17 @@ body {
     font-size: 13px;
   }
 }
+
+/* ========== Mark Centering: Remove wrapper interference ========== */
+.page-wrapper {
+  /* Ensure no padding/border that shifts canvas position */
+  padding: 0 !important;
+  border: none !important;
+}
+
+.page-canvas {
+  /* Canvas must be tight to wrapper for accurate DOMRect */
+  margin: 0;
+  padding: 0;
+  border: none;
+}
