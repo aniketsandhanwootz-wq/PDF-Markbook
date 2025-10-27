@@ -56,7 +56,8 @@ export default function InputPanel({
       background: 'white',
       borderTop: '2px solid #ddd',
       display: 'flex',
-      flexDirection: 'column'
+      flexDirection: 'column',
+      minHeight: 0
     }}>
       {/* Compressed Header */}
       <div style={{
@@ -98,7 +99,7 @@ export default function InputPanel({
 
       {/* Compact Input Field */}
       <div style={{
-        padding: '10px',
+        padding: '2px 10px',
         display: 'flex',
         alignItems: 'center',
         flex: 1
@@ -111,13 +112,13 @@ export default function InputPanel({
           autoFocus
           style={{
             width: '100%',
-            padding: '8px 10px',
+            padding: '6px 10px',
             fontSize: '16px',
             border: '2px solid #ddd',
-            borderRadius: '6px',
+            borderRadius: '4px',
             outline: 'none',
             transition: 'border-color 0.2s',
-            height: '38px'
+            height: '36px'
           }}
           onFocus={(e) => {
             e.target.style.borderColor = '#1976d2';
@@ -130,12 +131,13 @@ export default function InputPanel({
 
       {/* Navigation Buttons */}
       <div style={{
-        padding: '6px 10px',
+        padding: '4px 10px',
         background: '#f9f9f9',
         borderTop: '1px solid #eee',
         display: 'flex',
         gap: '6px',
-        flexShrink: 0
+        flexShrink: 0,
+        minHeight: 0
       }}>
         <button
           onClick={onPrev}
@@ -150,7 +152,7 @@ export default function InputPanel({
             color: canPrev ? '#333' : '#999',
             borderRadius: '6px',
             cursor: canPrev ? 'pointer' : 'not-allowed',
-            minHeight: '40px',
+            minHeight: '36px',
             transition: 'all 0.2s'
           }}
         >
@@ -168,7 +170,7 @@ export default function InputPanel({
             color: 'white',
             borderRadius: '6px',
             cursor: 'pointer',
-            minHeight: '40px',
+            minHeight: '36px',
             transition: 'all 0.2s'
           }}
         >

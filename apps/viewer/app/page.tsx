@@ -435,7 +435,7 @@ function ViewerContent() {
   }, [pdf, numPages]);
 
   // Navigate to mark
-  const navigateToMark = useCallback(
+const navigateToMark = useCallback(
     async (index: number) => {
       if (!pdf || index < 0 || index >= marks.length) return;
 
@@ -448,8 +448,8 @@ function ViewerContent() {
       try {
         const page = await pdf.getPage(pageNumber);
         
+        // Calculate target zoom
         let targetZoom;
-        
         if (mark.zoom_hint) {
           targetZoom = clampZoom(mark.zoom_hint);
         } else {
@@ -465,9 +465,14 @@ function ViewerContent() {
           targetZoom = clampZoom(Math.min(zoomX, zoomY));
         }
 
+        // Set zoom first
         setZoom(targetZoom);
 
-        await new Promise(resolve => setTimeout(resolve, 200));
+        // Wait longer for canvas re-render + use requestAnimationFrame for DOM updates
+        await new Promise(resolve => setTimeout(resolve, 150));
+        
+        // Double-check with requestAnimationFrame
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
 
         const vpZ = page.getViewport({ scale: targetZoom });
         const rectAtZ = {
@@ -480,25 +485,37 @@ function ViewerContent() {
         setFlashRect({ pageNumber, ...rectAtZ });
         setTimeout(() => setFlashRect(null), 1200);
 
-        let cumulativeTop = 16;
-        
+        // Calculate cumulative page offset using cached heights
+        let pageTop = 16; // Initial padding
         for (let i = 0; i < mark.page_index; i++) {
-          const prevPage = await pdf.getPage(i + 1);
-          const prevVp = prevPage.getViewport({ scale: targetZoom });
-          cumulativeTop += prevVp.height + 16;
+          const cachedHeight = pageHeightsRef.current[i];
+          if (cachedHeight) {
+            pageTop += cachedHeight + 16;
+          } else {
+            // Fallback: calculate from zoom
+            const prevPage = await pdf.getPage(i + 1);
+            const prevVp = prevPage.getViewport({ scale: targetZoom });
+            pageTop += prevVp.height + 16;
+          }
         }
 
-        const markCenterX = rectAtZ.x + rectAtZ.w / 2;
-        const markCenterY = rectAtZ.y + rectAtZ.h / 2;
+    const markCenterX = rectAtZ.x + rectAtZ.w / 2;
+            const markCenterY = rectAtZ.y + rectAtZ.h / 2;
 
-        const targetScrollLeft = markCenterX - container.clientWidth / 2;
-        const targetScrollTop = cumulativeTop + markCenterY - (container.clientHeight / 2);
+            // In mobile mode, use the actual PDF viewer container height (not the full viewport)
+            const viewportHeight = container.clientHeight;
+            const viewportWidth = container.clientWidth;
 
-        container.scrollTo({
-          left: Math.max(0, targetScrollLeft),
-          top: Math.max(0, targetScrollTop),
-          behavior: 'smooth',
-        });
+            // Center the mark in the visible viewport
+            const targetScrollLeft = markCenterX - (viewportWidth / 2);
+            const targetScrollTop = pageTop + markCenterY - (viewportHeight / 2);
+
+            container.scrollTo({
+              left: Math.max(0, targetScrollLeft),
+              top: Math.max(0, targetScrollTop),
+              behavior: 'auto',
+            });
+
       } catch (error) {
         console.error('Navigation error:', error);
       }
@@ -554,7 +571,7 @@ function ViewerContent() {
     }
   }, [currentMarkIndex, marks]);
 
-  const handleSubmit = useCallback(async () => {
+ const handleSubmit = useCallback(async () => {
     if (!markSetId) {
       toast.error('No mark set ID provided');
       return;
@@ -566,7 +583,7 @@ function ViewerContent() {
       const response = await fetch(`${apiBase}/mark-sets/${markSetId}/submissions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ entries }),
+        body: JSON.stringify({ entries }),  // ← Single batch request
       });
 
       if (!response.ok) {
@@ -728,7 +745,7 @@ function ViewerContent() {
         
         {/* PDF Viewer Section - 75vh with horizontal flex for sidebar + content */}
         <div style={{ 
-          height: window.innerWidth <= 500 ? '70vh' : '75vh', 
+          height: window.innerWidth <= 500 ? '72vh' : '77vh', 
           display: 'flex',
           flexDirection: 'row',
           overflow: 'hidden'
@@ -748,13 +765,13 @@ function ViewerContent() {
             boxShadow: sidebarOpen ? '2px 0 8px rgba(0,0,0,0.1)' : 'none'
           }}>
             <div style={{
-              padding: '10px',
+              padding: '6px 10px',
               borderBottom: '1px solid #ddd',
               display: 'flex',
               alignItems: 'center',
               gap: '10px',
               background: '#f9f9f9',
-              minHeight: '48px'
+              minHeight: '36px'
             }}>
               <button
                 onClick={() => setSidebarOpen(false)}
