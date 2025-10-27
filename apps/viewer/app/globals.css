@@ -206,6 +206,7 @@ body {
   touch-action: pan-x pan-y pinch-zoom;
 }
 
+
 .pdf-surface {
   display: flex;
   flex-direction: column;

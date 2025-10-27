@@ -1,459 +1,191 @@
-<artifact identifier="readme-md" type="text/markdown" title="PDF Mark System README">
-# 📄 PDF Mark System
+# PDF Marker
 
-A production-grade PDF marking and navigation system with Google Sheets backend, built for QC teams and document review workflows.
+A production-ready system for marking and navigating regions of interest in PDF documents, with support for multiple storage backends.
 
 ## 🌟 Features
 
-### Core Functionality
-- **PDF Mark Management**: Create, edit, and navigate marks on PDF documents
-- **Google Sheets Backend**: No database required - uses Google Sheets as storage
-- **Dual Storage**: Supports both Google Sheets and SQLite backends
-- **Real-time Collaboration**: Multiple users can work on the same document
-- **Mobile-Friendly**: Optimized for mobile devices and Glide apps
+### Core Features
+- Create, edit and navigate rectangular marks on PDF documents 
+- Support for both SQLite (development) and Google Sheets (production) storage
+- Mobile-optimized viewer interface
+- Dual interface modes: Editor and Viewer
+- Normalized coordinate system (0-1 range) for page-independent marking
 
-### Performance Optimizations
-- **🚀 100x Faster Reads**: Intelligent caching with 60s TTL
-- **⚡ 60-80% Fewer Writes**: Delta save algorithm - only updates changed marks
-- **📊 O(1) Lookups**: Pre-built indexes for instant mark retrieval
-- **🔄 Smart Retry Logic**: Automatic retry with exponential backoff for quota errors
+### Technical Features
+- FastAPI backend with storage adapter pattern
+- Next.js frontend applications (Editor + Viewer)
+- PDF.js integration for rendering
+- Automatic retry logic for API calls
+- Caching with TTL for improved performance
+- Input validation using Pydantic schemas
 
-### Production Features
-- **Request Tracing**: Track every request with unique IDs
-- **Metrics Endpoint**: Real-time performance monitoring
-- **Rate Limiting**: 100 reads/min, 20 writes/min per IP
-- **Pagination Support**: Handle large mark sets efficiently
-- **Health Checks**: `/health`, `/healthz`, `/readyz` endpoints
-- **Structured Logging**: JSON logs with request context
-
-## 🏗️ Architecture
+## 🏗️ System Architecture
 
 ```
-┌─────────────────┐
-│   Frontend      │
-│  (Viewer/Editor)│
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│   FastAPI       │
-│   Backend API   │
-└────────┬────────┘
-         │
-         ├─────────────┐
-         ▼             ▼
-┌─────────────┐  ┌──────────────┐
-│   SQLite    │  │ Google Sheets│
-│  (Dev/Test) │  │ (Production) │
-└─────────────┘  └──────────────┘
+┌──────────────┐    ┌──────────────┐
+│ Editor (3001)│    │ Viewer (3002)│
+└──────┬───────┘    └──────┬───────┘
+       │                   │
+       └─────────┬────────┘
+                 ▼
+         ┌──────────────┐
+         │ FastAPI (8000)│
+         └──────┬───────┘
+                │
+        ┌───────┴────────┐
+        ▼                ▼
+┌──────────────┐  ┌──────────────┐
+│    SQLite    │  │Google Sheets │
+└──────────────┘  └──────────────┘
 ```
 
-### Google Sheets Schema (4-Tab)
-
-```
-documents → pages → mark_sets → marks
-    │         │         │          │
-    │         │         │          └─ Individual marks with coordinates
-    │         │         └─────────────── Mark set versions
-    │         └───────────────────────── Page dimensions
-    └─────────────────────────────────── PDF metadata
-```
-
-## 🚀 Quick Start
+## 🚀 Getting Started
 
 ### Prerequisites
-
 - Python 3.8+
-- Google Service Account (for Sheets backend)
-- Node.js 16+ (for frontend)
+- Node.js 16+
+- Google service account (for Sheets backend)
 
-### Backend Setup
+### Installation
 
-1. **Clone the repository**
+1. **Clone the repository:**
 ```bash
-git clone https://github.com/yourusername/pdf-mark-system.git
-cd pdf-mark-system/api
+git clone <repository-url>
+cd pdf-marker
 ```
 
-2. **Install dependencies**
+2. **Set up the API:**
 ```bash
-python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-pip install fastapi uvicorn sqlalchemy pydantic cachetools gspread google-auth tenacity
+cd services/api
+python -m venv venv
+source venv/bin/activate  # or `venv\Scripts\activate` on Windows
+pip install -r requirements.txt
 ```
 
-3. **Configure environment**
-
-Create `.env` file:
+3. **Set up the frontend apps:**
 ```bash
-# Backend Configuration
-STORAGE_BACKEND=sheets  # or sqlite
-PORT=8000
+# Editor
+cd apps/editor
+npm install
 
-# Google Sheets (if using sheets backend)
+# Viewer
+cd apps/viewer
+npm install
+```
+
+### Configuration
+
+Create `.env` in `services/api`:
+
+```bash
+# Storage backend (sqlite or sheets)
+STORAGE_BACKEND=sqlite
+
+# SQLite settings
+DATABASE_URL=sqlite:///data/markbook.db
+
+# Google Sheets settings (if using sheets backend)
 GOOGLE_SA_JSON=/path/to/service-account.json
-SHEETS_SPREADSHEET_ID=your_spreadsheet_id
+SHEETS_SPREADSHEET_ID=your-spreadsheet-id
 
-# CORS (comma-separated)
+# CORS settings
 ALLOWED_ORIGINS=http://localhost:3001,http://localhost:3002
-
-# SQLite (if using sqlite backend)
-DATABASE_URL=sqlite:///./marks.db
 ```
 
-4. **Run the server**
+### Running the System
+
+1. **Start the API server:**
 ```bash
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+cd services/api
+uvicorn main:app --reload --port 8000
 ```
 
-API will be available at `http://localhost:8000`
-
-### Frontend Setup
-
-#### Viewer App (Port 3001)
+2. **Start the Editor:**
 ```bash
-cd viewer
-npm install
+cd apps/editor
 npm run dev
 ```
 
-Access at `http://localhost:3001`
-
-#### Editor App (Port 3002)
+3. **Start the Viewer:**
 ```bash
-cd editor
-npm install
+cd apps/viewer
 npm run dev
 ```
 
-Access at `http://localhost:3002`
+Access:
+- Editor: http://localhost:3001
+- Viewer: http://localhost:3002 
+- API Docs: http://localhost:8000/docs
 
-## 📡 API Endpoints
+## 📚 Usage
 
-### Health & Monitoring
+### Creating Marks
+1. Open the Editor (port 3001)
+2. Enter a PDF URL
+3. Draw rectangles on pages
+4. Name each mark
+5. Save the mark set
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | GET | Basic health check with backend status |
-| `/healthz` | GET | Kubernetes liveness probe (fast) |
-| `/readyz` | GET | Kubernetes readiness probe (checks DB) |
-| `/metrics` | GET | Performance metrics and statistics |
+### Viewing Marks
+1. Open the Viewer (port 3002)
+2. Enter PDF URL and mark set ID
+3. Navigate marks using prev/next
+4. Use zoom controls to adjust view
 
-### Mark Sets
+## 🔧 Development
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/mark-sets` | GET | List all mark sets |
-| `/mark-sets` | POST | Create new mark set |
-| `/mark-sets/{id}` | DELETE | Delete mark set |
-
-### Marks
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/mark-sets/{id}/marks` | GET | Get marks (supports `?limit=&offset=`) |
-| `/mark-sets/{id}/marks` | PUT | Replace marks (delta save by default) |
-
-### Query Parameters
-
-**Pagination**:
-```bash
-GET /mark-sets/{id}/marks?limit=50&offset=0
+### Project Structure
+```
+├── apps/
+│   ├── editor/          # Mark creation interface
+│   └── viewer/          # Mark navigation interface
+├── services/
+│   └── api/
+│       ├── adapters/    # Storage implementations
+│       ├── core/        # Core logic
+│       ├── models/      # Data models
+│       ├── routers/     # API routes
+│       └── schemas/     # Data validation
+└── data/               # SQLite storage (if used)
 ```
 
-**Delta Save Control**:
-```bash
-PUT /mark-sets/{id}/marks?use_delta=true  # Default: true
-```
-
-## 🎯 Usage Examples
-
-### Create a Mark Set
-```bash
-curl -X POST http://localhost:8000/mark-sets \
-  -H "Content-Type: application/json" \
-  -d '{
-    "pdf_url": "https://arxiv.org/pdf/2106.07447.pdf",
-    "name": "Research Paper v1"
-  }'
-```
-
-### Add Marks
-```bash
-curl -X PUT http://localhost:8000/mark-sets/{id}/marks \
-  -H "Content-Type: application/json" \
-  -d '[
-    {
-      "page_index": 0,
-      "order_index": 0,
-      "name": "Title",
-      "nx": 0.1,
-      "ny": 0.1,
-      "nw": 0.8,
-      "nh": 0.1
-    }
-  ]'
-```
-
-### Get Marks (Paginated)
-```bash
-curl "http://localhost:8000/mark-sets/{id}/marks?limit=10&offset=0"
-```
-
-### Check Metrics
-```bash
-curl http://localhost:8000/metrics
-```
-
-Response:
-```json
-{
-  "uptime_seconds": 748.47,
-  "requests": {
-    "total": 112,
-    "by_status": {"200": 99, "503": 11}
-  },
-  "latency": {
-    "average_ms": 183.42
-  },
-  "cache": {
-    "hit_rate_percent": 75.0
-  }
+### Mark Schema
+```typescript
+interface Mark {
+  mark_id: string;
+  page_index: number;
+  order_index: number;
+  name: string;
+  nx: number;  // Normalized X (0-1)
+  ny: number;  // Normalized Y (0-1)
+  nw: number;  // Normalized width (0-1)  
+  nh: number;  // Normalized height (0-1)
+  zoom_hint?: number;
 }
-```
-
-## 🎨 Frontend Apps
-
-### Viewer Mode
-- **Purpose**: Navigate marks sequentially
-- **Features**: 
-  - Prev/Next navigation
-  - Auto-zoom to mark
-  - Search marks
-  - Mobile-optimized
-- **Use Case**: QC review, document inspection
-
-### Editor Mode
-- **Purpose**: Create and edit marks
-- **Features**:
-  - Click to create marks
-  - Drag to resize/move
-  - Name marks
-  - Reorder marks
-  - Delete marks
-- **Use Case**: Document annotation, setup
-
-## 📊 Performance Benchmarks
-
-| Operation | Before | After | Improvement |
-|-----------|--------|-------|-------------|
-| **Read marks (cached)** | 150-300ms | 1-2ms | **150x faster** |
-| **Write marks (delta)** | Full rewrite | Changed only | **60-80% fewer writes** |
-| **Mark lookup** | O(n) scan | O(1) index | **10x faster** |
-| **Sheets API calls** | Many | Batched | **95% reduction** |
-
-### Real-World Results
-
-From production metrics:
-```json
-{
-  "operation": "Update 1 mark out of 4",
-  "without_delta": "4 writes to Sheets",
-  "with_delta": "1 write to Sheets",
-  "savings": "75%"
-}
-```
-
-## 🔒 Security Features
-
-- **Rate Limiting**: Prevents API abuse
-  - Reads: 100 requests/minute per IP
-  - Writes: 20 requests/minute per IP
-- **Input Validation**: Strict Pydantic models
-  - Prevents marks outside page bounds
-  - Validates coordinate ranges (0-1)
-  - Enforces minimum mark size
-- **CORS**: Configurable allowed origins
-- **Error Handling**: Global exception handler
-
-## 🛠️ Configuration
-
-### Environment Variables
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `STORAGE_BACKEND` | Yes | `sqlite` | `sheets` or `sqlite` |
-| `GOOGLE_SA_JSON` | If sheets | - | Path to service account JSON |
-| `SHEETS_SPREADSHEET_ID` | If sheets | - | Google Sheets ID |
-| `DATABASE_URL` | If sqlite | `sqlite:///./marks.db` | SQLite database path |
-| `ALLOWED_ORIGINS` | No | `localhost:3001,3002` | CORS allowed origins |
-| `PORT` | No | `8000` | API server port |
-
-### Rate Limits (Configurable in `main.py`)
-
-```python
-RATE_LIMITS = {
-    "read": 100,   # GET requests per minute
-    "write": 20,   # POST/PUT/DELETE per minute
-    "default": 60,
-}
-```
-
-### Cache TTL
-
-```python
-mark_cache = TTLCache(maxsize=100, ttl=300)  # 5 minutes
-```
-
-## 📦 Project Structure
-
-```
-pdf-mark-system/
-├── api/
-│   ├── main.py                 # FastAPI application
-│   ├── adapters/
-│   │   ├── base.py            # Storage adapter interface
-│   │   └── sheets/
-│   │       └── __init__.py    # Google Sheets implementation
-│   └── requirements.txt
-├── viewer/
-│   ├── src/
-│   │   └── App.jsx            # Viewer React app
-│   └── package.json
-├── editor/
-│   ├── src/
-│   │   └── App.jsx            # Editor React app
-│   └── package.json
-└── README.md
-```
-
-## 🧪 Testing
-
-### Run Backend Tests
-```bash
-# Test delta save
-curl -X PUT http://localhost:8000/mark-sets/{id}/marks \
-  -H "Content-Type: application/json" \
-  -d '[...]'
-
-# Check response for "method": "delta"
-```
-
-### Test Rate Limiting
-```bash
-# Hit endpoint 101 times
-for i in {1..101}; do 
-  curl http://localhost:8000/health
-done
-
-# Should see 429 errors after 100 requests
-```
-
-### Monitor Performance
-```bash
-# Watch metrics in real-time
-watch -n 1 curl -s http://localhost:8000/metrics | jq
 ```
 
 ## 🐛 Troubleshooting
 
-### Google Sheets Quota Exceeded
-**Error**: `APIError: [429]: Quota exceeded`
+### Common Issues
+- **Database Locked**: Restart API server
+- **PDF Load Failed**: Check PDF URL accessibility
+- **CORS Errors**: Verify ALLOWED_ORIGINS setting
 
-**Solution**:
-- Retry logic will handle this automatically
-- Increase cache TTL to reduce reads
-- Delta save already minimizes writes
-
-### Marks Not Saving
-**Check**:
-1. Verify `SHEETS_SPREADSHEET_ID` is correct
-2. Service account has edit permissions
-3. Check logs for validation errors
-4. Ensure marks are within bounds (nx+nw ≤ 1.0)
-
-### Slow Performance
-**Solutions**:
-1. Check cache hit rate: `curl http://localhost:8000/metrics`
-2. Increase cache TTL if needed
-3. Enable delta save (default: on)
-4. Check Google Sheets quota usage
-
-## 🎓 Key Concepts
-
-### Delta Save Algorithm
-Only writes changed marks to Google Sheets:
-1. Fetches existing marks
-2. Computes diff (added, updated, deleted, unchanged)
-3. Only writes changed marks
-4. Falls back to full replace if >50% changed
-
-**Impact**: 60-80% fewer writes = massive quota savings
-
-### Coordinate System
-All marks use normalized coordinates (0.0 to 1.0):
-- `nx`: X position (0=left, 1=right)
-- `ny`: Y position (0=top, 1=bottom)
-- `nw`: Width (fraction of page width)
-- `nh`: Height (fraction of page height)
-
-**Example**: Mark at (10%, 20%) with size 30%×15%
-```json
-{
-  "nx": 0.1,
-  "ny": 0.2,
-  "nw": 0.3,
-  "nh": 0.15
-}
-```
-
-## 📈 Monitoring
-
-### Key Metrics to Watch
-
-1. **Cache Hit Rate**: Should be >70%
-   ```bash
-   curl http://localhost:8000/metrics | jq .cache.hit_rate_percent
-   ```
-
-2. **Average Latency**: Should be <200ms
-   ```bash
-   curl http://localhost:8000/metrics | jq .latency.average_ms
-   ```
-
-3. **Request Status Codes**:
-   ```bash
-   curl http://localhost:8000/metrics | jq .requests.by_status
-   ```
-
-4. **Delta Save Usage**: Check logs for:
-   ```
-   Delta save: add=1, update=0, delete=0, unchanged=3
-   ```
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+### Performance Tips
+- Use SQLite for development/testing
+- Enable caching in production
+- Keep mark sets under 1000 marks
 
 ## 📄 License
 
 MIT License - see LICENSE file for details
 
-## 🙏 Acknowledgments
+## 🤝 Contributing
 
-- Built with [FastAPI](https://fastapi.tiangolo.com/)
-- Frontend powered by [React](https://react.dev/) and [PDF.js](https://mozilla.github.io/pdf.js/)
-- Storage via [gspread](https://docs.gspread.org/)
-
+1. Fork the repository
+2. Create a feature branch
+3. Submit a pull request
 
 ---
 
-**Built with ❤️ for document review workflows**
-
-**⭐ Star this repo if you find it useful!**
-</artifact>
-
+Built with FastAPI, Next.js and PDF.js.
