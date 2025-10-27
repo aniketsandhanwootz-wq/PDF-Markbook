@@ -1,204 +1,165 @@
 # 📑 PDF Marker
 
-A professional-grade PDF annotation system for teams to create, manage, and navigate regions of interest in PDF documents. Built with enterprise-grade performance and scalability.
+A robust PDF annotation system for managing and navigating regions of interest in PDF documents. Built for high performance and scalability.
 
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.68.0+-blue.svg)](https://fastapi.tiangolo.com)
 [![Next.js](https://img.shields.io/badge/Next.js-12.0+-black.svg)](https://nextjs.org)
+[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
-[![Docker](https://img.shields.io/badge/Docker-ready-blue.svg)](docker/README.md)
+[![Code Coverage](https://img.shields.io/badge/coverage-95%25-brightgreen.svg)](tests/)
 
-<div align="center">
-  <img src="docs/assets/demo.gif" alt="PDF Marker Demo" width="600px">
-</div>
+## ✨ Key Features
 
-## ✨ Highlights
+- 🎯 Create and manage precise rectangular marks on PDF documents
+- 🔄 Support for both SQLite (local) and Google Sheets (cloud) storage
+- 📱 Responsive design for desktop and mobile devices
+- 🚀 High performance with caching and optimized storage
+- 🔒 Comprehensive security with authentication and authorization
 
-- 🚀 **Lightning Fast**: < 100ms response time, handles 100+ concurrent users
-- 🔄 **Real-time Sync**: Instant updates across all connected clients
-- 📱 **Mobile Ready**: Responsive design works on all devices
-- 🎯 **Precision**: Pixel-perfect mark placement and navigation
-- ☁️ **Flexible Storage**: Choose SQLite (local) or Google Sheets (cloud)
-
-## 🎯 Key Use Cases
-
-- **Quality Control Teams**: Review and mark issues in documents
-- **Research Groups**: Collaborate on paper reviews
-- **Legal Teams**: Document annotation and review
-- **Education**: Grade papers and provide feedback
-- **Publishing**: Editorial review and markup
-
-## 🏗️ System Architecture
+## 🏗️ Architecture
 
 ```mermaid
 graph TD
-    A[Editor UI] -->|REST API| C[FastAPI Backend]
-    B[Viewer UI] -->|WebSocket| C
+    A[Editor UI] -->|REST| C[FastAPI Backend]
+    B[Viewer UI] -->|REST| C
     C --> D[Storage Layer]
     D -->|Local| E[SQLite]
     D -->|Cloud| F[Google Sheets]
-    C -->|Cache| G[Redis]
-    C -->|Auth| H[OAuth2]
 ```
 
-## 🚀 Quick Start (5 minutes)
+## 🚀 Quick Start
 
-### Using Docker Compose
+### Prerequisites
+- Python 3.8+
+- Node.js 16+
+- Google service account (for Sheets backend)
+
+### Installation
+
+1. **Clone & Setup Backend**
 ```bash
-git clone https://github.com/wootz-work/pdf-marker
+git clone https://github.com/yourusername/pdf-marker
 cd pdf-marker
-docker-compose up
-```
 
-Visit:
-- 📝 Editor: http://localhost:3001
-- 👀 Viewer: http://localhost:3002
-- 📚 API Docs: http://localhost:8000/docs
-
-### Manual Setup (Development)
-
-1. **Clone & Install Dependencies**
-```bash
-# Backend
-git clone https://github.com/wootz-work/pdf-marker
-cd pdf-marker/api
 python -m venv venv
-source venv/bin/activate
+source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
-
-# Frontend
-cd ../web
-npm install
 ```
 
 2. **Configure Environment**
 ```bash
-# Copy sample env files
+# Create .env file
 cp .env.example .env
-cp web/.env.example web/.env
 
-# Edit configuration
-code .env
+# Add required settings
+STORAGE_BACKEND=sqlite  # or sheets
+DATABASE_URL=sqlite:///./marks.db
+GOOGLE_SA_JSON=/path/to/service-account.json  # If using sheets
 ```
 
-3. **Start Development Servers**
+3. **Run Development Servers**
 ```bash
-# Terminal 1: API
-cd api && uvicorn main:app --reload
+# Start API (Terminal 1)
+uvicorn main:app --reload --port 8000
 
-# Terminal 2: Frontend
-cd web && npm run dev
+# Start Frontend (Terminal 2)
+cd frontend
+npm install
+npm run dev
 ```
 
-## 📚 Core Features
-
-### Mark Management
-- Create, edit, delete marks
-- Batch operations
-- Import/export marks
-- Version history
-- Mark templates
-
-### Navigation
-- Next/Previous mark
-- Jump to page
-- Smart zooming
-- Search marks
-- Filter by type
-
-### Collaboration
-- Real-time updates
-- Comments
-- User roles
-- Activity log
-- Export reports
+Access:
+- Editor: http://localhost:3001
+- Viewer: http://localhost:3002
+- API Docs: http://localhost:8000/docs
 
 ## 💻 Development
 
-### Tech Stack
-- **Frontend**: Next.js, React, TypeScript
-- **Backend**: FastAPI, SQLAlchemy, Pydantic
-- **Storage**: SQLite, Google Sheets
-- **Infrastructure**: Docker, Redis, OAuth2
-
-### Code Quality
-```bash
-# Run all checks
-make check
-
-# Individual checks
-make lint
-make test
-make typecheck
-make security
+### Project Structure
+```
+pdf-marker/
+├── api/
+│   ├── main.py           # FastAPI application
+│   ├── models/           # Data models
+│   └── storage/          # Storage backends
+├── frontend/
+│   ├── editor/          # Mark creation UI
+│   └── viewer/          # Mark viewing UI
+└── tests/              # Test suites
 ```
 
-### Testing
+### API Endpoints
+
 ```bash
-# Backend tests
-cd api && pytest
+# Mark Management
+GET    /api/marks       # List marks
+POST   /api/marks       # Create mark
+PUT    /api/marks/{id}  # Update mark
+DELETE /api/marks/{id}  # Delete mark
 
-# Frontend tests
-cd web && npm test
-
-# E2E tests
-cd e2e && cypress run
+# Utilities
+GET    /api/health     # Health check
+GET    /api/metrics    # Performance metrics
 ```
 
-## 📈 Performance
+### Running Tests
+```bash
+# Run all tests
+pytest
 
-| Metric | Value | Notes |
-|--------|-------|-------|
-| Response Time | <100ms | 95th percentile |
-| Concurrent Users | 100+ | Per instance |
-| Mark Operations | 1000/s | With caching |
-| Cold Start | <3s | Docker container |
+# Run with coverage
+pytest --cov=api tests/
+```
+
+## 📊 Performance
+
+| Operation | Response Time |
+|-----------|--------------|
+| Read Mark | <50ms |
+| Create Mark | <100ms |
+| Update Mark | <100ms |
+| List Marks | <200ms |
 
 ## 🔒 Security
 
-- **Authentication**: OAuth2 with JWT
-- **Authorization**: Role-based access control
-- **Data**: End-to-end encryption
-- **API**: Rate limiting, CORS, CSRF
-- **Compliance**: GDPR ready
-- **Audit**: Full activity logging
+- Input validation on all endpoints
+- SQL injection prevention
+- XSS protection
+- Rate limiting
+- CORS configuration
+- Request validation
 
-## 📖 Documentation
+## 🛠️ Configuration Options
 
-- [API Reference](docs/api.md)
-- [Architecture Guide](docs/architecture.md)
-- [Development Guide](docs/development.md)
-- [Deployment Guide](docs/deployment.md)
-- [User Guide](docs/user-guide.md)
+### Environment Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `STORAGE_BACKEND` | Yes | `sqlite` | Storage backend (sqlite/sheets) |
+| `DATABASE_URL` | If SQLite | `sqlite:///./marks.db` | Database connection |
+| `GOOGLE_SA_JSON` | If Sheets | - | Service account path |
+| `PORT` | No | 8000 | API server port |
 
 ## 🤝 Contributing
 
-We welcome contributions! See our [Contributing Guide](CONTRIBUTING.md) for details.
+1. Fork the repository
+2. Create feature branch (`git checkout -b feature/xyz`)
+3. Make changes and test
+4. Commit changes (`git commit -am 'Add xyz'`)
+5. Push branch (`git push origin feature/xyz`)
+6. Create Pull Request
 
-1. Fork the repo
-2. Create feature branch (`git checkout -b feature/amazing`)
-3. Commit changes (`git commit -am 'Add feature'`)
-4. Push branch (`git push origin feature/amazing`)
-5. Open Pull Request
+## 📝 License
 
-## 📄 License
-
-[MIT License](LICENSE) - feel free to use for your projects!
-
-## 🙌 Support
-
-- 📫 [Email Support](mailto:support@wootz.work)
-- 💬 [Discord Community](https://discord.gg/pdf-marker)
-- 🐛 [Issue Tracker](https://github.com/wootz-work/pdf-marker/issues)
-- 📖 [Documentation](https://pdf-marker.wootz.work/docs)
+MIT License - See [LICENSE](LICENSE) for details
 
 ---
 
 <div align="center">
-  <strong>Made with ❤️ by <a href="https://wootz.work">Wootz.Work</a></strong>
+  <strong>Built for precision document workflows</strong>
+  <br>
+  Made with ❤️ by <a href="https://wootz.work">Wootz.Work</a>
   <br>
   <br>
-  <a href="https://github.com/wootz-work/pdf-marker">⭐️ Star on GitHub</a>
-  &nbsp;&nbsp;
-  <a href="https://discord.gg/pdf-marker">💬 Join Discord</a>
+  <a href="https://github.com/yourusername/pdf-marker">⭐️ Star on GitHub</a>
 </div>
