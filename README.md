@@ -20,12 +20,89 @@ A robust PDF annotation system for managing and navigating regions of interest i
 
 ```mermaid
 graph TD
-    A[Editor UI] -->|REST| C[FastAPI Backend]
-    B[Viewer UI] -->|REST| C
-    C --> D[Storage Layer]
-    D -->|Local| E[SQLite]
-    D -->|Cloud| F[Google Sheets]
+    subgraph "Frontend Layer"
+        A[Editor UI]
+        B[Viewer UI]
+        A1[PDF.js Renderer]
+        B1[Mark Navigator]
+    end
+
+    subgraph "API Layer"
+        C[FastAPI Backend]
+        C1[Authentication]
+        C2[Rate Limiter]
+        C3[CORS Handler]
+        C4[Request Validator]
+    end
+
+    subgraph "Cache Layer"
+        G[Redis Cache]
+        G1[Mark Cache]
+        G2[PDF Cache]
+    end
+
+    subgraph "Storage Layer"
+        D[Storage Adapter]
+        E[SQLite]
+        F[Google Sheets]
+        E1[SQLite Indexes]
+        F1[Sheet Cache]
+    end
+
+    A -->|REST API| C
+    B -->|REST API| C
+    A --> A1
+    B --> B1
+    
+    C --> C1
+    C --> C2
+    C --> C3
+    C --> C4
+    
+    C --> G
+    G --> G1
+    G --> G2
+    
+    C --> D
+    D -->|Local Storage| E
+    D -->|Cloud Storage| F
+    E --> E1
+    F --> F1
+
+    style A fill:#f9f,stroke:#333
+    style B fill:#f9f,stroke:#333
+    style C fill:#bbf,stroke:#333
+    style G fill:#bfb,stroke:#333
+    style D fill:#fbb,stroke:#333
 ```
+
+### Architecture Components
+
+#### Frontend Layer
+- **Editor UI**: Mark creation and editing interface
+- **Viewer UI**: Mark navigation and viewing interface
+- **PDF.js Renderer**: PDF document rendering engine
+- **Mark Navigator**: Navigation controls for marks
+
+#### API Layer
+- **FastAPI Backend**: Core API server
+- **Authentication**: JWT-based auth system
+- **Rate Limiter**: Request throttling
+- **CORS Handler**: Cross-origin security
+- **Request Validator**: Input validation
+
+#### Cache Layer
+- **Redis Cache**: In-memory caching system
+- **Mark Cache**: Frequently accessed marks
+- **PDF Cache**: Rendered PDF pages
+
+#### Storage Layer
+- **Storage Adapter**: Abstract storage interface
+- **SQLite**: Local development storage
+- **Google Sheets**: Production cloud storage
+- **Indexes**: Performance optimizations
+- **Sheet Cache**: Google API call reduction
+
 
 ## 🚀 Quick Start
 
