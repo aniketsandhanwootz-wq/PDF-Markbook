@@ -16,6 +16,38 @@ import PDFSearch from '../components/PDFSearch';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
+// --- precise centering helpers ---
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Wait until the page's <canvas> reaches the expected CSS size for the target zoom.
+ * Prevents "center then resize" drift.
+ */
+async function waitForCanvasLayout(
+  pageEl: HTMLElement,
+  expectedW: number,
+  expectedH: number,
+  timeoutMs = 1200
+) {
+  const t0 = performance.now();
+  while (performance.now() - t0 < timeoutMs) {
+    const canvas = pageEl.querySelector('canvas') as HTMLCanvasElement | null;
+    const w = (canvas?.clientWidth ?? pageEl.clientWidth) | 0;
+    const h = (canvas?.clientHeight ?? pageEl.clientHeight) | 0;
+    if (Math.abs(w - expectedW) <= 2 && Math.abs(h - expectedH) <= 2) return;
+    await sleep(50);
+  }
+}
+
+function clampScroll(container: HTMLElement, left: number, top: number) {
+  const maxL = Math.max(0, container.scrollWidth - container.clientWidth);
+  const maxT = Math.max(0, container.scrollHeight - container.clientHeight);
+  return {
+    left: Math.max(0, Math.min(left, maxL)),
+    top: Math.max(0, Math.min(top, maxT)),
+  };
+}
+
 type Mark = {
   mark_id?: string;
   page_index: number;
@@ -52,17 +84,6 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
   const [availableMarkSets, setAvailableMarkSets] = useState<MarkSetInfo[]>([]);
   const [error, setError] = useState('');
   const [loadingMarkSets, setLoadingMarkSets] = useState(true);
-
-  const samplePdfs = [
-    {
-      name: 'Mozilla TracemonKey (Sample)',
-      url: 'https://mozilla.github.io/pdf.js/web/compressed.tracemonkey-pldi-09.pdf'
-    },
-    {
-      name: 'PDF.js Sample',
-      url: 'https://raw.githubusercontent.com/mozilla/pdf.js/ba2edeae/examples/learning/helloworld.pdf'
-    }
-  ];
 
   useEffect(() => {
     const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
@@ -252,20 +273,20 @@ function ViewerContent() {
   const [highlightPageNumber, setHighlightPageNumber] = useState<number>(0);
   const [isMobileInputMode, setIsMobileInputMode] = useState(false);
 
-  // NEW: Input mode states
+  // Input mode states
   const [entries, setEntries] = useState<Record<string, string>>({});
   const [showReview, setShowReview] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const pageHeightsRef = useRef<number[]>([]);
+  const pageElsRef = useRef<Array<HTMLDivElement | null>>([]);
 
   const isDemo = searchParams?.get('demo') === '1';
   const pdfUrlParam = searchParams?.get('pdf_url') || '';
   const markSetIdParam = searchParams?.get('mark_set_id') || '';
   const mobileParam = searchParams?.get('mobile') === '1';
 
-  // Check if we should show setup screen
   useEffect(() => {
     if (isDemo || pdfUrlParam) {
       setShowSetup(false);
@@ -370,7 +391,6 @@ function ViewerContent() {
         const sorted = [...data].sort((a, b) => a.order_index - b.order_index);
         setMarks(sorted);
         
-        // Initialize entries
         const initialEntries: Record<string, string> = {};
         sorted.forEach(mark => {
           if (mark.mark_id) {
@@ -379,7 +399,6 @@ function ViewerContent() {
         });
         setEntries(initialEntries);
         
-        // Enable mobile input mode if ?mobile=1 or on small screens
         setIsMobileInputMode(mobileParam || window.innerWidth < 768);
       })
       .catch((err) => {
@@ -389,7 +408,6 @@ function ViewerContent() {
       });
   }, [markSetId, isDemo, showSetup, apiBase, mobileParam]);
 
-  // Handle window resize for responsive mobile mode
   useEffect(() => {
     const handleResize = () => {
       if (marks.length > 0) {
@@ -407,7 +425,6 @@ function ViewerContent() {
     return () => window.removeEventListener('resize', handleResize);
   }, [marks.length, mobileParam]);
 
-  // Track current page
   useEffect(() => {
     const container = containerRef.current;
     if (!container || !pdf) return;
@@ -434,8 +451,8 @@ function ViewerContent() {
     return () => container.removeEventListener('scroll', handleScroll);
   }, [pdf, numPages]);
 
-  // Navigate to mark
-const navigateToMark = useCallback(
+  // Navigate to mark - CANVAS-BASED CENTERING with scroll anchoring fix
+  const navigateToMark = useCallback(
     async (index: number) => {
       if (!pdf || index < 0 || index >= marks.length) return;
 
@@ -444,83 +461,82 @@ const navigateToMark = useCallback(
 
       const pageNumber = mark.page_index + 1;
       const container = containerRef.current!;
-
+      
       try {
         const page = await pdf.getPage(pageNumber);
-        
-        // Calculate target zoom
-        let targetZoom;
+
+        // 1) Decide zoom (respect zoom_hint if provided)
+        let targetZoom: number;
         if (mark.zoom_hint) {
           targetZoom = clampZoom(mark.zoom_hint);
         } else {
           const vp1 = page.getViewport({ scale: 1 });
-          const rectAt1 = {
-            w: mark.nw * vp1.width,
-            h: mark.nh * vp1.height,
-          };
-          
-          const effectiveHeight = isMobileInputMode ? container.clientHeight * 0.75 : container.clientHeight;
-          const zoomX = (container.clientWidth * 0.8) / rectAt1.w;
-          const zoomY = (effectiveHeight * 0.8) / rectAt1.h;
+          const rectW = mark.nw * vp1.width;
+          const rectH = mark.nh * vp1.height;
+          const zoomX = (container.clientWidth * 0.8) / rectW;
+          const zoomY = (container.clientHeight * 0.8) / rectH;
           targetZoom = clampZoom(Math.min(zoomX, zoomY));
         }
 
-        // Set zoom first
+        // 2) Apply zoom and wait for the canvas to actually lay out to that size
         setZoom(targetZoom);
-
-        // Wait longer for canvas re-render + use requestAnimationFrame for DOM updates
-        await new Promise(resolve => setTimeout(resolve, 150));
-        
-        // Double-check with requestAnimationFrame
-        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-
         const vpZ = page.getViewport({ scale: targetZoom });
-        const rectAtZ = {
+
+        const pageEl = pageElsRef.current[mark.page_index];
+        if (!pageEl) return;
+
+        // Wait until the inner canvas matches the expected CSS size for vpZ
+        await waitForCanvasLayout(pageEl, Math.round(vpZ.width), Math.round(vpZ.height));
+        // one more paint to be safe
+        await new Promise((r) => requestAnimationFrame(r));
+
+        // 3) Compute mark rect at target zoom (page-local coords)
+        const markOnPage = {
           x: mark.nx * vpZ.width,
           y: mark.ny * vpZ.height,
           w: mark.nw * vpZ.width,
           h: mark.nh * vpZ.height,
         };
+        const markCenter = {
+          x: markOnPage.x + markOnPage.w / 2,
+          y: markOnPage.y + markOnPage.h / 2,
+        };
 
-        setFlashRect({ pageNumber, ...rectAtZ });
-        setTimeout(() => setFlashRect(null), 1200);
+        // 4) Use the CANVAS rect (not wrapper) for precise offsets
+        const canvas = (pageEl.querySelector('canvas') as HTMLCanvasElement) || pageEl;
+        const containerRect = container.getBoundingClientRect();
+        const canvasRect = canvas.getBoundingClientRect();
 
-        // Calculate cumulative page offset using cached heights
-        let pageTop = 16; // Initial padding
-        for (let i = 0; i < mark.page_index; i++) {
-          const cachedHeight = pageHeightsRef.current[i];
-          if (cachedHeight) {
-            pageTop += cachedHeight + 16;
-          } else {
-            // Fallback: calculate from zoom
-            const prevPage = await pdf.getPage(i + 1);
-            const prevVp = prevPage.getViewport({ scale: targetZoom });
-            pageTop += prevVp.height + 16;
-          }
+        const pageLeftInScroll = container.scrollLeft + (canvasRect.left - containerRect.left);
+        const pageTopInScroll = container.scrollTop + (canvasRect.top - containerRect.top);
+
+        let targetLeft = pageLeftInScroll + markCenter.x - container.clientWidth / 2;
+        let targetTop = pageTopInScroll + markCenter.y - container.clientHeight / 2;
+
+        // 5) Clamp and apply (disable smooth here to avoid anchoring fights)
+        ({ left: targetLeft, top: targetTop } = clampScroll(container, targetLeft, targetTop));
+        container.scrollTo({ left: Math.round(targetLeft), top: Math.round(targetTop), behavior: 'auto' });
+
+        // 6) Small retry if layout shifts again (rare)
+        for (let i = 0; i < 2; i++) {
+          await sleep(80);
+          const cr = (canvas as HTMLCanvasElement).getBoundingClientRect();
+          const pl = container.scrollLeft + (cr.left - containerRect.left);
+          const pt = container.scrollTop + (cr.top - containerRect.top);
+          let L = pl + markCenter.x - container.clientWidth / 2;
+          let T = pt + markCenter.y - container.clientHeight / 2;
+          ({ left: L, top: T } = clampScroll(container, L, T));
+          container.scrollTo({ left: Math.round(L), top: Math.round(T), behavior: 'auto' });
         }
 
-    const markCenterX = rectAtZ.x + rectAtZ.w / 2;
-            const markCenterY = rectAtZ.y + rectAtZ.h / 2;
-
-            // In mobile mode, use the actual PDF viewer container height (not the full viewport)
-            const viewportHeight = container.clientHeight;
-            const viewportWidth = container.clientWidth;
-
-            // Center the mark in the visible viewport
-            const targetScrollLeft = markCenterX - (viewportWidth / 2);
-            const targetScrollTop = pageTop + markCenterY - (viewportHeight / 2);
-
-            container.scrollTo({
-              left: Math.max(0, targetScrollLeft),
-              top: Math.max(0, targetScrollTop),
-              behavior: 'auto',
-            });
-
-      } catch (error) {
-        console.error('Navigation error:', error);
+        // 7) Flash
+        setFlashRect({ pageNumber, x: markOnPage.x, y: markOnPage.y, w: markOnPage.w, h: markOnPage.h });
+        setTimeout(() => setFlashRect(null), 1200);
+      } catch (e) {
+        console.error('Navigation error:', e);
       }
     },
-    [marks, pdf, isMobileInputMode]
+    [marks, pdf]
   );
 
   const prevMark = useCallback(() => {
@@ -537,29 +553,30 @@ const navigateToMark = useCallback(
     }
   }, [currentMarkIndex, marks.length, navigateToMark]);
 
-  const jumpToPage = useCallback(async (pageNumber: number) => {
+  const jumpToPage = useCallback((pageNumber: number) => {
     if (!pdf || !containerRef.current) return;
-    
+
     const container = containerRef.current;
-    
-    try {
-      let cumulativeTop = 16;
-      
-      for (let i = 0; i < pageNumber - 1; i++) {
-        const prevPage = await pdf.getPage(i + 1);
-        const prevVp = prevPage.getViewport({ scale: zoom });
-        cumulativeTop += prevVp.height + 16;
-      }
-      
-      container.scrollTo({
-        left: 0,
-        top: cumulativeTop,
-        behavior: 'smooth',
-      });
-    } catch (error) {
-      console.error('Jump to page error:', error);
-    }
-  }, [pdf, zoom]);
+    const pageEl = pageElsRef.current[pageNumber - 1];
+    if (!pageEl) return;
+
+    const containerRect = container.getBoundingClientRect();
+    const pageRect = pageEl.getBoundingClientRect();
+
+    const pageLeftInScroll = container.scrollLeft + (pageRect.left - containerRect.left);
+    const pageTopInScroll = container.scrollTop + (pageRect.top - containerRect.top);
+
+    const targetLeft = Math.max(
+      0,
+      pageLeftInScroll + pageEl.clientWidth / 2 - container.clientWidth / 2
+    );
+
+    container.scrollTo({
+      left: targetLeft,
+      top: pageTopInScroll,
+      behavior: 'smooth',
+    });
+  }, [pdf]);
 
   const handleEntryChange = useCallback((value: string) => {
     const currentMark = marks[currentMarkIndex];
@@ -571,7 +588,7 @@ const navigateToMark = useCallback(
     }
   }, [currentMarkIndex, marks]);
 
- const handleSubmit = useCallback(async () => {
+  const handleSubmit = useCallback(async () => {
     if (!markSetId) {
       toast.error('No mark set ID provided');
       return;
@@ -583,7 +600,7 @@ const navigateToMark = useCallback(
       const response = await fetch(`${apiBase}/mark-sets/${markSetId}/submissions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ entries }),  // ← Single batch request
+        body: JSON.stringify({ entries }),
       });
 
       if (!response.ok) {
@@ -718,7 +735,6 @@ const navigateToMark = useCallback(
     );
   }
 
-  // Show review screen
   if (showReview) {
     return (
       <>
@@ -734,7 +750,7 @@ const navigateToMark = useCallback(
     );
   }
 
-  // Mobile input mode (75/25 split)
+  // Mobile input mode
   if (isMobileInputMode && marks.length > 0) {
     const currentMark = marks[currentMarkIndex];
     const currentValue = currentMark?.mark_id ? entries[currentMark.mark_id] || '' : '';
@@ -743,15 +759,13 @@ const navigateToMark = useCallback(
       <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
         <Toaster position="top-center" />
         
-        {/* PDF Viewer Section - 75vh with horizontal flex for sidebar + content */}
         <div style={{ 
-          height: window.innerWidth <= 500 ? '72vh' : '77vh', 
+          height: window.innerWidth <= 500 ? '82vh' : '85vh', 
           display: 'flex',
           flexDirection: 'row',
           overflow: 'hidden'
         }}>
 
-          {/* Sidebar - Push layout (not overlay) */}
           <div style={{
             width: sidebarOpen ? '280px' : '0px',
             minWidth: sidebarOpen ? '280px' : '0px',
@@ -819,7 +833,6 @@ const navigateToMark = useCallback(
             </div>
           </div>
 
-          {/* PDF Viewer - Flex fills remaining space */}
           <div style={{ 
             flex: 1,
             display: 'flex', 
@@ -841,34 +854,43 @@ const navigateToMark = useCallback(
               onSidebarToggle={() => setSidebarOpen(!sidebarOpen)}
             />
 
-           <div style={{ 
-            flex: 1, 
-            overflow: 'auto', 
-            background: '#525252',
-            WebkitOverflowScrolling: 'touch'
-          }} ref={containerRef}>
-            <div className="pdf-surface">
-              {Array.from({ length: numPages }, (_, i) => i + 1).map((pageNum) => (
-                <div key={pageNum} style={{ position: 'relative' }}>
-                  <PageCanvas
-                    pdf={pdf}
-                    pageNumber={pageNum}
-                    zoom={zoom}
-                    onReady={(height) => handlePageReady(pageNum, height)}
-                    flashRect={
-                      flashRect?.pageNumber === pageNum
-                        ? { x: flashRect.x, y: flashRect.y, w: flashRect.w, h: flashRect.h }
-                        : null
-                    }
-                  />
-                </div>
-              ))}
+            <div 
+              style={{ 
+                flex: 1, 
+                overflow: 'auto', 
+                background: '#525252',
+                WebkitOverflowScrolling: 'touch'
+              }} 
+              className="pdf-surface-wrap"
+              ref={containerRef}
+            >
+              <div className="pdf-surface">
+                {Array.from({ length: numPages }, (_, i) => i + 1).map((pageNum) => (
+                  <div 
+                    key={pageNum} 
+                    style={{ position: 'relative' }}
+                    ref={(el) => {
+                      pageElsRef.current[pageNum - 1] = el;
+                    }}
+                  >
+                    <PageCanvas
+                      pdf={pdf}
+                      pageNumber={pageNum}
+                      zoom={zoom}
+                      onReady={(height) => handlePageReady(pageNum, height)}
+                      flashRect={
+                        flashRect?.pageNumber === pageNum
+                          ? { x: flashRect.x, y: flashRect.y, w: flashRect.w, h: flashRect.h }
+                          : null
+                      }
+                    />
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
           </div>
         </div>
 
-        {/* Input Panel - 25% */}
         <InputPanel
           currentMark={currentMark}
           currentIndex={currentMarkIndex}
@@ -884,7 +906,7 @@ const navigateToMark = useCallback(
     );
   }
 
-  // Desktop mode (original viewer)
+  // Desktop mode
   return (
     <div className="viewer-container">
       <Toaster position="top-center" />
@@ -926,7 +948,13 @@ const navigateToMark = useCallback(
         <div className="pdf-surface-wrap" ref={containerRef} style={{ touchAction: 'pan-y pan-x' }}>
           <div className="pdf-surface">
             {Array.from({ length: numPages }, (_, i) => i + 1).map((pageNum) => (
-              <div key={pageNum} style={{ position: 'relative' }}>
+              <div 
+                key={pageNum} 
+                style={{ position: 'relative' }}
+                ref={(el) => {
+                  pageElsRef.current[pageNum - 1] = el;
+                }}
+              >
                 <PageCanvas
                   pdf={pdf}
                   pageNumber={pageNum}

@@ -52,7 +52,8 @@ export default function InputPanel({
 
   return (
     <div style={{
-      height: '25vh',
+      height: 'auto',
+      maxHeight: '20vh',
       background: 'white',
       borderTop: '2px solid #ddd',
       display: 'flex',
@@ -97,12 +98,12 @@ export default function InputPanel({
         </div>
       </div>
 
-      {/* Compact Input Field */}
+  {/* Compact Input Field */}
       <div style={{
-        padding: '2px 10px',
+        padding: '4px 10px',
         display: 'flex',
         alignItems: 'center',
-        flex: 1
+        flexShrink: 0
       }}>
         <input
           type="text"
@@ -136,15 +137,14 @@ export default function InputPanel({
         borderTop: '1px solid #eee',
         display: 'flex',
         gap: '6px',
-        flexShrink: 0,
-        minHeight: 0
+        flexShrink: 0
       }}>
         <button
           onClick={onPrev}
           disabled={!canPrev}
           style={{
             flex: 1,
-            padding: '10px',
+            padding: '4px',
             fontSize: '14px',
             fontWeight: '600',
             border: '2px solid #ddd',
@@ -162,7 +162,7 @@ export default function InputPanel({
           onClick={onNext}
           style={{
             flex: 1,
-            padding: '10px',
+            padding: '4px',
             fontSize: '14px',
             fontWeight: '600',
             border: 'none',
