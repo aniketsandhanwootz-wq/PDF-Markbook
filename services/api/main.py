@@ -600,7 +600,7 @@ async def rate_limiting_middleware(request, call_next):
 
 # ========== End of Rate Limiting ==========
 
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:3001,http://localhost:3002").split(",")
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:3001,http://localhost:3002,https://pdf-markbook-viewer-end.vercel.app/,https://pdf-markbook.vercel.app/").split(",")
 
 app.add_middleware(
     CORSMiddleware,
