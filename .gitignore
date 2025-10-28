@@ -25,7 +25,6 @@ Thumbs.db
 .idea/
 
 # Frontend env
-apps/*/.env.local
 apps/*/.env.development.local
 apps/*/.env.production.local
 
