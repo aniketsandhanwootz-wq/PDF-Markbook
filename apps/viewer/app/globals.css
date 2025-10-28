@@ -210,16 +210,9 @@ body {
 .pdf-surface {
   display: flex;
   flex-direction: column;
-  align-items: center;  /* Center by default for mobile */
+  align-items: flex-start;  /* Always left-align for proper scrolling */
   gap: 16px;
   min-width: 100%;
-}
-
-/* Desktop: use left-align for better scroll behavior when zoomed */
-@media (min-width: 769px) {
-  .pdf-surface {
-    align-items: flex-start;
-  }
 }
 
 .page-wrapper {

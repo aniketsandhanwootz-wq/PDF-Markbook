@@ -475,16 +475,27 @@ const navigateToMark = useCallback(
           h: mark.nh * vp1.height,
         };
 
+        const containerW = container.clientWidth;
+        const containerH = container.clientHeight;
+
         // Calculate zoom with 20% padding around mark
-        const zoomX = (container.clientWidth * 0.8) / rectAt1.w;
-        const zoomY = (container.clientHeight * 0.8) / rectAt1.h;
-        const targetZoom = clampZoom(Math.min(zoomX, zoomY));
+        const zoomX = (containerW * 0.8) / rectAt1.w;
+        const zoomY = (containerH * 0.8) / rectAt1.h;
+        let targetZoom = Math.min(zoomX, zoomY);
+        
+        // MOBILE FIX: Limit zoom on small screens to prevent overflow
+        const isMobile = containerW < 600;
+        if (isMobile) {
+          targetZoom = Math.min(targetZoom, 3.0); // Max 3x zoom on mobile
+        }
+        
+        targetZoom = clampZoom(targetZoom);
 
         // Set zoom first
         setZoom(targetZoom);
 
         // Wait for canvas to render at new zoom
-        await new Promise(resolve => setTimeout(resolve, 200));
+        await new Promise(resolve => setTimeout(resolve, 250));
 
         // Get viewport at target zoom
         const vpZ = page.getViewport({ scale: targetZoom });
@@ -507,7 +518,7 @@ const navigateToMark = useCallback(
         });
         setTimeout(() => setFlashRect(null), 1200);
 
-        // Get actual page position in scrollable container (accounts for centering)
+        // Get actual page position in scrollable container
         const containerRect = container.getBoundingClientRect();
         const pageRect = pageEl.getBoundingClientRect();
         
@@ -520,20 +531,9 @@ const navigateToMark = useCallback(
         const markCenterY = pageOffsetTop + rectAtZ.y + rectAtZ.h / 2;
 
         // Calculate scroll position to center mark in viewport
-        const targetScrollLeft = markCenterX - container.clientWidth / 2;
-        const targetScrollTop = markCenterY - container.clientHeight / 2;
-       console.log('DEBUG INFO:', {
-  containerWidth: container.clientWidth,
-  containerScrollWidth: container.scrollWidth,
-  pageElClientWidth: pageEl?.clientWidth,
-  pageRectWidth: pageRect.width,
-  pageRectLeft: pageRect.left,
-  containerRectLeft: containerRect.left,
-  pageOffsetLeft,
-  markCenterX,
-  targetScrollLeft,
-  rectAtZ,
-});   
+        const targetScrollLeft = markCenterX - containerW / 2;
+        const targetScrollTop = markCenterY - containerH / 2;
+
         // Smooth scroll to center
         container.scrollTo({
           left: Math.max(0, targetScrollLeft),
