@@ -451,134 +451,76 @@ function ViewerContent() {
     return () => container.removeEventListener('scroll', handleScroll);
   }, [pdf, numPages]);
 
-// REPLACE lines 454-574 in page.tsx with this:
+// REPLACE lines 454-574 in viewer's page.tsx
+// SIMPLEST: Exact marker end logic, simple setTimeout
 
-  // Navigate to mark - HEIGHT-BASED CENTERING (avoids layout race conditions)
-const navigateToMark = useCallback(
-  async (index: number) => {
-    if (!pdf || index < 0 || index >= marks.length) return;
+  const navigateToMark = useCallback(
+    async (index: number) => {
+      if (!pdf || index < 0 || index >= marks.length) return;
 
-    const mark = marks[index];
-    setCurrentMarkIndex(index);
+      const mark = marks[index];
+      setCurrentMarkIndex(index);
 
-    const pageNumber = mark.page_index + 1;
-    const container = containerRef.current;
-    if (!container) return;
-    
-    try {
-      const page = await pdf.getPage(pageNumber);
+      const pageNumber = mark.page_index + 1;
+      const container = containerRef.current;
+      if (!container) return;
 
-      // 1) Decide zoom (respect zoom_hint if provided)
-      let targetZoom: number;
-      if (mark.zoom_hint) {
-        targetZoom = clampZoom(mark.zoom_hint);
-      } else {
+      pdf.getPage(pageNumber).then((page) => {
         const vp1 = page.getViewport({ scale: 1 });
-        const rectW = mark.nw * vp1.width;
-        const rectH = mark.nh * vp1.height;
-        const zoomX = (container.clientWidth * 0.8) / rectW;
-        const zoomY = (container.clientHeight * 0.8) / rectH;
-        targetZoom = clampZoom(Math.min(zoomX, zoomY));
-      }
+        const rectAt1 = {
+          w: mark.nw * vp1.width,
+          h: mark.nh * vp1.height,
+        };
 
-      // Check if we're actually changing zoom
-      const isZoomChange = Math.abs(zoom - targetZoom) > 0.01;
+        // Calculate zoom to make mark fill 80% of viewport
+        const zoomX = (container.clientWidth * 0.8) / rectAt1.w;
+        const zoomY = (container.clientHeight * 0.8) / rectAt1.h;
+        const targetZoom = clampZoom(Math.min(zoomX, zoomY));
 
-      // 2) Calculate target page height at new zoom
-      const vpZ = page.getViewport({ scale: targetZoom });
-      const targetPageHeight = vpZ.height;
-      
-      // 3) Apply zoom first, then wait for render
-      if (isZoomChange) {
         setZoom(targetZoom);
-        await sleep(120); // Wait for React state update and initial renders
-      }
 
-      const pageEl = pageElsRef.current[mark.page_index];
-      if (!pageEl) return;
+        setTimeout(() => {
+          const vpZ = page.getViewport({ scale: targetZoom });
+          const rectAtZ = {
+            x: mark.nx * vpZ.width,
+            y: mark.ny * vpZ.height,
+            w: mark.nw * vpZ.width,
+            h: mark.nh * vpZ.height,
+          };
 
-      // Wait for canvas layout only if zoom changed
-      if (isZoomChange) {
-        await waitForCanvasLayout(pageEl, Math.round(vpZ.width), Math.round(vpZ.height));
-        await new Promise((r) => requestAnimationFrame(r));
-      }
+          setFlashRect({
+            pageNumber,
+            x: rectAtZ.x,
+            y: rectAtZ.y,
+            w: rectAtZ.w,
+            h: rectAtZ.h,
+          });
+          setTimeout(() => setFlashRect(null), 1200);
 
-      // 4) Calculate scroll position using accumulated heights (not DOM positions)
-      const GAP = 16; // Gap between pages
-      let accumulatedTop = GAP; // Initial gap
-      
-      // Sum heights of all pages BEFORE target page
-      for (let i = 0; i < mark.page_index; i++) {
-        const pageHeight = pageHeightsRef.current[i];
-        if (pageHeight) {
-          accumulatedTop += pageHeight + GAP;
-        }
-      }
+          // Calculate cumulative page offset
+          let pageTop = 0;
+          for (let i = 0; i < mark.page_index; i++) {
+            pageTop += (pageHeightsRef.current[i] || 0) + 16;
+          }
 
-      // 5) Compute mark position within the target page
-      const markOnPage = {
-        x: mark.nx * vpZ.width,
-        y: mark.ny * vpZ.height,
-        w: mark.nw * vpZ.width,
-        h: mark.nh * vpZ.height,
-      };
-      
-      const markCenterX = markOnPage.x + markOnPage.w / 2;
-      const markCenterY = markOnPage.y + markOnPage.h / 2;
+          // Calculate center of marked area
+          const markCenterX = rectAtZ.x + rectAtZ.w / 2;
+          const markCenterY = rectAtZ.y + rectAtZ.h / 2;
 
-      // 6) Calculate absolute scroll position to center the mark
-      let targetLeft = markCenterX - container.clientWidth / 2;
-      let targetTop = accumulatedTop + markCenterY - container.clientHeight / 2;
+          // Center the mark in viewport
+          const targetScrollLeft = markCenterX - container.clientWidth / 2;
+          const targetScrollTop = pageTop + markCenterY - container.clientHeight / 2;
 
-      // 7) Clamp to valid scroll bounds
-      ({ left: targetLeft, top: targetTop } = clampScroll(container, targetLeft, targetTop));
-      
-      // Scroll instantly to avoid browser anchor fighting
-      container.scrollTo({ 
-        left: Math.round(targetLeft), 
-        top: Math.round(targetTop), 
-        behavior: 'auto' 
+          container.scrollTo({
+            left: Math.max(0, targetScrollLeft),
+            top: Math.max(0, targetScrollTop),
+            behavior: 'smooth',
+          });
+        }, 100);
       });
-
-      // 8) Single retry after short delay to handle any remaining layout shifts
-      await sleep(100);
-      
-      // Recalculate with fresh heights
-      let freshTop = GAP;
-      for (let i = 0; i < mark.page_index; i++) {
-        const pageHeight = pageHeightsRef.current[i];
-        if (pageHeight) {
-          freshTop += pageHeight + GAP;
-        }
-      }
-      
-      let finalLeft = markCenterX - container.clientWidth / 2;
-      let finalTop = freshTop + markCenterY - container.clientHeight / 2;
-      
-      ({ left: finalLeft, top: finalTop } = clampScroll(container, finalLeft, finalTop));
-      
-      container.scrollTo({ 
-        left: Math.round(finalLeft), 
-        top: Math.round(finalTop), 
-        behavior: 'auto' 
-      });
-
-      // 9) Flash the mark
-      setFlashRect({ 
-        pageNumber, 
-        x: markOnPage.x, 
-        y: markOnPage.y, 
-        w: markOnPage.w, 
-        h: markOnPage.h 
-      });
-      setTimeout(() => setFlashRect(null), 1200);
-      
-    } catch (e) {
-      console.error('Navigation error:', e);
-    }
-  },
-  [marks, pdf, zoom]
-);
+    },
+    [marks, pdf]
+  );
   const prevMark = useCallback(() => {
     if (currentMarkIndex > 0) {
       navigateToMark(currentMarkIndex - 1);
