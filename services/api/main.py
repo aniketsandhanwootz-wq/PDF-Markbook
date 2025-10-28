@@ -28,6 +28,7 @@ from typing import Optional
 import time
 import contextvars
 from collections import defaultdict
+from settings import get_settings
 
 # ========== NEW: Request Context for Tracing ==========
 request_id_var = contextvars.ContextVar('request_id', default=None)
@@ -52,11 +53,12 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 # BACKEND CONFIGURATION
 # ============================================================================
+settings = get_settings()
 
-STORAGE_BACKEND = os.getenv("STORAGE_BACKEND", "sqlite").lower()
-GOOGLE_SA_JSON_PATH = os.getenv("GOOGLE_SA_JSON", None)
-SHEETS_SPREADSHEET_ID = os.getenv("SHEETS_SPREADSHEET_ID", None)
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./marks.db")
+STORAGE_BACKEND = settings.storage_backend.lower()
+GOOGLE_SA_JSON_PATH = settings.resolved_google_sa_json()  # Uses base64 if available
+SHEETS_SPREADSHEET_ID = settings.sheets_spreadsheet_id
+DATABASE_URL = settings.db_url
 
 logger.info(f"🔧 Storage Backend: {STORAGE_BACKEND.upper()}")
 
@@ -600,7 +602,7 @@ async def rate_limiting_middleware(request, call_next):
 
 # ========== End of Rate Limiting ==========
 
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:3001,http://localhost:3002,https://pdf-markbook-viewer-end.vercel.app/,https://pdf-markbook.vercel.app/").split(",")
+ALLOWED_ORIGINS = settings.get_origins_list()
 
 app.add_middleware(
     CORSMiddleware,
