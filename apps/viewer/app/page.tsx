@@ -451,10 +451,7 @@ function ViewerContent() {
     return () => container.removeEventListener('scroll', handleScroll);
   }, [pdf, numPages]);
 
-// REPLACE lines 454-574 in viewer's page.tsx
-// SIMPLEST: Exact marker end logic, simple setTimeout
-
-  const navigateToMark = useCallback(
+const navigateToMark = useCallback(
     async (index: number) => {
       if (!pdf || index < 0 || index >= marks.length) return;
 
@@ -463,61 +460,90 @@ function ViewerContent() {
 
       const pageNumber = mark.page_index + 1;
       const container = containerRef.current;
-      if (!container) return;
+      const pageEl = pageElsRef.current[mark.page_index];
+      
+      if (!container || !pageEl) return;
 
-      pdf.getPage(pageNumber).then((page) => {
+      try {
+        const page = await pdf.getPage(pageNumber);
         const vp1 = page.getViewport({ scale: 1 });
+        
         const rectAt1 = {
+          x: mark.nx * vp1.width,
+          y: mark.ny * vp1.height,
           w: mark.nw * vp1.width,
           h: mark.nh * vp1.height,
         };
 
-        // Calculate zoom to make mark fill 80% of viewport
+        // Calculate zoom with 20% padding around mark
         const zoomX = (container.clientWidth * 0.8) / rectAt1.w;
         const zoomY = (container.clientHeight * 0.8) / rectAt1.h;
         const targetZoom = clampZoom(Math.min(zoomX, zoomY));
 
+        // Set zoom first
         setZoom(targetZoom);
 
-        setTimeout(() => {
-          const vpZ = page.getViewport({ scale: targetZoom });
-          const rectAtZ = {
-            x: mark.nx * vpZ.width,
-            y: mark.ny * vpZ.height,
-            w: mark.nw * vpZ.width,
-            h: mark.nh * vpZ.height,
-          };
+        // Wait for canvas to render at new zoom
+        await new Promise(resolve => setTimeout(resolve, 200));
 
-          setFlashRect({
-            pageNumber,
-            x: rectAtZ.x,
-            y: rectAtZ.y,
-            w: rectAtZ.w,
-            h: rectAtZ.h,
-          });
-          setTimeout(() => setFlashRect(null), 1200);
+        // Get viewport at target zoom
+        const vpZ = page.getViewport({ scale: targetZoom });
+        
+        // Calculate mark rect at target zoom
+        const rectAtZ = {
+          x: mark.nx * vpZ.width,
+          y: mark.ny * vpZ.height,
+          w: mark.nw * vpZ.width,
+          h: mark.nh * vpZ.height,
+        };
 
-          // Calculate cumulative page offset
-          let pageTop = 0;
-          for (let i = 0; i < mark.page_index; i++) {
-            pageTop += (pageHeightsRef.current[i] || 0) + 16;
-          }
+        // Flash the mark
+        setFlashRect({
+          pageNumber,
+          x: rectAtZ.x,
+          y: rectAtZ.y,
+          w: rectAtZ.w,
+          h: rectAtZ.h,
+        });
+        setTimeout(() => setFlashRect(null), 1200);
 
-          // Calculate center of marked area
-          const markCenterX = rectAtZ.x + rectAtZ.w / 2;
-          const markCenterY = rectAtZ.y + rectAtZ.h / 2;
+        // Get actual page position in scrollable container (accounts for centering)
+        const containerRect = container.getBoundingClientRect();
+        const pageRect = pageEl.getBoundingClientRect();
+        
+        // Calculate page offset relative to container's scroll origin
+        const pageOffsetLeft = container.scrollLeft + (pageRect.left - containerRect.left);
+        const pageOffsetTop = container.scrollTop + (pageRect.top - containerRect.top);
 
-          // Center the mark in viewport
-          const targetScrollLeft = markCenterX - container.clientWidth / 2;
-          const targetScrollTop = pageTop + markCenterY - container.clientHeight / 2;
+        // Calculate mark center in absolute scroll coordinates
+        const markCenterX = pageOffsetLeft + rectAtZ.x + rectAtZ.w / 2;
+        const markCenterY = pageOffsetTop + rectAtZ.y + rectAtZ.h / 2;
 
-          container.scrollTo({
-            left: Math.max(0, targetScrollLeft),
-            top: Math.max(0, targetScrollTop),
-            behavior: 'smooth',
-          });
-        }, 100);
-      });
+        // Calculate scroll position to center mark in viewport
+        const targetScrollLeft = markCenterX - container.clientWidth / 2;
+        const targetScrollTop = markCenterY - container.clientHeight / 2;
+       console.log('DEBUG INFO:', {
+  containerWidth: container.clientWidth,
+  containerScrollWidth: container.scrollWidth,
+  pageElClientWidth: pageEl?.clientWidth,
+  pageRectWidth: pageRect.width,
+  pageRectLeft: pageRect.left,
+  containerRectLeft: containerRect.left,
+  pageOffsetLeft,
+  markCenterX,
+  targetScrollLeft,
+  rectAtZ,
+});   
+        // Smooth scroll to center
+        container.scrollTo({
+          left: Math.max(0, targetScrollLeft),
+          top: Math.max(0, targetScrollTop),
+          behavior: 'smooth',
+        });
+
+      } catch (error) {
+        console.error('Error navigating to mark:', error);
+      }
     },
     [marks, pdf]
   );

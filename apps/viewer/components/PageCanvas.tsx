@@ -133,13 +133,19 @@ function PageCanvas({
         renderTaskRef.current = null;
 
         if (!isCancelled) {
-          // Cache the rendered result
+          // Cache the rendered result (skip if too large for mobile)
           try {
-            const bitmap = await createImageBitmap(targetCanvas);
-            cleanCache();
-            renderCache.set(cacheKey, bitmap);
+            const bitmapSize = targetCanvas.width * targetCanvas.height * 4; // 4 bytes per pixel
+            const maxSize = 16777216; // 16MB limit for mobile devices
+            
+            if (bitmapSize < maxSize) {
+              const bitmap = await createImageBitmap(targetCanvas);
+              cleanCache();
+              renderCache.set(cacheKey, bitmap);
+            }
           } catch (e) {
-            console.warn('Failed to cache render:', e);
+            // Skip caching on error (common on mobile with large canvases)
+            console.debug('Skipping cache:', e);
           }
 
           // Swap canvases
