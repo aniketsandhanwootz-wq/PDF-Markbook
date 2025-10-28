@@ -451,7 +451,9 @@ function ViewerContent() {
     return () => container.removeEventListener('scroll', handleScroll);
   }, [pdf, numPages]);
 
-  // Navigate to mark - CANVAS-BASED CENTERING with scroll anchoring fix
+// REPLACE lines 454-574 in page.tsx with this:
+
+  // Navigate to mark - HEIGHT-BASED CENTERING (avoids layout race conditions)
 const navigateToMark = useCallback(
   async (index: number) => {
     if (!pdf || index < 0 || index >= marks.length) return;
@@ -482,12 +484,16 @@ const navigateToMark = useCallback(
       // Check if we're actually changing zoom
       const isZoomChange = Math.abs(zoom - targetZoom) > 0.01;
 
-      // 2) Apply zoom and wait for layout if changing
+      // 2) Calculate target page height at new zoom
+      const vpZ = page.getViewport({ scale: targetZoom });
+      const targetPageHeight = vpZ.height;
+      
+      // 3) Apply zoom first, then wait for render
       if (isZoomChange) {
         setZoom(targetZoom);
+        await sleep(120); // Wait for React state update and initial renders
       }
-      
-      const vpZ = page.getViewport({ scale: targetZoom });
+
       const pageEl = pageElsRef.current[mark.page_index];
       if (!pageEl) return;
 
@@ -497,66 +503,67 @@ const navigateToMark = useCallback(
         await new Promise((r) => requestAnimationFrame(r));
       }
 
-      // 3) Compute mark rect at target zoom (page-local CSS coords)
+      // 4) Calculate scroll position using accumulated heights (not DOM positions)
+      const GAP = 16; // Gap between pages
+      let accumulatedTop = GAP; // Initial gap
+      
+      // Sum heights of all pages BEFORE target page
+      for (let i = 0; i < mark.page_index; i++) {
+        const pageHeight = pageHeightsRef.current[i];
+        if (pageHeight) {
+          accumulatedTop += pageHeight + GAP;
+        }
+      }
+
+      // 5) Compute mark position within the target page
       const markOnPage = {
         x: mark.nx * vpZ.width,
         y: mark.ny * vpZ.height,
         w: mark.nw * vpZ.width,
         h: mark.nh * vpZ.height,
       };
-      const markCenter = {
-        x: markOnPage.x + markOnPage.w / 2,
-        y: markOnPage.y + markOnPage.h / 2,
-      };
-
-      // 4) Get CANVAS DOMRect (not wrapper - canvas is the actual render target)
-      const canvas = pageEl.querySelector('canvas[data-visible="true"]') as HTMLCanvasElement;
-      if (!canvas) return;
       
-      const containerRect = container.getBoundingClientRect();
-      const canvasRect = canvas.getBoundingClientRect();
+      const markCenterX = markOnPage.x + markOnPage.w / 2;
+      const markCenterY = markOnPage.y + markOnPage.h / 2;
 
-      // Convert canvas position to scroll-space coordinates
-      const pageLeftInScroll = container.scrollLeft + (canvasRect.left - containerRect.left);
-      const pageTopInScroll = container.scrollTop + (canvasRect.top - containerRect.top);
+      // 6) Calculate absolute scroll position to center the mark
+      let targetLeft = markCenterX - container.clientWidth / 2;
+      let targetTop = accumulatedTop + markCenterY - container.clientHeight / 2;
 
-      // Calculate target scroll to center the mark
-      let targetLeft = pageLeftInScroll + markCenter.x - container.clientWidth / 2;
-      let targetTop = pageTopInScroll + markCenter.y - container.clientHeight / 2;
-
-      // 5) Clamp to valid scroll bounds
+      // 7) Clamp to valid scroll bounds
       ({ left: targetLeft, top: targetTop } = clampScroll(container, targetLeft, targetTop));
       
-      // Use 'auto' (instant) to prevent browser re-anchoring during layout changes
+      // Scroll instantly to avoid browser anchor fighting
       container.scrollTo({ 
         left: Math.round(targetLeft), 
         top: Math.round(targetTop), 
         behavior: 'auto' 
       });
 
-      // 6) Retry up to 2 times if layout shifts (handles late reflows)
-      for (let i = 0; i < 2; i++) {
-        await sleep(80);
-        
-        const freshCanvasRect = canvas.getBoundingClientRect();
-        const freshContainerRect = container.getBoundingClientRect();
-        
-        const pl = container.scrollLeft + (freshCanvasRect.left - freshContainerRect.left);
-        const pt = container.scrollTop + (freshCanvasRect.top - freshContainerRect.top);
-        
-        let L = pl + markCenter.x - container.clientWidth / 2;
-        let T = pt + markCenter.y - container.clientHeight / 2;
-        
-        ({ left: L, top: T } = clampScroll(container, L, T));
-        
-        container.scrollTo({ 
-          left: Math.round(L), 
-          top: Math.round(T), 
-          behavior: 'auto' 
-        });
+      // 8) Single retry after short delay to handle any remaining layout shifts
+      await sleep(100);
+      
+      // Recalculate with fresh heights
+      let freshTop = GAP;
+      for (let i = 0; i < mark.page_index; i++) {
+        const pageHeight = pageHeightsRef.current[i];
+        if (pageHeight) {
+          freshTop += pageHeight + GAP;
+        }
       }
+      
+      let finalLeft = markCenterX - container.clientWidth / 2;
+      let finalTop = freshTop + markCenterY - container.clientHeight / 2;
+      
+      ({ left: finalLeft, top: finalTop } = clampScroll(container, finalLeft, finalTop));
+      
+      container.scrollTo({ 
+        left: Math.round(finalLeft), 
+        top: Math.round(finalTop), 
+        behavior: 'auto' 
+      });
 
-      // 7) Flash the mark
+      // 9) Flash the mark
       setFlashRect({ 
         pageNumber, 
         x: markOnPage.x, 
