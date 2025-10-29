@@ -505,11 +505,17 @@ const navigateToMark = useCallback(
         // Set zoom first
         setZoom(targetZoom);
 
-        // Wait for canvas to render at new zoom
-        await new Promise(resolve => setTimeout(resolve, 250));
+        // Pre-compute expected page size at target zoom
+        const vpExpected = page.getViewport({ scale: targetZoom });
+        const expectedW = Math.round(vpExpected.width);
+        const expectedH = Math.round(vpExpected.height);
 
-        // Get viewport at target zoom
-        const vpZ = page.getViewport({ scale: targetZoom });
+        // Wait until the <canvas> actually reaches that CSS size
+        await waitForCanvasLayout(pageEl, expectedW, expectedH);
+
+        // Use the same viewport for rect math
+        const vpZ = vpExpected;
+
         
         // Calculate mark rect at target zoom
         const rectAtZ = {
@@ -545,12 +551,11 @@ const navigateToMark = useCallback(
         const targetScrollLeft = markCenterX - containerW / 2;
         const targetScrollTop = markCenterY - containerH / 2;
 
-        // Smooth scroll to center
-        container.scrollTo({
-          left: Math.max(0, targetScrollLeft),
-          top: Math.max(0, targetScrollTop),
-          behavior: 'smooth',
-        });
+const { left: clampedL, top: clampedT } =
+  clampScroll(container, targetScrollLeft, targetScrollTop);
+
+container.scrollTo({ left: clampedL, top: clampedT, behavior: 'smooth' });
+
 
       } catch (error) {
         console.error('Error navigating to mark:', error);
@@ -979,6 +984,20 @@ const navigateToMark = useCallback(
         />
 
         <div className="pdf-surface-wrap" ref={containerRef} style={{ touchAction: 'pan-y pan-x' }}>
+          <div className="input-panel-section">
+  <InputPanel
+    currentMark={marks[currentMarkIndex] ?? null}
+    currentIndex={currentMarkIndex}
+    totalMarks={marks.length}
+    value={(marks[currentMarkIndex]?.mark_id && entries[marks[currentMarkIndex]!.mark_id!]) || ''}
+    onChange={handleEntryChange}
+    onNext={nextMark}
+    onPrev={prevMark}
+    canPrev={currentMarkIndex > 0}
+    canNext={currentMarkIndex < marks.length - 1}
+  />
+</div>
+
           <div className="pdf-surface">
             {Array.from({ length: numPages }, (_, i) => i + 1).map((pageNum) => (
               <div 

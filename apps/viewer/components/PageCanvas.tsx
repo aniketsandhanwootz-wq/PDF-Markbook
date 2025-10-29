@@ -72,8 +72,11 @@ function PageCanvas({
         const page = await pdf.getPage(pageNumber);
         if (isCancelled) return;
 
-        const viewport = page.getViewport({ scale: zoom });
-        const dpr = window.devicePixelRatio || 1;
+const viewport = page.getViewport({ scale: zoom });
+const isTouch = typeof window !== 'undefined' && (('ontouchstart' in window) || navigator.maxTouchPoints > 0);
+// Lighter on phones, still crisp on desktop
+const dpr = isTouch ? 1.5 : Math.min(window.devicePixelRatio || 1, 2);
+
 
         // Check if we can use cached render
         const cacheKey = getCacheKey(pageNumber, zoom);
@@ -132,21 +135,20 @@ function PageCanvas({
         await renderTaskRef.current.promise;
         renderTaskRef.current = null;
 
-        if (!isCancelled) {
-          // Cache the rendered result (skip if too large for mobile)
-          try {
-            const bitmapSize = targetCanvas.width * targetCanvas.height * 4; // 4 bytes per pixel
-            const maxSize = 16777216; // 16MB limit for mobile devices
-            
-            if (bitmapSize < maxSize) {
-              const bitmap = await createImageBitmap(targetCanvas);
-              cleanCache();
-              renderCache.set(cacheKey, bitmap);
-            }
-          } catch (e) {
-            // Skip caching on error (common on mobile with large canvases)
-            console.debug('Skipping cache:', e);
-          }
+        // Cache only on non-touch devices to avoid mobile jank
+if (!isTouch) {
+  try {
+    const bitmapSize = targetCanvas.width * targetCanvas.height * 4; // 4 bytes/pixel
+    const maxSize = 16777216; // 16MB
+    if (bitmapSize < maxSize) {
+      const bitmap = await createImageBitmap(targetCanvas);
+      cleanCache();
+      renderCache.set(cacheKey, bitmap);
+    }
+  } catch {
+    // ignore caching errors
+  }
+
 
           // Swap canvases
           currentCanvasRef.current = currentCanvasRef.current === 'front' ? 'back' : 'front';
