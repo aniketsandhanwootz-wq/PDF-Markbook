@@ -373,3 +373,11 @@ body {
   padding: 0;
   border: none;
 }
+.pdf-surface {
+  will-change: transform;
+}
+
+.page-canvas {
+  image-rendering: auto;
+  backface-visibility: hidden;
+}
