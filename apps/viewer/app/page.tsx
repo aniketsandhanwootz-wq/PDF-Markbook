@@ -265,7 +265,7 @@ function ViewerContent() {
   const [zoom, setZoom] = useState(1.0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(false); // Start closed on mobile
   const [flashRect, setFlashRect] = useState<FlashRect>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [showSearch, setShowSearch] = useState(false);
@@ -407,10 +407,9 @@ function ViewerContent() {
   // Auto-navigate to first mark when marks load
 useEffect(() => {
   if (marks.length > 0 && pdf && currentMarkIndex === 0) {
-    // Small delay to ensure PDF is rendered
     const timer = setTimeout(() => {
       navigateToMark(0);
-    }, 500);
+    }, 800);
     return () => clearTimeout(timer);
   }
 }, [marks, pdf]);
