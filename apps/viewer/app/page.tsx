@@ -285,8 +285,6 @@ function ViewerContent() {
   const isDemo = searchParams?.get('demo') === '1';
   const pdfUrlParam = searchParams?.get('pdf_url') || '';
   const markSetIdParam = searchParams?.get('mark_set_id') || '';
-  const mobileParam = searchParams?.get('mobile') === '1';
-
   useEffect(() => {
     if (isDemo || pdfUrlParam) {
       setShowSetup(false);
@@ -372,7 +370,6 @@ function ViewerContent() {
 
     if (isDemo) {
       setMarks(demoMarks);
-      setIsMobileInputMode(mobileParam);
       return;
     }
 
@@ -399,21 +396,21 @@ function ViewerContent() {
         });
         setEntries(initialEntries);
         
-        setIsMobileInputMode(mobileParam || window.innerWidth < 768);
+        setIsMobileInputMode(window.innerWidth < 768);
       })
       .catch((err) => {
         console.error('Marks fetch error:', err);
         setMarks([]);
         setIsMobileInputMode(false);
       });
-  }, [markSetId, isDemo, showSetup, apiBase, mobileParam]);
+  }, [markSetId, isDemo, showSetup, apiBase]);
 
   useEffect(() => {
     const handleResize = () => {
       if (marks.length > 0) {
         const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
         const isNarrowScreen = window.innerWidth <= 900;
-        const shouldBeMobile = mobileParam || isNarrowScreen || isTouchDevice;
+        const shouldBeMobile = isNarrowScreen || isTouchDevice;
         
         setIsMobileInputMode(shouldBeMobile);
       }
@@ -423,7 +420,7 @@ function ViewerContent() {
     handleResize();
 
     return () => window.removeEventListener('resize', handleResize);
-  }, [marks.length, mobileParam]);
+  }, [marks.length]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -629,19 +626,22 @@ const navigateToMark = useCallback(
   }, [markSetId, entries, apiBase]);
 
   const swipeHandlers = useSwipeable({
-    onSwipedLeft: () => {
-      if (!showReview && isMobileInputMode) {
-        nextMark();
-      }
-    },
-    onSwipedRight: () => {
-      if (!showReview && isMobileInputMode) {
-        prevMark();
-      }
-    },
-    trackMouse: false,
-    trackTouch: true,
-  });
+  onSwipedLeft: () => {
+    if (!showReview && marks.length > 0) {
+      nextMark();
+    }
+  },
+  onSwipedRight: () => {
+    if (!showReview && marks.length > 0) {
+      prevMark();
+    }
+  },
+  trackMouse: false,
+  trackTouch: true,
+  delta: 100, // Require 100px swipe (less sensitive)
+  preventScrollOnSwipe: false, // Allow vertical scroll
+  swipeDuration: 500, // Must swipe within 500ms
+});
 
   const zoomIn = useCallback(() => setZoom((z) => clampZoom(z * 1.2)), []);
   const zoomOut = useCallback(() => setZoom((z) => clampZoom(z / 1.2)), []);
@@ -828,17 +828,21 @@ const navigateToMark = useCallback(
             </div>
 
             <div style={{ flex: 1, overflow: 'auto' }}>
-              <MarkList
-                marks={marks}
-                currentIndex={currentMarkIndex}
-                onSelect={(index) => {
-                  navigateToMark(index);
-                  if (window.innerWidth < 768) {
-                    setSidebarOpen(false);
-                  }
-                }}
-              />
-            </div>
+  <MarkList
+    marks={marks}
+    currentIndex={currentMarkIndex}
+    onSelect={(index) => {
+      setCurrentMarkIndex(index); // Update immediately
+      navigateToMark(index);
+      // Small delay before closing sidebar on mobile
+      setTimeout(() => {
+        if (window.innerWidth < 768) {
+          setSidebarOpen(false);
+        }
+      }, 100);
+    }}
+  />
+</div>
           </div>
 
           <div style={{ 

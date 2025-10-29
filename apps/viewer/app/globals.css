@@ -1,3 +1,18 @@
+/* Prevent page zoom on mobile, allow PDF zoom only */
+html {
+  touch-action: pan-x pan-y;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  touch-action: pan-x pan-y;
+  overscroll-behavior: none;
+}
+
+/* Allow pinch zoom only inside PDF container */
+.pdf-surface-wrap {
+  touch-action: pan-x pan-y pinch-zoom;
+}
 * {
   box-sizing: border-box;
   margin: 0;
@@ -300,15 +315,23 @@ body {
 /* Mobile optimizations */
 @media (max-width: 768px) {
   .viewer-mobile-layout {
-    height: 100dvh; /* Dynamic viewport height for mobile */
+    height: 100vh;
+    height: 100dvh; /* Dynamic viewport height */
+    display: flex;
+    flex-direction: column;
   }
 
   .pdf-viewer-section {
-    height: 75dvh;
+    flex: 1;
+    min-height: 0; /* Important for flex */
+    overflow: auto;
   }
 
   .input-panel-section {
-    height: 25dvh;
+    height: auto;
+    min-height: 150px;
+    max-height: 30vh;
+    flex-shrink: 0;
   }
 
   /* Hide zoom toolbar on mobile when in input mode */
