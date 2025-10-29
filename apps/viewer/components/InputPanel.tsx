@@ -52,14 +52,15 @@ export default function InputPanel({
 
   return (
     <div style={{
-      height: 'auto',
-      maxHeight: '20vh',
-      background: 'white',
-      borderTop: '2px solid #ddd',
-      display: 'flex',
-      flexDirection: 'column',
-      minHeight: 0
-    }}>
+  height: 'auto',
+  minHeight: '120px',
+  maxHeight: '25vh',
+  background: 'white',
+  borderTop: '2px solid #ddd',
+  display: 'flex',
+  flexDirection: 'column',
+  flexShrink: 0
+}}>
       {/* Compressed Header */}
       <div style={{
         padding: '6px 10px',

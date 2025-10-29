@@ -396,7 +396,9 @@ function ViewerContent() {
         });
         setEntries(initialEntries);
         
-        setIsMobileInputMode(window.innerWidth < 768);
+        // Force mobile mode if marks exist AND screen is narrow
+const isMobile = window.innerWidth < 900 || ('ontouchstart' in window && window.innerWidth < 1024);
+setIsMobileInputMode(isMobile);
       })
       .catch((err) => {
         console.error('Marks fetch error:', err);
@@ -412,7 +414,11 @@ useEffect(() => {
     }, 800);
     return () => clearTimeout(timer);
   }
-}, [marks, pdf]);
+}, [marks, pdf, currentMarkIndex]);
+// Set initial sidebar state based on screen size
+useEffect(() => {
+  setSidebarOpen(window.innerWidth > 768);
+}, []);
   useEffect(() => {
     const handleResize = () => {
       if (marks.length > 0) {
@@ -772,15 +778,21 @@ const navigateToMark = useCallback(
     const currentValue = currentMark?.mark_id ? entries[currentMark.mark_id] || '' : '';
 
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
+      <div style={{ 
+  display: 'flex', 
+  flexDirection: 'column', 
+  height: '100dvh',
+  overflow: 'hidden' 
+}}>
         <Toaster position="top-center" />
         
         <div style={{ 
-          height: window.innerWidth <= 500 ? '82vh' : '85vh', 
-          display: 'flex',
-          flexDirection: 'row',
-          overflow: 'hidden'
-        }}>
+  flex: 1,
+  minHeight: 0,
+  display: 'flex',
+  flexDirection: 'row',
+  overflow: 'hidden'
+}}>
 
           <div style={{
             width: sidebarOpen ? '280px' : '0px',
@@ -875,15 +887,16 @@ const navigateToMark = useCallback(
             />
 
             <div 
-              style={{ 
-                flex: 1, 
-                overflow: 'auto', 
-                background: '#525252',
-                WebkitOverflowScrolling: 'touch'
-              }} 
-              className="pdf-surface-wrap"
-              ref={containerRef}
-            >
+  style={{ 
+    flex: 1, 
+    overflow: 'auto', 
+    background: '#525252',
+    WebkitOverflowScrolling: 'touch',
+    touchAction: 'pan-x pan-y pinch-zoom'
+  }} 
+  className="pdf-surface-wrap"
+  ref={containerRef}
+>
               <div className="pdf-surface">
                 {Array.from({ length: numPages }, (_, i) => i + 1).map((pageNum) => (
                   <div 
