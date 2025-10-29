@@ -132,6 +132,7 @@ if (estPixels > MAX_PIXELS) {
         // Fresh render needed
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
+
         const renderContext = {
           canvasContext: ctx,
           viewport: viewport,
@@ -144,7 +145,6 @@ if (estPixels > MAX_PIXELS) {
         renderTaskRef.current = null;
 
         // Cache only on non-touch devices to avoid mobile jank
-// Cache only on non-touch devices to avoid mobile jank
 if (!isTouch) {
   try {
     const bitmapSize = targetCanvas.width * targetCanvas.height * 4; // bytes
@@ -156,7 +156,8 @@ if (!isTouch) {
     }
   } catch {
     // ignore caching errors
-  }
+  
+} // <-- close the guard properly
 
 
 

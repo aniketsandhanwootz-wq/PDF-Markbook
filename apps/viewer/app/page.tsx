@@ -945,110 +945,111 @@ container.scrollTo({ left: clampedL, top: clampedT, behavior: 'smooth' });
   }
 
   // Desktop mode
-  return (
-    <div className="viewer-container">
-      <Toaster position="top-center" />
-      
-      {marks.length > 0 && (
-        <div className={`sidebar ${sidebarOpen ? 'open' : 'closed'}`}>
-          <div className="sidebar-header">
-            <button className="sidebar-toggle" onClick={() => setSidebarOpen(!sidebarOpen)}>
-              {sidebarOpen ? '◀' : '▶'}
-            </button>
-            {sidebarOpen && <h3>Marks</h3>}
-          </div>
-          {sidebarOpen && (
-            <MarkList
-              marks={marks}
-              currentIndex={currentMarkIndex}
-              onSelect={navigateToMark}
-            />
-          )}
-        </div>
-      )}
+return (
+  <div className="viewer-container">
+    <Toaster position="top-center" />
 
-      <div className="main-content">
-        <ZoomToolbar
-          zoom={zoom}
-          onZoomIn={zoomIn}
-          onZoomOut={zoomOut}
-          onReset={resetZoom}
-          onFit={fitToWidthZoom}
-          onPrev={marks.length > 0 ? prevMark : undefined}
-          onNext={marks.length > 0 ? nextMark : undefined}
+    {marks.length > 0 && (
+      <div className={`sidebar ${sidebarOpen ? 'open' : 'closed'}`}>
+        <div className="sidebar-header">
+          <button className="sidebar-toggle" onClick={() => setSidebarOpen(!sidebarOpen)}>
+            {sidebarOpen ? '◀' : '▶'}
+          </button>
+          {sidebarOpen && <h3>Marks</h3>}
+        </div>
+        {sidebarOpen && (
+          <MarkList
+            marks={marks}
+            currentIndex={currentMarkIndex}
+            onSelect={navigateToMark}
+          />
+        )}
+      </div>
+    )}
+
+    <div className="main-content">
+      <ZoomToolbar
+        zoom={zoom}
+        onZoomIn={zoomIn}
+        onZoomOut={zoomOut}
+        onReset={resetZoom}
+        onFit={fitToWidthZoom}
+        onPrev={marks.length > 0 ? prevMark : undefined}
+        onNext={marks.length > 0 ? nextMark : undefined}
+        canPrev={currentMarkIndex > 0}
+        canNext={currentMarkIndex < marks.length - 1}
+        currentPage={currentPage}
+        totalPages={numPages}
+        onPageJump={jumpToPage}
+      />
+
+      <div className="pdf-surface-wrap" ref={containerRef} style={{ touchAction: 'pan-y pan-x' }}>
+        <div className="pdf-surface">
+          {Array.from({ length: numPages }, (_, i) => i + 1).map((pageNum) => (
+            <div
+              key={pageNum}
+              style={{ position: 'relative' }}
+              ref={(el) => { pageElsRef.current[pageNum - 1] = el; }}
+            >
+              <PageCanvas
+                pdf={pdf}
+                pageNumber={pageNum}
+                zoom={zoom}
+                onReady={(height) => handlePageReady(pageNum, height)}
+                flashRect={
+                  flashRect?.pageNumber === pageNum
+                    ? { x: flashRect.x, y: flashRect.y, w: flashRect.w, h: flashRect.h }
+                    : null
+                }
+              />
+
+              {highlightPageNumber === pageNum && searchHighlights.map((h, idx) => (
+                <div
+                  key={`highlight-${idx}`}
+                  style={{
+                    position: 'absolute',
+                    left: h.x * zoom,
+                    top: h.y * zoom,
+                    width: h.width * zoom,
+                    height: h.height * zoom,
+                    background: 'rgba(255, 235, 59, 0.4)',
+                    border: '1px solid rgba(255, 193, 7, 0.8)',
+                    pointerEvents: 'none',
+                    zIndex: 100,
+                  }}
+                />
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Keep Input Panel OUTSIDE the scroll area */}
+      <div className="input-panel-section">
+        <InputPanel
+          currentMark={marks[currentMarkIndex] ?? null}
+          currentIndex={currentMarkIndex}
+          totalMarks={marks.length}
+          value={(marks[currentMarkIndex]?.mark_id && entries[marks[currentMarkIndex]!.mark_id!]) || ''}
+          onChange={handleEntryChange}
+          onNext={nextMark}
+          onPrev={prevMark}
           canPrev={currentMarkIndex > 0}
           canNext={currentMarkIndex < marks.length - 1}
-          currentPage={currentPage}
-          totalPages={numPages}
-          onPageJump={jumpToPage}
-        />
-
-        <div className="pdf-surface-wrap" ref={containerRef} style={{ touchAction: 'pan-y pan-x' }}>
-          <div className="input-panel-section">
-  <InputPanel
-    currentMark={marks[currentMarkIndex] ?? null}
-    currentIndex={currentMarkIndex}
-    totalMarks={marks.length}
-    value={(marks[currentMarkIndex]?.mark_id && entries[marks[currentMarkIndex]!.mark_id!]) || ''}
-    onChange={handleEntryChange}
-    onNext={nextMark}
-    onPrev={prevMark}
-    canPrev={currentMarkIndex > 0}
-    canNext={currentMarkIndex < marks.length - 1}
-  />
-</div>
-
-          <div className="pdf-surface">
-            {Array.from({ length: numPages }, (_, i) => i + 1).map((pageNum) => (
-              <div 
-                key={pageNum} 
-                style={{ position: 'relative' }}
-                ref={(el) => {
-                  pageElsRef.current[pageNum - 1] = el;
-                }}
-              >
-                <PageCanvas
-                  pdf={pdf}
-                  pageNumber={pageNum}
-                  zoom={zoom}
-                  onReady={(height) => handlePageReady(pageNum, height)}
-                  flashRect={
-                    flashRect?.pageNumber === pageNum
-                      ? { x: flashRect.x, y: flashRect.y, w: flashRect.w, h: flashRect.h }
-                      : null
-                  }
-                />
-                
-                {highlightPageNumber === pageNum && searchHighlights.map((highlight, idx) => (
-                  <div
-                    key={`highlight-${idx}`}
-                    style={{
-                      position: 'absolute',
-                      left: highlight.x * zoom,
-                      top: highlight.y * zoom,
-                      width: highlight.width * zoom,
-                      height: highlight.height * zoom,
-                      background: 'rgba(255, 235, 59, 0.4)',
-                      border: '1px solid rgba(255, 193, 7, 0.8)',
-                      pointerEvents: 'none',
-                      zIndex: 100,
-                    }}
-                  />
-                ))}
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <PDFSearch
-          pdf={pdf}
-          isOpen={showSearch}
-          onClose={() => setShowSearch(false)}
-          onResultFound={handleSearchResult}
         />
       </div>
+
+      {/* PDFSearch should stay inside main-content, after the viewer area */}
+      <PDFSearch
+        pdf={pdf}
+        isOpen={showSearch}
+        onClose={() => setShowSearch(false)}
+        onResultFound={handleSearchResult}
+      />
     </div>
-  );
+  </div>
+);
+
 }
 
 export default function ViewerPage() {
