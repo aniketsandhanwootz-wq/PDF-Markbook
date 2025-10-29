@@ -77,6 +77,14 @@ const isTouch = typeof window !== 'undefined' && (('ontouchstart' in window) || 
 // Lighter on phones, still crisp on desktop
 const dpr = isTouch ? 1.5 : Math.min(window.devicePixelRatio || 1, 2);
 
+// Guard: never exceed ~8MP canvas to avoid mobile GPU stalls
+const MAX_PIXELS = 8_000_000; // ~8MP
+let effDpr = dpr;
+const estPixels = viewport.width * viewport.height * (dpr * dpr);
+if (estPixels > MAX_PIXELS) {
+  const shrink = Math.sqrt(MAX_PIXELS / estPixels);
+  effDpr = Math.max(1, dpr * shrink);
+}
 
         // Check if we can use cached render
         const cacheKey = getCacheKey(pageNumber, zoom);
@@ -89,14 +97,14 @@ const dpr = isTouch ? 1.5 : Math.min(window.devicePixelRatio || 1, 2);
         });
         if (!ctx) return;
 
-        targetCanvas.width = viewport.width * dpr;
-        targetCanvas.height = viewport.height * dpr;
+        targetCanvas.width = Math.round(viewport.width * effDpr);
+        targetCanvas.height = Math.round(viewport.height * effDpr);
         targetCanvas.style.width = `${viewport.width}px`;
         targetCanvas.style.height = `${viewport.height}px`;
 
         if (cached) {
           // Use cached bitmap
-          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+          ctx.setTransform(effDpr, 0, 0, effDpr, 0, 0);
           ctx.drawImage(cached, 0, 0, viewport.width, viewport.height);
           
           if (!isCancelled) {
@@ -136,10 +144,11 @@ const dpr = isTouch ? 1.5 : Math.min(window.devicePixelRatio || 1, 2);
         renderTaskRef.current = null;
 
         // Cache only on non-touch devices to avoid mobile jank
+// Cache only on non-touch devices to avoid mobile jank
 if (!isTouch) {
   try {
-    const bitmapSize = targetCanvas.width * targetCanvas.height * 4; // 4 bytes/pixel
-    const maxSize = 16777216; // 16MB
+    const bitmapSize = targetCanvas.width * targetCanvas.height * 4; // bytes
+    const maxSize = 16_777_216; // 16MB
     if (bitmapSize < maxSize) {
       const bitmap = await createImageBitmap(targetCanvas);
       cleanCache();
@@ -148,6 +157,7 @@ if (!isTouch) {
   } catch {
     // ignore caching errors
   }
+
 
 
           // Swap canvases
@@ -209,8 +219,19 @@ if (!isTouch) {
     overlay.style.width = visibleCanvas.style.width;
     overlay.style.height = visibleCanvas.style.height;
 
-    const dpr = window.devicePixelRatio || 1;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+const isTouch = typeof window !== 'undefined' && (('ontouchstart' in window) || navigator.maxTouchPoints > 0);
+const baseDpr = isTouch ? 1.5 : Math.min(window.devicePixelRatio || 1, 2);
+// Recompute effective DPR using the same MAX_PIXELS rule against the visible canvas size
+const MAX_PIXELS = 8_000_000;
+const vw = Number(visibleCanvas.style.width?.replace('px','') || 0);
+const vh = Number(visibleCanvas.style.height?.replace('px','') || 0);
+let effDpr = baseDpr;
+const estPixels = vw * vh * (baseDpr * baseDpr);
+if (estPixels > MAX_PIXELS) {
+  effDpr = Math.max(1, baseDpr * Math.sqrt(MAX_PIXELS / estPixels));
+}
+ctx.setTransform(effDpr, 0, 0, effDpr, 0, 0);
+
 
     ctx.fillStyle = 'rgba(255, 0, 0, 0.28)';
     ctx.fillRect(flashRect.x, flashRect.y, flashRect.w, flashRect.h);
