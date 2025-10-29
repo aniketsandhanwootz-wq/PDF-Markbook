@@ -404,7 +404,16 @@ function ViewerContent() {
         setIsMobileInputMode(false);
       });
   }, [markSetId, isDemo, showSetup, apiBase]);
-
+  // Auto-navigate to first mark when marks load
+useEffect(() => {
+  if (marks.length > 0 && pdf && currentMarkIndex === 0) {
+    // Small delay to ensure PDF is rendered
+    const timer = setTimeout(() => {
+      navigateToMark(0);
+    }, 500);
+    return () => clearTimeout(timer);
+  }
+}, [marks, pdf]);
   useEffect(() => {
     const handleResize = () => {
       if (marks.length > 0) {
