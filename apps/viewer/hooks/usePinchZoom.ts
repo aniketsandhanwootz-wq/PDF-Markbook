@@ -79,6 +79,14 @@ export default function usePinchZoom({
     const hasPointer = typeof window !== 'undefined' && 'PointerEvent' in window;
     const needTouchFallback = isIOS || isAndroidChrome || !hasPointer;
 
+    const pad = () => {
+  const cs = window.getComputedStyle(host);
+  return {
+    l: parseFloat(cs.paddingLeft || '0') || 0,
+    t: parseFloat(cs.paddingTop || '0') || 0,
+  };
+};
+
     /* -------------------- POINTER EVENTS PATH -------------------- */
     const onPointerDown = (e: PointerEvent) => {
       if (needTouchFallback) return;
@@ -94,12 +102,13 @@ export default function usePinchZoom({
         const pts = Array.from(pointersRef.current.values());
         const { midX, midY, dist } = calcMidDist(pts);
         const rect = host.getBoundingClientRect();
-        pinchStartRef.current = {
-          dist: Math.max(1, dist),
-          zoom: zoomRef.current,
-          midX: midX - rect.left,
-          midY: midY - rect.top,
-        };
+const p = pad();
+pinchStartRef.current = {
+  dist: Math.max(1, dist),
+  zoom: zoomRef.current,
+  midX: midX - rect.left - p.l,
+  midY: midY - rect.top - p.t,
+};
       }
     };
 
@@ -113,6 +122,7 @@ export default function usePinchZoom({
       if (pointersRef.current.size === 2 && pinchStartRef.current) {
         // Must be passive:false to allow this on some browsers
         e.preventDefault();
+        e.stopPropagation(); 
 
         const pts = Array.from(pointersRef.current.values());
         const { dist } = calcMidDist(pts);
@@ -162,17 +172,20 @@ export default function usePinchZoom({
     const onTouchStart = (e: TouchEvent) => {
       if (!needTouchFallback) return;
       if (e.touches.length === 2) {
+        e.stopPropagation();
         ensureShield();
         const [t1, t2] = [e.touches[0], e.touches[1]];
         const { x, y } = midpoint(t1, t2);
         const d = dist2(t1, t2);
-        const rect = host.getBoundingClientRect();
-        touchState = {
-          startDist: Math.max(1, d),
-          startZoom: zoomRef.current,
-          midX: x - rect.left,
-          midY: y - rect.top,
-        };
+       const rect = host.getBoundingClientRect();
+const p = pad();
+touchState = {
+  startDist: Math.max(1, d),
+  startZoom: zoomRef.current,
+  midX: x - rect.left - p.l,
+  midY: y - rect.top - p.t,
+};
+
       }
     };
 
@@ -185,7 +198,7 @@ export default function usePinchZoom({
       }
       // Must be passive:false on the listener for this to work
       e.preventDefault();
-
+      e.stopPropagation(); 
       const [t1, t2] = [e.touches[0], e.touches[1]];
       const d = dist2(t1, t2);
 
