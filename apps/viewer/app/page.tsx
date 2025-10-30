@@ -505,18 +505,6 @@ if (containerW < 600) targetZoom = Math.min(targetZoom, 3); // mobile guard
 targetZoom = clampZoom(targetZoom);
 setZoom(targetZoom);
 
-
-// MOBILE FIX: Limit zoom on small screens
-const isMobile = containerW < 600;
-if (isMobile) {
-  targetZoom = Math.min(targetZoom, 3.0);
-}
-
-targetZoom = clampZoom(targetZoom);
-
-        // Set zoom first
-        setZoom(targetZoom);
-
         // Pre-compute expected page size at target zoom
         const vpExpected = page.getViewport({ scale: targetZoom });
         const expectedW = Math.round(vpExpected.width);
