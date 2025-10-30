@@ -281,6 +281,13 @@ function ViewerContent() {
   const containerRef = useRef<HTMLDivElement>(null);
   const pageHeightsRef = useRef<number[]>([]);
   const pageElsRef = useRef<Array<HTMLDivElement | null>>([]);
+  // keep current zoom in a ref for synchronous math
+const zoomRef = useRef(zoom);
+useEffect(() => { zoomRef.current = zoom; }, [zoom]);
+
+// track active pointers for pinch
+const pointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+const pinchStartRef = useRef<{ dist: number; zoom: number; midX: number; midY: number } | null>(null);
 
   const isDemo = searchParams?.get('demo') === '1';
   const pdfUrlParam = searchParams?.get('pdf_url') || '';
@@ -721,9 +728,98 @@ container.scrollTo({ left: clampedL, top: clampedT, behavior: 'smooth' });
     document.addEventListener('wheel', handleWheel, { passive: false, capture: true });
     
     return () => {
-      document.removeEventListener('wheel', handleWheel, { capture: true });
+      document.removeEventListener('wheel', handleWheel, { capture: true } as any);
     };
   }, []);
+  useEffect(() => {
+  const el = containerRef.current;
+  if (!el) return;
+
+  const getMidAndDist = () => {
+    const pts = Array.from(pointersRef.current.values());
+    const [p1, p2] = pts;
+    const midX = (p1.x + p2.x) / 2;
+    const midY = (p1.y + p2.y) / 2;
+    const dx = p2.x - p1.x;
+    const dy = p2.y - p1.y;
+    const dist = Math.hypot(dx, dy);
+    return { midX, midY, dist };
+  };
+
+  const onPointerDown = (e: PointerEvent) => {
+    if (e.target && !el.contains(e.target as Node)) return;
+    (e.target as Element)?.setPointerCapture?.(e.pointerId);
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (pointersRef.current.size === 2) {
+      const { midX, midY, dist } = getMidAndDist();
+      pinchStartRef.current = { dist, zoom: zoomRef.current, midX, midY };
+    }
+  };
+
+  const onPointerMove = (e: PointerEvent) => {
+    if (!pointersRef.current.has(e.pointerId)) return;
+
+    // update this pointer
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    // perform pinch only when 2 fingers are down
+    if (pointersRef.current.size === 2 && pinchStartRef.current) {
+      e.preventDefault(); // block browser-native pinch zoom
+
+      const { midX, midY, dist } = getMidAndDist();
+      const start = pinchStartRef.current;
+      if (!start || start.dist <= 0) return;
+
+      // scale from the initial distance
+      let nextZoom = clampZoom(start.zoom * (dist / start.dist));
+
+      // optional mobile cap (keeps tiny phones sane)
+      if (window.innerWidth < 600) nextZoom = Math.min(nextZoom, 3.0);
+
+      // keep focal point anchored
+      const rect = el.getBoundingClientRect();
+      const localX = midX - rect.left;
+      const localY = midY - rect.top;
+
+      const prevZoom = zoomRef.current;
+      const k = nextZoom / prevZoom;
+
+      const contentX = el.scrollLeft + localX;
+      const contentY = el.scrollTop + localY;
+
+      setZoom(nextZoom);
+
+      requestAnimationFrame(() => {
+        el.scrollLeft = contentX * k - localX;
+        el.scrollTop  = contentY * k - localY;
+      });
+    }
+  };
+
+  const endPointer = (e: PointerEvent) => {
+    pointersRef.current.delete(e.pointerId);
+    if (pointersRef.current.size < 2) {
+      pinchStartRef.current = null;
+    }
+  };
+
+  // passive:false on move so we can preventDefault during pinch
+  el.addEventListener('pointerdown', onPointerDown, { passive: true });
+  el.addEventListener('pointermove', onPointerMove, { passive: false });
+  el.addEventListener('pointerup', endPointer, { passive: true });
+  el.addEventListener('pointercancel', endPointer, { passive: true });
+  el.addEventListener('pointerleave', endPointer, { passive: true });
+
+  return () => {
+    el.removeEventListener('pointerdown', onPointerDown as any);
+    el.removeEventListener('pointermove', onPointerMove as any);
+    el.removeEventListener('pointerup', endPointer as any);
+    el.removeEventListener('pointercancel', endPointer as any);
+    el.removeEventListener('pointerleave', endPointer as any);
+  };
+}, [setZoom]);
+
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -902,7 +998,7 @@ container.scrollTo({ left: clampedL, top: clampedT, behavior: 'smooth' });
     overflow: 'auto', 
     background: '#525252',
     WebkitOverflowScrolling: 'touch',
-    touchAction: 'pan-x pan-y pinch-zoom'
+    touchAction: 'pan-x pan-y', // allow 1-finger pan; we'll implement 2-finger pinch
   }} 
   className="pdf-surface-wrap"
   ref={containerRef}
