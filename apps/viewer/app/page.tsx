@@ -734,16 +734,20 @@ container.scrollTo({ left: clampedL, top: clampedT, behavior: 'smooth' });
     return { midX, midY, dist };
   };
 
-  const onPointerDown = (e: PointerEvent) => {
-    if (e.target && !el.contains(e.target as Node)) return;
+const onPointerDown = (e: PointerEvent) => {
+  if (e.target && !el.contains(e.target as Node)) return;
+  try {
     el.setPointerCapture?.(e.pointerId);
-    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  } catch {}
+  pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
-    if (pointersRef.current.size === 2) {
-      const { midX, midY, dist } = getMidAndDist();
-      pinchStartRef.current = { dist, zoom: zoomRef.current, midX, midY };
-    }
-  };
+  if (pointersRef.current.size === 2) {
+    const { midX, midY, dist } = getMidAndDist();
+    pinchStartRef.current = { dist, zoom: zoomRef.current, midX, midY };
+    (el as HTMLElement).style.touchAction = 'none';
+  }
+};
+
 
   const onPointerMove = (e: PointerEvent) => {
     if (!pointersRef.current.has(e.pointerId)) return;
@@ -785,12 +789,17 @@ container.scrollTo({ left: clampedL, top: clampedT, behavior: 'smooth' });
     }
   };
 
-  const endPointer = (e: PointerEvent) => {
-    pointersRef.current.delete(e.pointerId);
-    if (pointersRef.current.size < 2) {
-      pinchStartRef.current = null;
-    }
-  };
+const endPointer = (e: PointerEvent) => {
+  pointersRef.current.delete(e.pointerId);
+  try {
+    el.releasePointerCapture?.(e.pointerId);
+  } catch {}
+  if (pointersRef.current.size < 2) {
+    pinchStartRef.current = null;
+    (el as HTMLElement).style.touchAction = 'pan-x pan-y';
+  }
+};
+
 
   // passive:false on move so we can preventDefault during pinch
   el.addEventListener('pointerdown', onPointerDown, { passive: true });
@@ -1064,13 +1073,25 @@ useEffect(() => {
 </div>
           </div>
 
-          <div style={{ 
-            flex: 1,
-            display: 'flex', 
-            flexDirection: 'column',
-            overflow: 'hidden',
-            minWidth: 0
-          }} {...swipeHandlers}>
+          <div
+          className="swipe-gesture-host"
+  style={{
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'column',
+    overflow: 'hidden',
+    minWidth: 0
+  }}
+  // Let react-swipeable get ONLY one-finger gestures; block multi-touch early
+  onTouchStartCapture={(e) => {
+    if (e.touches && e.touches.length > 1) e.stopPropagation();
+  }}
+  onTouchMoveCapture={(e) => {
+    if (e.touches && e.touches.length > 1) e.stopPropagation();
+  }}
+  {...swipeHandlers}
+>
+
             <ZoomToolbar
               zoom={zoom}
               onZoomIn={zoomIn}

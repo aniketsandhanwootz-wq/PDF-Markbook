@@ -400,3 +400,7 @@ body {
   background: #fff;
   border-top: 1px solid #ddd;
 }
+/* Ensure containers that host swipe handlers don't consume pinch */
+.swipe-gesture-host {
+  touch-action: pan-x pan-y !important; /* no pinch-zoom here */
+}
