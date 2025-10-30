@@ -218,7 +218,7 @@ body {
   overflow: auto;
   background: #525252;
   padding: 16px;
-  touch-action: pan-x pan-y pinch-zoom;
+  touch-action: pan-x pan-y; /* we handle the pinch in JS */
 }
 
 
