@@ -14,6 +14,7 @@ import ReviewScreen from '../components/ReviewScreen';
 import { clampZoom } from '../lib/pdf';
 import PDFSearch from '../components/PDFSearch';
 import usePinchZoom from '../hooks/usePinchZoom';
+import { makeSubmissionPdf, downloadBytes } from '../lib/makeSubmissionPdf';
 
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
@@ -638,29 +639,40 @@ container.scrollTo({ left: clampedL, top: clampedT, behavior: 'smooth' });
 
     setIsSubmitting(true);
 
-    try {
-      const response = await fetch(`${apiBase}/mark-sets/${markSetId}/submissions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ entries }),
-      });
+  try {
+    // 1) Build submission PDF locally and download it
+    const bytes = await makeSubmissionPdf(pdf!, marks, entries, {
+      title: 'Markbook Submission',
+      author: 'PDF Viewer',
+      padding: 0.25,        // 25% extra around mark
+      renderScale: 2,       // 2x render for clarity, safe on phones
+      pageMarginsPt: 36,    // 0.5 in margins
+    });
+    const fname = `submission_${new Date().toISOString().replace(/[:.]/g,'-')}.pdf`;
+    downloadBytes(bytes, fname);
 
-      if (!response.ok) {
-        throw new Error('Failed to submit entries');
-      }
+    // 2) Continue your current API flow
+    const response = await fetch(`${apiBase}/mark-sets/${markSetId}/submissions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entries }),
+    });
 
-      toast.success('✓ Entries submitted successfully!');
-      
-      setTimeout(() => {
-        window.location.href = '/';
-      }, 2000);
-    } catch (error) {
-      console.error('Submit error:', error);
-      toast.error('Failed to submit entries');
-    } finally {
-      setIsSubmitting(false);
+    if (!response.ok) {
+      throw new Error('Failed to submit entries');
     }
-  }, [markSetId, entries, apiBase]);
+
+    toast.success('✓ Entries submitted successfully!');
+    setTimeout(() => {
+      window.location.href = '/';
+    }, 2000);
+  } catch (error) {
+    console.error('Submit error:', error);
+    toast.error('Failed to submit entries');
+  } finally {
+    setIsSubmitting(false);
+  }
+}, [markSetId, entries, apiBase, pdf, marks]);
 
   const swipeHandlers = useSwipeable({
   onSwipedLeft: () => {
