@@ -489,18 +489,23 @@ const navigateToMark = useCallback(
         const containerW = container.clientWidth;
         const containerH = container.clientHeight;
 
-        // Calculate zoom with 20% padding around mark
-        const zoomX = (containerW * 0.8) / rectAt1.w;
-        const zoomY = (containerH * 0.8) / rectAt1.h;
-        let targetZoom = Math.min(zoomX, zoomY);
-        
-        // MOBILE FIX: Limit zoom on small screens to prevent overflow
-        const isMobile = containerW < 600;
-        if (isMobile) {
-          targetZoom = Math.min(targetZoom, 3.0); // Max 3x zoom on mobile
-        }
-        
-        targetZoom = clampZoom(targetZoom);
+const zoomX = (containerW * 0.8) / rectAt1.w;
+const zoomY = (containerH * 0.8) / rectAt1.h;
+
+let targetZoom = Math.min(zoomX, zoomY);   // declare
+targetZoom = Math.min(targetZoom, 4);      // desktop guard
+if (containerW < 600) targetZoom = Math.min(targetZoom, 3); // mobile guard
+targetZoom = clampZoom(targetZoom);
+setZoom(targetZoom);
+
+
+// MOBILE FIX: Limit zoom on small screens
+const isMobile = containerW < 600;
+if (isMobile) {
+  targetZoom = Math.min(targetZoom, 3.0);
+}
+
+targetZoom = clampZoom(targetZoom);
 
         // Set zoom first
         setZoom(targetZoom);

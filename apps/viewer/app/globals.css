@@ -381,3 +381,25 @@ body {
   image-rendering: auto;
   backface-visibility: hidden;
 }
+/* Desktop viewer vertical layout */
+.viewer-container .main-content {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh; /* includes mobile browser UI properly */
+}
+
+/* Scroll area should take the remaining height above the input panel */
+.viewer-container .pdf-surface-wrap {
+  flex: 1;
+  overflow: auto;
+  background: #525252;
+}
+
+/* Input panel pinned at the bottom on desktop too */
+.viewer-container .input-panel-section {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  background: #fff;
+  border-top: 1px solid #ddd;
+}

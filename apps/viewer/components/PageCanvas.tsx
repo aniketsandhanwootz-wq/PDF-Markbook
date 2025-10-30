@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, memo, useState } from 'react';
-import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from 'pdfjs-dist';
+import type { PDFDocumentProxy, RenderTask } from 'pdfjs-dist';
 
 type PageCanvasProps = {
   pdf: PDFDocumentProxy;
@@ -55,137 +55,142 @@ function PageCanvas({
 
     let isCancelled = false;
 
-    const renderPage = async () => {
+const renderPage = async () => {
+  try {
+    // Cancel previous render
+    if (renderTaskRef.current) {
       try {
-        // Cancel previous render
-        if (renderTaskRef.current) {
-          try {
-            renderTaskRef.current.cancel();
-          } catch (e) {
-            // Ignore cancellation errors
-          }
-          renderTaskRef.current = null;
-        }
+        renderTaskRef.current.cancel();
+      } catch {}
+      renderTaskRef.current = null;
+    }
 
-        setIsLoading(true);
+    setIsLoading(true);
 
-        const page = await pdf.getPage(pageNumber);
-        if (isCancelled) return;
+    const page = await pdf.getPage(pageNumber);
+    if (isCancelled) return;
 
-const viewport = page.getViewport({ scale: zoom });
-const isTouch = typeof window !== 'undefined' && (('ontouchstart' in window) || navigator.maxTouchPoints > 0);
-// Lighter on phones, still crisp on desktop
-const dpr = isTouch ? 1.5 : Math.min(window.devicePixelRatio || 1, 2);
+    const viewport = page.getViewport({ scale: zoom });
 
-// Guard: never exceed ~8MP canvas to avoid mobile GPU stalls
-const MAX_PIXELS = 8_000_000; // ~8MP
-let effDpr = dpr;
-const estPixels = viewport.width * viewport.height * (dpr * dpr);
-if (estPixels > MAX_PIXELS) {
-  const shrink = Math.sqrt(MAX_PIXELS / estPixels);
-  effDpr = Math.max(1, dpr * shrink);
+    const isTouch =
+      typeof window !== 'undefined' &&
+      (('ontouchstart' in window) || navigator.maxTouchPoints > 0);
+
+    // Lighter on phones, still crisp on desktop
+    const dpr = isTouch ? 1.5 : Math.min(window.devicePixelRatio || 1, 2);
+
+    // Guard: never exceed ~8MP canvas to avoid mobile GPU stalls
+    const MAX_PIXELS = 8_000_000;
+    let effDpr = dpr;
+    const estPixels = viewport.width * viewport.height * (dpr * dpr);
+    if (estPixels > MAX_PIXELS) {
+      const shrink = Math.sqrt(MAX_PIXELS / estPixels);
+      effDpr = Math.max(1, dpr * shrink);
+    }
+
+    // Check cache
+    const cacheKey = getCacheKey(pageNumber, zoom);
+    const cached = renderCache.get(cacheKey);
+
+    const targetCanvas =
+      currentCanvasRef.current === 'front' ? backCanvas : frontCanvas;
+
+// Strongly typed 2D context (with a graceful fallback)
+let ctx = targetCanvas.getContext(
+  '2d',
+  { alpha: false, desynchronized: true } as CanvasRenderingContext2DSettings
+) as CanvasRenderingContext2D | null;
+
+if (!ctx) {
+  ctx = targetCanvas.getContext('2d') as CanvasRenderingContext2D | null;
 }
 
-        // Check if we can use cached render
-        const cacheKey = getCacheKey(pageNumber, zoom);
-        const cached = renderCache.get(cacheKey);
-
-        const targetCanvas = currentCanvasRef.current === 'front' ? backCanvas : frontCanvas;
-        const ctx = targetCanvas.getContext('2d', {
-          alpha: false,
-          desynchronized: true
-        });
-        if (!ctx) return;
-
-        targetCanvas.width = Math.round(viewport.width * effDpr);
-        targetCanvas.height = Math.round(viewport.height * effDpr);
-        targetCanvas.style.width = `${viewport.width}px`;
-        targetCanvas.style.height = `${viewport.height}px`;
-
-        if (cached) {
-          // Use cached bitmap
-          ctx.setTransform(effDpr, 0, 0, effDpr, 0, 0);
-          ctx.drawImage(cached, 0, 0, viewport.width, viewport.height);
-          
-          if (!isCancelled) {
-            // Swap canvases immediately
-            currentCanvasRef.current = currentCanvasRef.current === 'front' ? 'back' : 'front';
-            
-            if (currentCanvasRef.current === 'back') {
-              backCanvas.style.display = 'block';
-              frontCanvas.style.display = 'none';
-            } else {
-              frontCanvas.style.display = 'block';
-              backCanvas.style.display = 'none';
-            }
-
-            setIsLoading(false);
-            lastRenderedZoomRef.current = zoom;
-
-            if (onReady) {
-              onReady(viewport.height);
-            }
-          }
-          return;
-        }
-
-        // Fresh render needed
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+if (!ctx) {
+  setIsLoading(false);
+  return;
+}
 
 
-        const renderContext = {
-          canvasContext: ctx,
-          viewport: viewport,
-          enableWebGL: false,
-          renderInteractiveForms: false,
-        };
+    // Size canvas (buffer) + CSS pixels
+    targetCanvas.width = Math.round(viewport.width * effDpr);
+    targetCanvas.height = Math.round(viewport.height * effDpr);
+    targetCanvas.style.width = `${viewport.width}px`;
+    targetCanvas.style.height = `${viewport.height}px`;
 
-        renderTaskRef.current = page.render(renderContext);
-        await renderTaskRef.current.promise;
-        renderTaskRef.current = null;
+  if (cached) {
+  const bmp: ImageBitmap = cached; // TS: narrow explicitly
+  ctx.setTransform(effDpr, 0, 0, effDpr, 0, 0);
+  ctx.drawImage(bmp, 0, 0, viewport.width, viewport.height);
 
-        // Cache only on non-touch devices to avoid mobile jank
-if (!isTouch) {
-  try {
-    const bitmapSize = targetCanvas.width * targetCanvas.height * 4; // bytes
-    const maxSize = 16_777_216; // 16MB
-    if (bitmapSize < maxSize) {
-      const bitmap = await createImageBitmap(targetCanvas);
-      cleanCache();
-      renderCache.set(cacheKey, bitmap);
-    }
-  } catch {
-    // ignore caching errors
-  
-} // <-- close the guard properly
+  // Swap canvases
+  currentCanvasRef.current =
+    currentCanvasRef.current === 'front' ? 'back' : 'front';
 
+  if (currentCanvasRef.current === 'back') {
+    backCanvas!.style.display = 'block';
+    frontCanvas!.style.display = 'none';
+  } else {
+    frontCanvas!.style.display = 'block';
+    backCanvas!.style.display = 'none';
+  }
 
+  setIsLoading(false);
+  lastRenderedZoomRef.current = zoom;
+  onReady?.(viewport.height);
+  return;
+}
 
-          // Swap canvases
-          currentCanvasRef.current = currentCanvasRef.current === 'front' ? 'back' : 'front';
-          
-          if (currentCanvasRef.current === 'back') {
-            backCanvas.style.display = 'block';
-            frontCanvas.style.display = 'none';
-          } else {
-            frontCanvas.style.display = 'block';
-            backCanvas.style.display = 'none';
-          }
+    // Fresh render needed
+    ctx.setTransform(effDpr, 0, 0, effDpr, 0, 0);
 
-          setIsLoading(false);
-          lastRenderedZoomRef.current = zoom;
-
-          if (onReady) {
-            onReady(viewport.height);
-          }
-        }
-      } catch (error: any) {
-        if (error?.name !== 'RenderingCancelledException') {
-          console.error('Page render error:', error);
-          setIsLoading(false);
-        }
-      }
+    const renderContext = {
+      canvasContext: ctx,
+      viewport,
+      enableWebGL: false,
+      renderInteractiveForms: false,
     };
+
+    renderTaskRef.current = page.render(renderContext);
+    await renderTaskRef.current.promise;
+    renderTaskRef.current = null;
+
+    // Cache only on non-touch devices to avoid mobile jank
+    if (!isTouch) {
+      try {
+        const bitmapSize = targetCanvas.width * targetCanvas.height * 4; // bytes
+        const maxSize = 16_777_216; // 16MB
+        if (bitmapSize < maxSize) {
+          const bitmap = await createImageBitmap(targetCanvas);
+          cleanCache();
+          renderCache.set(cacheKey, bitmap);
+        }
+      } catch {
+        // ignore caching errors
+      }
+    }
+
+    // Swap canvases
+    currentCanvasRef.current =
+      currentCanvasRef.current === 'front' ? 'back' : 'front';
+
+    if (currentCanvasRef.current === 'back') {
+      backCanvas!.style.display = 'block';
+      frontCanvas!.style.display = 'none';
+    } else {
+      frontCanvas!.style.display = 'block';
+      backCanvas!.style.display = 'none';
+    }
+
+    setIsLoading(false);
+    lastRenderedZoomRef.current = zoom;
+    onReady?.(viewport.height);
+  } catch (error: any) {
+    if (error?.name !== 'RenderingCancelledException') {
+      console.error('Page render error:', error);
+      setIsLoading(false);
+    }
+  }
+};
 
     // Only re-render if zoom changed significantly (avoid micro-renders)
     const zoomDiff = Math.abs(zoom - lastRenderedZoomRef.current);
