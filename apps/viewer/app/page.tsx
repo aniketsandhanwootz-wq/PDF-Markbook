@@ -13,6 +13,8 @@ import InputPanel from '../components/InputPanel';
 import ReviewScreen from '../components/ReviewScreen';
 import { clampZoom } from '../lib/pdf';
 import PDFSearch from '../components/PDFSearch';
+import usePinchZoom from '../hooks/usePinchZoom';
+
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
@@ -343,6 +345,13 @@ const pinchStartRef = useRef<{ dist: number; zoom: number; midX: number; midY: n
       zoom_hint: 1.5,
     },
   ];
+  usePinchZoom({
+  containerRef,
+  setZoom,
+  zoomRef,
+  clampZoom,
+  maxPhoneZoom: 3,
+});
 
   // Load PDF
   useEffect(() => {
@@ -719,218 +728,7 @@ container.scrollTo({ left: clampedL, top: clampedT, behavior: 'smooth' });
       document.removeEventListener('wheel', handleWheel, { capture: true } as any);
     };
   }, []);
-  useEffect(() => {
-  const el = containerRef.current;
-  if (!el) return;
-
-  const getMidAndDist = () => {
-    const pts = Array.from(pointersRef.current.values());
-    const [p1, p2] = pts;
-    const midX = (p1.x + p2.x) / 2;
-    const midY = (p1.y + p2.y) / 2;
-    const dx = p2.x - p1.x;
-    const dy = p2.y - p1.y;
-    const dist = Math.hypot(dx, dy);
-    return { midX, midY, dist };
-  };
-
-const onPointerDown = (e: PointerEvent) => {
-  if (e.target && !el.contains(e.target as Node)) return;
-  try {
-    el.setPointerCapture?.(e.pointerId);
-  } catch {}
-  pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-
-  if (pointersRef.current.size === 2) {
-    const { midX, midY, dist } = getMidAndDist();
-    pinchStartRef.current = { dist, zoom: zoomRef.current, midX, midY };
-    (el as HTMLElement).style.touchAction = 'none';
-  }
-};
-
-
-  const onPointerMove = (e: PointerEvent) => {
-    if (!pointersRef.current.has(e.pointerId)) return;
-
-    // update this pointer
-    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-
-    // perform pinch only when 2 fingers are down
-    if (pointersRef.current.size === 2 && pinchStartRef.current) {
-      e.preventDefault(); // block browser-native pinch zoom
-
-      const { midX, midY, dist } = getMidAndDist();
-      const start = pinchStartRef.current;
-      if (!start || start.dist <= 0) return;
-
-      // scale from the initial distance
-      let nextZoom = clampZoom(start.zoom * (dist / start.dist));
-
-      // optional mobile cap (keeps tiny phones sane)
-      if (window.innerWidth < 600) nextZoom = Math.min(nextZoom, 3.0);
-
-      // keep focal point anchored
-      const rect = el.getBoundingClientRect();
-      const localX = midX - rect.left;
-      const localY = midY - rect.top;
-
-      const prevZoom = zoomRef.current;
-      const k = nextZoom / prevZoom;
-
-      const contentX = el.scrollLeft + localX;
-      const contentY = el.scrollTop + localY;
-
-      setZoom(nextZoom);
-
-      requestAnimationFrame(() => {
-        el.scrollLeft = contentX * k - localX;
-        el.scrollTop  = contentY * k - localY;
-      });
-    }
-  };
-
-const endPointer = (e: PointerEvent) => {
-  pointersRef.current.delete(e.pointerId);
-  try {
-    el.releasePointerCapture?.(e.pointerId);
-  } catch {}
-  if (pointersRef.current.size < 2) {
-    pinchStartRef.current = null;
-    (el as HTMLElement).style.touchAction = 'pan-x pan-y';
-  }
-};
-
-
-  // passive:false on move so we can preventDefault during pinch
-  el.addEventListener('pointerdown', onPointerDown, { passive: true });
-  el.addEventListener('pointermove', onPointerMove, { passive: false });
-  el.addEventListener('pointerup', endPointer, { passive: true });
-  el.addEventListener('pointercancel', endPointer, { passive: true });
-  el.addEventListener('pointerleave', endPointer, { passive: true });
-
-  return () => {
-    el.removeEventListener('pointerdown', onPointerDown as any);
-    el.removeEventListener('pointermove', onPointerMove as any);
-    el.removeEventListener('pointerup', endPointer as any);
-    el.removeEventListener('pointercancel', endPointer as any);
-    el.removeEventListener('pointerleave', endPointer as any);
-  };
-}, [setZoom]);
-
-// --- Touch fallback for mobile Safari / WebViews (keeps one-finger scroll, two-finger pinch we handle) ---
-useEffect(() => {
-  const el = containerRef.current;
-  if (!el) return;
-
-const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
-const isIOS = /iPad|iPhone|iPod/.test(ua);
-const isAndroidChrome = /Android/.test(ua) && /Chrome\/\d+/.test(ua) && !/Edg\//.test(ua);
-
-/* Force touch fallback on iOS AND Android Chrome. Some Androids starve the
-   second pointer when parents have touch-action or swipe handlers. */
-const needTouchFallback = isIOS || isAndroidChrome || !(window as any).PointerEvent;
-
-
-  if (!needTouchFallback) return; // keep things lean where pointer events are fine
-
-  type TouchState = {
-    startDist: number;
-    startZoom: number;
-    midX: number;
-    midY: number;
-  } | null;
-
-  let state: TouchState = null;
-
-  const dist2 = (t1: Touch, t2: Touch) => {
-    const dx = t2.clientX - t1.clientX;
-    const dy = t2.clientY - t1.clientY;
-    return Math.hypot(dx, dy);
-  };
-
-  const midpoint = (t1: Touch, t2: Touch) => ({
-    x: (t1.clientX + t2.clientX) / 2,
-    y: (t1.clientY + t2.clientY) / 2,
-  });
-
-  const onTouchStart = (e: TouchEvent) => {
-    if (e.touches.length === 2) {
-      const [t1, t2] = [e.touches[0], e.touches[1]];
-      const { x, y } = midpoint(t1, t2);
-      const d = dist2(t1, t2);
-
-      const rect = el.getBoundingClientRect();
-      const localX = x - rect.left;
-      const localY = y - rect.top;
-
-      state = {
-        startDist: Math.max(1, d),
-        startZoom: zoomRef.current,
-        midX: localX,
-        midY: localY,
-      };
-      // let native know we will handle pinch (prevents browser page zoom)
-      // NOTE: passive:false on addEventListener below makes this effective
-          // NEW: while we’re pinching, stop native panning on this scroller
-    (el as HTMLElement).style.touchAction = 'none';
-    }
-  };
-
-  const onTouchMove = (e: TouchEvent) => {
-    if (!state) return;
-
-    if (e.touches.length !== 2) {
-      state = null;
-      return;
-    }
-
-    // Stop native pinch-zoom; we will set our own zoom.
-    e.preventDefault();
-
-    const [t1, t2] = [e.touches[0], e.touches[1]];
-    const d = dist2(t1, t2);
-
-    let nextZoom = clampZoom(state.startZoom * (d / state.startDist));
-    // keep tiny phones sane
-    if (window.innerWidth < 600) nextZoom = Math.min(nextZoom, 3.0);
-
-    const prevZoom = zoomRef.current;
-    if (Math.abs(nextZoom - prevZoom) < 1e-4) return;
-
-    const k = nextZoom / prevZoom;
-
-    // Keep pinch focal point anchored while zooming
-    const contentX = el.scrollLeft + state.midX;
-    const contentY = el.scrollTop + state.midY;
-
-    setZoom(nextZoom);
-
-    requestAnimationFrame(() => {
-      el.scrollLeft = contentX * k - state!.midX;
-      el.scrollTop  = contentY * k - state!.midY;
-    });
-  };
-
-  const onTouchEnd = () => {
-    state = null;
-      // NEW: restore 1-finger scroll after pinch ends
-  (el as HTMLElement).style.touchAction = 'pan-x pan-y';
-  };
-
-  // IMPORTANT: passive:false so preventDefault actually cancels native pinch
-  el.addEventListener('touchstart', onTouchStart, { passive: true });
-  el.addEventListener('touchmove', onTouchMove, { passive: false });
-  el.addEventListener('touchend', onTouchEnd, { passive: true });
-  el.addEventListener('touchcancel', onTouchEnd, { passive: true });
-
-  return () => {
-    el.removeEventListener('touchstart', onTouchStart as any);
-    el.removeEventListener('touchmove', onTouchMove as any);
-    el.removeEventListener('touchend', onTouchEnd as any);
-    el.removeEventListener('touchcancel', onTouchEnd as any);
-  };
-}, [setZoom]);
-
+  
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
