@@ -736,7 +736,7 @@ container.scrollTo({ left: clampedL, top: clampedT, behavior: 'smooth' });
 
   const onPointerDown = (e: PointerEvent) => {
     if (e.target && !el.contains(e.target as Node)) return;
-    (e.target as Element)?.setPointerCapture?.(e.pointerId);
+    el.setPointerCapture?.(e.pointerId);
     pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
     if (pointersRef.current.size === 2) {
