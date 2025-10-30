@@ -287,10 +287,6 @@ function ViewerContent() {
 const zoomRef = useRef(zoom);
 useEffect(() => { zoomRef.current = zoom; }, [zoom]);
 
-// track active pointers for pinch
-const pointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
-const pinchStartRef = useRef<{ dist: number; zoom: number; midX: number; midY: number } | null>(null);
-
   const isDemo = searchParams?.get('demo') === '1';
   const pdfUrlParam = searchParams?.get('pdf_url') || '';
   const markSetIdParam = searchParams?.get('mark_set_id') || '';
