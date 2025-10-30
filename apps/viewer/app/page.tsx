@@ -736,7 +736,7 @@ container.scrollTo({ left: clampedL, top: clampedT, behavior: 'smooth' });
 
   const onPointerDown = (e: PointerEvent) => {
     if (e.target && !el.contains(e.target as Node)) return;
-    el.setPointerCapture?.(e.pointerId);
+    (e.target as Element)?.setPointerCapture?.(e.pointerId);
     pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
     if (pointersRef.current.size === 2) {
@@ -808,6 +808,111 @@ container.scrollTo({ left: clampedL, top: clampedT, behavior: 'smooth' });
   };
 }, [setZoom]);
 
+// --- Touch fallback for mobile Safari / WebViews (keeps one-finger scroll, two-finger pinch we handle) ---
+useEffect(() => {
+  const el = containerRef.current;
+  if (!el) return;
+
+  // If PointerEvents are solid, our pointer-based pinch works.
+  // But on iOS Safari / some WebViews we still need a direct touch fallback.
+  const isIOS = typeof navigator !== 'undefined' && /iPad|iPhone|iPod/.test(navigator.userAgent);
+  const needTouchFallback = isIOS || !(window as any).PointerEvent;
+
+  if (!needTouchFallback) return; // keep things lean where pointer events are fine
+
+  type TouchState = {
+    startDist: number;
+    startZoom: number;
+    midX: number;
+    midY: number;
+  } | null;
+
+  let state: TouchState = null;
+
+  const dist2 = (t1: Touch, t2: Touch) => {
+    const dx = t2.clientX - t1.clientX;
+    const dy = t2.clientY - t1.clientY;
+    return Math.hypot(dx, dy);
+  };
+
+  const midpoint = (t1: Touch, t2: Touch) => ({
+    x: (t1.clientX + t2.clientX) / 2,
+    y: (t1.clientY + t2.clientY) / 2,
+  });
+
+  const onTouchStart = (e: TouchEvent) => {
+    if (e.touches.length === 2) {
+      const [t1, t2] = [e.touches[0], e.touches[1]];
+      const { x, y } = midpoint(t1, t2);
+      const d = dist2(t1, t2);
+
+      const rect = el.getBoundingClientRect();
+      const localX = x - rect.left;
+      const localY = y - rect.top;
+
+      state = {
+        startDist: Math.max(1, d),
+        startZoom: zoomRef.current,
+        midX: localX,
+        midY: localY,
+      };
+      // let native know we will handle pinch (prevents browser page zoom)
+      // NOTE: passive:false on addEventListener below makes this effective
+    }
+  };
+
+  const onTouchMove = (e: TouchEvent) => {
+    if (!state) return;
+
+    if (e.touches.length !== 2) {
+      state = null;
+      return;
+    }
+
+    // Stop native pinch-zoom; we will set our own zoom.
+    e.preventDefault();
+
+    const [t1, t2] = [e.touches[0], e.touches[1]];
+    const d = dist2(t1, t2);
+
+    let nextZoom = clampZoom(state.startZoom * (d / state.startDist));
+    // keep tiny phones sane
+    if (window.innerWidth < 600) nextZoom = Math.min(nextZoom, 3.0);
+
+    const prevZoom = zoomRef.current;
+    if (Math.abs(nextZoom - prevZoom) < 1e-4) return;
+
+    const k = nextZoom / prevZoom;
+
+    // Keep pinch focal point anchored while zooming
+    const contentX = el.scrollLeft + state.midX;
+    const contentY = el.scrollTop + state.midY;
+
+    setZoom(nextZoom);
+
+    requestAnimationFrame(() => {
+      el.scrollLeft = contentX * k - state!.midX;
+      el.scrollTop  = contentY * k - state!.midY;
+    });
+  };
+
+  const onTouchEnd = () => {
+    state = null;
+  };
+
+  // IMPORTANT: passive:false so preventDefault actually cancels native pinch
+  el.addEventListener('touchstart', onTouchStart, { passive: true });
+  el.addEventListener('touchmove', onTouchMove, { passive: false });
+  el.addEventListener('touchend', onTouchEnd, { passive: true });
+  el.addEventListener('touchcancel', onTouchEnd, { passive: true });
+
+  return () => {
+    el.removeEventListener('touchstart', onTouchStart as any);
+    el.removeEventListener('touchmove', onTouchMove as any);
+    el.removeEventListener('touchend', onTouchEnd as any);
+    el.removeEventListener('touchcancel', onTouchEnd as any);
+  };
+}, [setZoom]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
