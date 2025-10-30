@@ -581,6 +581,19 @@ container.scrollTo({ left: clampedL, top: clampedT, behavior: 'smooth' });
       setShowReview(true);
     }
   }, [currentMarkIndex, marks.length, navigateToMark]);
+  
+  const selectFromList = useCallback((index: number) => {
+  // If mobile and sidebar is open, we may close it and the container width changes.
+  // Give layout a tick, then navigate so zoom math uses the final width.
+  const needsDelay = window.innerWidth < 900; // narrow screens
+  if (needsDelay) {
+    // Close the sidebar if it's open (mobile UX)
+    if (sidebarOpen) setSidebarOpen(false);
+    setTimeout(() => navigateToMark(index), 80); // one frame on mobile Safari
+  } else {
+    navigateToMark(index);
+  }
+}, [navigateToMark, sidebarOpen]);
 
   const jumpToPage = useCallback((pageNumber: number) => {
     if (!pdf || !containerRef.current) return;
@@ -859,19 +872,15 @@ container.scrollTo({ left: clampedL, top: clampedT, behavior: 'smooth' });
 
             <div style={{ flex: 1, overflow: 'auto' }}>
   <MarkList
-    marks={marks}
-    currentIndex={currentMarkIndex}
-    onSelect={(index) => {
-      setCurrentMarkIndex(index); // Update immediately
-      navigateToMark(index);
-      // Small delay before closing sidebar on mobile
-      setTimeout(() => {
-        if (window.innerWidth < 768) {
-          setSidebarOpen(false);
-        }
-      }, 100);
-    }}
-  />
+  marks={marks}
+  currentIndex={currentMarkIndex}
+  onSelect={(index) => {
+    setCurrentMarkIndex(index);
+    selectFromList(index);   // ← will close sidebar (if needed) and then zoom+center
+  }}
+/>
+
+
 </div>
           </div>
 
@@ -883,13 +892,6 @@ container.scrollTo({ left: clampedL, top: clampedT, behavior: 'smooth' });
     flexDirection: 'column',
     overflow: 'hidden',
     minWidth: 0
-  }}
-  // Let react-swipeable get ONLY one-finger gestures; block multi-touch early
-  onTouchStartCapture={(e) => {
-    if (e.touches && e.touches.length > 1) e.stopPropagation();
-  }}
-  onTouchMoveCapture={(e) => {
-    if (e.touches && e.touches.length > 1) e.stopPropagation();
   }}
   {...swipeHandlers}
 >
@@ -918,13 +920,6 @@ container.scrollTo({ left: clampedL, top: clampedT, behavior: 'smooth' });
   }}
   className="pdf-surface-wrap"
   ref={containerRef}
-  // Block multi-touch at the scroller itself so only our pinch handler runs
-  onTouchStartCapture={(e) => {
-    if (e.touches && e.touches.length > 1) e.stopPropagation();
-  }}
-  onTouchMoveCapture={(e) => {
-    if (e.touches && e.touches.length > 1) e.stopPropagation();
-  }}
 >
 
               <div className="pdf-surface">
@@ -984,10 +979,11 @@ return (
         </div>
         {sidebarOpen && (
           <MarkList
-            marks={marks}
-            currentIndex={currentMarkIndex}
-            onSelect={navigateToMark}
-          />
+  marks={marks}
+  currentIndex={currentMarkIndex}
+  onSelect={selectFromList}
+/>
+
         )}
       </div>
     )}
