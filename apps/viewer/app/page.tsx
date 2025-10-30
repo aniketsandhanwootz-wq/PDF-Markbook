@@ -822,10 +822,14 @@ useEffect(() => {
   const el = containerRef.current;
   if (!el) return;
 
-  // If PointerEvents are solid, our pointer-based pinch works.
-  // But on iOS Safari / some WebViews we still need a direct touch fallback.
-  const isIOS = typeof navigator !== 'undefined' && /iPad|iPhone|iPod/.test(navigator.userAgent);
-  const needTouchFallback = isIOS || !(window as any).PointerEvent;
+const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+const isIOS = /iPad|iPhone|iPod/.test(ua);
+const isAndroidChrome = /Android/.test(ua) && /Chrome\/\d+/.test(ua) && !/Edg\//.test(ua);
+
+/* Force touch fallback on iOS AND Android Chrome. Some Androids starve the
+   second pointer when parents have touch-action or swipe handlers. */
+const needTouchFallback = isIOS || isAndroidChrome || !(window as any).PointerEvent;
+
 
   if (!needTouchFallback) return; // keep things lean where pointer events are fine
 
@@ -867,6 +871,8 @@ useEffect(() => {
       };
       // let native know we will handle pinch (prevents browser page zoom)
       // NOTE: passive:false on addEventListener below makes this effective
+          // NEW: while we’re pinching, stop native panning on this scroller
+    (el as HTMLElement).style.touchAction = 'none';
     }
   };
 
@@ -907,6 +913,8 @@ useEffect(() => {
 
   const onTouchEnd = () => {
     state = null;
+      // NEW: restore 1-finger scroll after pinch ends
+  (el as HTMLElement).style.touchAction = 'pan-x pan-y';
   };
 
   // IMPORTANT: passive:false so preventDefault actually cancels native pinch
@@ -1106,17 +1114,25 @@ useEffect(() => {
               onSidebarToggle={() => setSidebarOpen(!sidebarOpen)}
             />
 
-            <div 
-  style={{ 
-    flex: 1, 
-    overflow: 'auto', 
+          <div
+  style={{
+    flex: 1,
+    overflow: 'auto',
     background: '#525252',
     WebkitOverflowScrolling: 'touch',
-    touchAction: 'pan-x pan-y', // allow 1-finger pan; we'll implement 2-finger pinch
-  }} 
+    touchAction: 'pan-x pan-y',
+  }}
   className="pdf-surface-wrap"
   ref={containerRef}
+  // Block multi-touch at the scroller itself so only our pinch handler runs
+  onTouchStartCapture={(e) => {
+    if (e.touches && e.touches.length > 1) e.stopPropagation();
+  }}
+  onTouchMoveCapture={(e) => {
+    if (e.touches && e.touches.length > 1) e.stopPropagation();
+  }}
 >
+
               <div className="pdf-surface">
                 {Array.from({ length: numPages }, (_, i) => i + 1).map((pageNum) => (
                   <div 

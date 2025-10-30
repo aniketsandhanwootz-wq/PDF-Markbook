@@ -1,8 +1,9 @@
 /* Prevent page zoom on mobile, allow PDF zoom only */
 html {
-  touch-action: pan-x pan-y;
+  touch-action: auto;
   -webkit-text-size-adjust: 100%;
 }
+
 
 body {
   touch-action: manipulation;
