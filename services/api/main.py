@@ -29,6 +29,10 @@ import time
 import contextvars
 from collections import defaultdict
 from settings import get_settings
+from fastapi import Body
+from fastapi.responses import StreamingResponse
+from typing import Dict
+from core.report_pdf import generate_report_pdf  # NEW
 
 # ========== NEW: Request Context for Tracing ==========
 request_id_var = contextvars.ContextVar('request_id', default=None)
@@ -971,6 +975,14 @@ class SubmissionRequest(PydanticBaseModel):
     """Request body for submitting mark values"""
     entries: dict[str, str]  # mark_id -> value
 
+class SubmissionReportRequest(PydanticBaseModel):
+    entries: dict[str, str]
+    pdf_url: str | None = None
+    padding_pct: float | None = 0.25
+    title: str | None = "Markbook Submission"
+    author: str | None = "PDF Viewer"
+
+
 @app.post("/mark-sets/{mark_set_id}/submissions")
 async def submit_mark_values(mark_set_id: str, submission: SubmissionRequest):
     """
@@ -1011,6 +1023,71 @@ async def submit_mark_values(mark_set_id: str, submission: SubmissionRequest):
             status_code=500,
             detail=f"Failed to save submissions: {str(e)}"
         )
+
+@app.post("/mark-sets/{mark_set_id}/submissions/report")
+async def submit_and_build_report(mark_set_id: str, body: SubmissionReportRequest = Body(...)):
+    """
+    Save submissions (if Sheets backend) and build a PDF report on the server.
+    Returns `application/pdf` stream. Caller should download.
+    """
+    # 1) Resolve marks for this set
+    marks = storage_get_marks(mark_set_id)
+
+    # 2) Resolve PDF URL
+    pdf_url = body.pdf_url
+    if not pdf_url:
+        # Fallback: derive from storage (sqlite or sheets)
+        if STORAGE_BACKEND == "sqlite":
+            # simple scan using the existing helper
+            all_sets = storage_list_mark_sets()
+            for ms in all_sets:
+                if ms.id == mark_set_id:
+                    pdf_url = ms.pdf_url
+                    break
+        elif STORAGE_BACKEND == "sheets":
+            # scan sheets to map mark_set -> doc -> pdf_url
+            ms_all = storage_adapter._get_all_dicts("mark_sets")
+            ms = next((r for r in ms_all if r["mark_set_id"] == mark_set_id), None)
+            if ms:
+                doc = storage_adapter.get_document(ms["doc_id"])
+                if doc:
+                    pdf_url = doc.get("pdf_url")
+    if not pdf_url:
+        raise HTTPException(status_code=400, detail="pdf_url is required and could not be inferred")
+
+    # 3) Persist submitted values when using Google Sheets
+    try:
+        if STORAGE_BACKEND == "sheets":
+            storage_adapter.save_submissions(mark_set_id, body.entries)
+    except Exception as e:
+        # Non-fatal for the report; still generate PDF
+        logger.warning(f"save_submissions failed (non-fatal): {e}")
+
+    # 4) Build PDF report (server-side)
+    try:
+        pdf_bytes = await generate_report_pdf(
+            pdf_url=pdf_url,
+            marks=[m.model_dump() if hasattr(m, "model_dump") else dict(m) for m in marks],
+            entries=body.entries,
+            padding_pct=body.padding_pct or 0.25,
+            render_zoom=2.0,
+            title=body.title,
+            author=body.author,
+        )
+    except Exception as e:
+        logger.error(f"Report generation failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Report generation failed: {e}")
+
+    # 5) Stream back to client
+    fname = f"submission_{mark_set_id}.pdf"
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{fname}"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 # ========== End of Submissions ==========
 

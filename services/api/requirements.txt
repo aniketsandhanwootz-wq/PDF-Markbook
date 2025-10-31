@@ -10,3 +10,4 @@ cachetools==5.3.2
 psycopg2-binary==2.9.9
 tenacity==8.2.3 
 httpx
+pymupdf==1.24.10

@@ -14,7 +14,6 @@ import ReviewScreen from '../components/ReviewScreen';
 import { clampZoom } from '../lib/pdf';
 import PDFSearch from '../components/PDFSearch';
 import usePinchZoom from '../hooks/usePinchZoom';
-import { makeSubmissionPdfFromImages, downloadBytes } from '../lib/makeSubmissionPdf';
 
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
@@ -49,75 +48,6 @@ function clampScroll(container: HTMLElement, left: number, top: number) {
     left: Math.max(0, Math.min(left, maxL)),
     top: Math.max(0, Math.min(top, maxT)),
   };
-}
-
-// --- submit-time capture (exactly what you see) ---
-async function captureMarkPng(
-  pdf: PDFDocumentProxy,
-  mark: {
-    page_index: number; nx: number; ny: number; nw: number; nh: number; padding_pct?: number;
-  },
-  renderScale = 2
-): Promise<Uint8Array> {
-  // 1) Work in viewport@1 CSS pixels (top-origin like pdf.js canvas)
-  const page = await pdf.getPage(mark.page_index + 1);
-  const vp1 = page.getViewport({ scale: 1 });
-
-  const base = {
-    x: mark.nx * vp1.width,
-    y: mark.ny * vp1.height,
-    w: mark.nw * vp1.width,
-    h: mark.nh * vp1.height,
-  };
-
-  // 2) Padding for context
-  const padFrac = typeof mark.padding_pct === 'number' ? mark.padding_pct : 0.25;
-  const padX = base.w * padFrac;
-  const padY = base.h * padFrac;
-
-  const cropRect = {
-    x: Math.max(0, base.x - padX),
-    y: Math.max(0, base.y - padY),
-    w: Math.min(vp1.width - (base.x - padX), base.w + padX * 2),
-    h: Math.min(vp1.height - (base.y - padY), base.h + padY * 2),
-  };
-
-  // 3) Render full page at renderScale
-  const vp = page.getViewport({ scale: renderScale });
-  const full = document.createElement('canvas');
-  const fctx = full.getContext('2d', { alpha: false })!;
-  full.width = Math.round(vp.width);
-  full.height = Math.round(vp.height);
-  await page.render({ canvasContext: fctx, viewport: vp }).promise;
-
-  // 4) Crop region from the rendered page
-  const sx = Math.max(0, Math.floor(cropRect.x * renderScale));
-  const sy = Math.max(0, Math.floor(cropRect.y * renderScale));
-  const sw = Math.min(full.width - sx, Math.ceil(cropRect.w * renderScale));
-  const sh = Math.min(full.height - sy, Math.ceil(cropRect.h * renderScale));
-
-  const crop = document.createElement('canvas');
-  crop.width = Math.max(1, sw);
-  crop.height = Math.max(1, sh);
-  const cctx = crop.getContext('2d')!;
-  cctx.drawImage(full, sx, sy, sw, sh, 0, 0, sw, sh);
-
-  // 5) Draw the pink box *inside the crop* exactly at the mark rect
-  const rx = (base.x - cropRect.x) * renderScale;
-  const ry = (base.y - cropRect.y) * renderScale;
-  const rw = base.w * renderScale;
-  const rh = base.h * renderScale;
-
-  cctx.save();
-  cctx.lineWidth = Math.max(2, renderScale * 1.5);
-  cctx.strokeStyle = 'rgba(255, 0, 153, 1)';
-  cctx.strokeRect(Math.round(rx) + 0.5, Math.round(ry) + 0.5,
-                  Math.max(1, Math.round(rw) - 1), Math.max(1, Math.round(rh) - 1));
-  cctx.restore();
-
-  const blob: Blob = await new Promise((res) => crop.toBlob(b => res(b!), 'image/png'));
-  const buf = await blob.arrayBuffer();
-  return new Uint8Array(buf);
 }
 
 type Mark = {
@@ -700,48 +630,56 @@ container.scrollTo({ left: clampedL, top: clampedT, behavior: 'smooth' });
     }
   }, [currentMarkIndex, marks]);
 
-  const handleSubmit = useCallback(async () => {
-    if (!markSetId) {
-      toast.error('No mark set ID provided');
-      return;
-    }
+const handleSubmit = useCallback(async () => {
+  if (!markSetId) {
+    toast.error('No mark set ID provided');
+    return;
+  }
 
-    setIsSubmitting(true);
+  setIsSubmitting(true);
 
   try {
-    // 1) Build submission PDF locally and download it
-    const bytes = await makeSubmissionPdf(pdf!, marks, entries, {
-      title: 'Markbook Submission',
-      author: 'PDF Viewer',
-      padding: 0.25,        // 25% extra around mark
-      renderScale: 2,       // 2x render for clarity, safe on phones
-      pageMarginsPt: 36,    // 0.5 in margins
-    });
-    const fname = `submission_${new Date().toISOString().replace(/[:.]/g,'-')}.pdf`;
-    downloadBytes(bytes, fname);
-
-    // 2) Continue your current API flow
-    const response = await fetch(`${apiBase}/mark-sets/${markSetId}/submissions`, {
+    // Call backend to save entries (Sheets) + build the PDF report
+    const response = await fetch(`${apiBase}/mark-sets/${markSetId}/submissions/report`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ entries }),
+      body: JSON.stringify({
+        entries,
+        pdf_url: rawPdfUrl,        // send original URL so backend can fetch
+        padding_pct: 0.25,
+        title: 'Markbook Submission',
+        author: 'PDF Viewer',
+      }),
     });
 
     if (!response.ok) {
-      throw new Error('Failed to submit entries');
+      const text = await response.text();
+      throw new Error(`Report API failed: ${response.status} ${text}`);
     }
 
-    toast.success('✓ Entries submitted successfully!');
+    // Download the returned PDF
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `submission_${new Date().toISOString().replace(/[:.]/g, '-')}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+
+    toast.success('✓ Report generated!');
     setTimeout(() => {
       window.location.href = '/';
-    }, 2000);
+    }, 1500);
   } catch (error) {
     console.error('Submit error:', error);
-    toast.error('Failed to submit entries');
+    toast.error('Failed to generate report');
   } finally {
     setIsSubmitting(false);
   }
-}, [markSetId, entries, apiBase, pdf, marks]);
+}, [markSetId, entries, apiBase, rawPdfUrl]);
+
 
   const swipeHandlers = useSwipeable({
   onSwipedLeft: () => {
