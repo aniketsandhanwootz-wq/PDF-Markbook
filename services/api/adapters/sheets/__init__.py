@@ -317,45 +317,48 @@ class SheetsAdapter(StorageAdapter):
       # ========== NEW: Save Submissions ==========
   
     @retry_sheets_api
-    def save_submissions(self, mark_set_id: str, entries: dict[str, str]) -> dict[str, any]:
+    def save_submissions(self, mark_set_id: str, entries: dict[str, str]) -> dict[str, Any]:
         """
         Save user-submitted values to marks sheet.
         Updates user_value, submitted_at, submitted_by columns.
+        This function works even if these columns already exist or are missing.
         """
-        # Ensure columns exist
+        # --- 1) Read current header and sync our colmap to the REAL sheet header
         header = self.ws["marks"].row_values(1)
-        
-        # Add new columns if they don't exist
-        new_columns_needed = []
-        if "user_value" not in header:
-            new_columns_needed.append("user_value")
-        if "submitted_at" not in header:
-            new_columns_needed.append("submitted_at")
-        if "submitted_by" not in header:
-            new_columns_needed.append("submitted_by")
-        
-        if new_columns_needed:
-            # Append new column headers
-            new_header = header + new_columns_needed
+        if not header:
+            # Seed with the base header if the sheet is empty
+            header = HEADERS["marks"][:]
+            self.ws["marks"].update('A1', [header])
+
+        # IMPORTANT: reflect the ACTUAL header in colmap (it may already have extra columns)
+        self.colmap["marks"] = {col: idx + 1 for idx, col in enumerate(header)}
+
+        # --- 2) Ensure required extra columns exist (append if missing)
+        required_extras = ["user_value", "submitted_at", "submitted_by"]
+        missing = [c for c in required_extras if c not in header]
+        if missing:
+            new_header = header + missing
+            # Write the new header row (preserve existing order, just append)
             self.ws["marks"].update('1:1', [new_header])
-            # Update colmap
-            self.colmap["marks"] = {col: idx + 1 for idx, col in enumerate(new_header)}
-        
-        # Get current timestamp
+            header = new_header
+            # Rebuild colmap to include the new columns
+            self.colmap["marks"] = {col: idx + 1 for idx, col in enumerate(header)}
+
+        # --- 3) Perform row updates
         submitted_at = _utc_iso()
         updated_count = 0
-        
-        # Update each mark with its submitted value
+
         for mark_id, value in entries.items():
             row_idx = self._find_row_by_value("marks", "mark_id", mark_id)
             if row_idx:
+                # Use _update_cells which depends on self.colmap["marks"]. We have synced it above.
                 self._update_cells("marks", row_idx, {
                     "user_value": value,
                     "submitted_at": submitted_at,
-                    "submitted_by": "viewer_user"  # Can be made dynamic later
+                    "submitted_by": "viewer_user"
                 })
                 updated_count += 1
-        
+
         return {
             "updated_count": updated_count,
             "submitted_at": submitted_at

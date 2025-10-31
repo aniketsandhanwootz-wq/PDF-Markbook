@@ -145,32 +145,57 @@ class _ReportBuilder:
             self.cursor_y = self._pdf.get_y()
 
     def add_block(self, *, image: Image.Image, caption_name: str, caption_value: str):
+        """
+        Render a caption + value + image block without ever using a 0-width cell.
+        Key points:
+        - Always reset X to left margin before writing text.
+        - Always pass an explicit width (self.content_w) to multi_cell.
+        - Clamp computed image size so width/height never go <= 0.
+        """
+        # ---- Caption (name) ----
         self._pdf.set_font("Helvetica", "B", 11)
-        self._pdf.multi_cell(0, 6, caption_name)
+        self._pdf.set_xy(self.margin_l, self.cursor_y)           # reset to left margin
+        self._pdf.multi_cell(self.content_w, 6, caption_name)    # explicit width
         self.cursor_y = self._pdf.get_y()
 
+        # ---- Caption (value) ----
         self._pdf.set_font("Helvetica", "", 10)
-        self._pdf.multi_cell(0, 6, f"Value: {caption_value or '—'}")
+        self._pdf.set_xy(self.margin_l, self.cursor_y)           # reset again
+        self._pdf.multi_cell(self.content_w, 6, f"Value: {caption_value or '—'}")
         self._pdf.ln(1)
         self.cursor_y = self._pdf.get_y()
 
+        # ---- Image ----
         img_w_px, img_h_px = image.size
-        if img_w_px == 0 or img_h_px == 0:
+        if img_w_px <= 0 or img_h_px <= 0:
             return
 
-        target_w_mm = self.content_w
-        aspect = img_h_px / img_w_px
-        target_h_mm = target_w_mm * aspect
+        # target size (mm)
+        aspect = img_h_px / max(1, img_w_px)
+        target_w_mm = max(10.0, float(self.content_w))           # never < 10mm
+        target_h_mm = max(5.0, target_w_mm * aspect)
 
+        # Keep on current page if possible; otherwise shrink or push to next page
         space_left_mm = (self.page_h - self._pdf.b_margin) - self.cursor_y
         if target_h_mm > space_left_mm:
-            target_h_mm = space_left_mm - 5
-            target_w_mm = max(10, target_h_mm / aspect)
-        else:
-            target_w_mm = target_w_mm = self.content_w
+            # Try to shrink to fit current page a bit; if still tight, move to new page
+            shrink_h = max(5.0, space_left_mm - 5.0)
+            shrink_w = max(10.0, shrink_h / aspect)
+            if shrink_h < 10.0:
+                # not worth squeezing; use a fresh page
+                self._pdf.add_page()
+                self.cursor_y = self._pdf.get_y()
+                space_left_mm = (self.page_h - self._pdf.b_margin) - self.cursor_y
+                target_h_mm = max(5.0, min(space_left_mm - 2.0, target_h_mm))
+                target_w_mm = max(10.0, target_h_mm / aspect)
+            else:
+                target_h_mm = shrink_h
+                target_w_mm = shrink_w
 
-        self._ensure_space(target_h_mm + 2)
+        # Ensure there's room (header already accounted for)
+        self._ensure_space(target_h_mm + 2.0)
 
+        # Place image
         bio = io.BytesIO()
         image.save(bio, format="PNG")
         bio.seek(0)
@@ -178,6 +203,7 @@ class _ReportBuilder:
         self._pdf.image(bio, x=self.margin_l, y=self.cursor_y, w=target_w_mm)
         self.cursor_y = self._pdf.get_y() + target_h_mm
         self._pdf.ln(3)
+
 
     def build(self) -> bytes:
         data = self._pdf.output(dest="S")
