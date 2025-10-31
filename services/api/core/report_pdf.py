@@ -1,12 +1,89 @@
 # services/api/core/report_pdf.py
+
 from __future__ import annotations
 import io
-from typing import Dict, List, Optional
-import httpx
-import fitz  # PyMuPDF
+import math
+from typing import Dict, List, Optional, Tuple, Any
 
-# A4 portrait (points)
-A4_W, A4_H = 595.0, 842.0
+import httpx
+import pdfium  # python-pdfium2
+from PIL import Image, ImageDraw
+from fpdf import FPDF
+
+
+# ---------- Public API -------------------------------------------------------
+
+async def generate_report_pdf(
+    *,
+    pdf_url: str,
+    marks: List[Dict[str, Any]],
+    entries: Dict[str, str],
+    padding_pct: float = 0.25,
+    render_zoom: float = 2.0,
+    title: Optional[str] = "Markbook Submission",
+    author: Optional[str] = "PDF Viewer",
+) -> bytes:
+    """
+    Render crops for marks using python-pdfium2, draw a magenta box,
+    and compile a multi-page PDF report (fpdf2). Returns PDF bytes.
+
+    Args:
+        pdf_url: Source PDF URL (original, not the proxy).
+        marks:   List of dicts with keys: page_index, name, nx, ny, nw, nh, mark_id (optional), order_index.
+        entries: Dict[mark_id -> value] or empty values for demo marks.
+        padding_pct: Extra padding around each crop (fraction of the larger side of the rect).
+        render_zoom: Scale factor for rasterizing page (2.0 ≈ 144 DPI; 2.5 ≈ 180 DPI).
+        title, author: Metadata + header text.
+
+    Returns:
+        PDF bytes (ready to stream / download).
+    """
+    # 1) Fetch source PDF
+    pdf_bytes = await _fetch_pdf_bytes(pdf_url)
+
+    # 2) Open with pdfium
+    doc = pdfium.PdfDocument(pdf_bytes)
+
+    # 3) Sort marks (stable by order_index then name)
+    marks_sorted = sorted(
+        marks,
+        key=lambda m: (int(m.get("order_index", 0)), str(m.get("name", "")))
+    )
+
+    # 4) Build report pages
+    report = _ReportBuilder(title=title, author=author)
+
+    for m in marks_sorted:
+        page_index = int(m["page_index"])
+        nx = float(m["nx"]); ny = float(m["ny"])
+        nw = float(m["nw"]); nh = float(m["nh"])
+        mark_name = str(m.get("name", f"Mark@{page_index}"))
+        mark_id = m.get("mark_id", None)
+
+        # 4a) Render the cropped region (PNG bytes) with a visual box
+        crop_img = _render_crop(
+            doc=doc,
+            page_index=page_index,
+            rect_norm=(nx, ny, nw, nh),
+            render_zoom=render_zoom,
+            padding_pct=padding_pct
+        )
+
+        # 4b) Compose a block in the PDF
+        value = ""
+        if mark_id:
+            value = entries.get(mark_id, "")
+        report.add_block(
+            image=crop_img,
+            caption_name=mark_name,
+            caption_value=value
+        )
+
+    # 5) Export to bytes
+    return report.build()
+
+
+# ---------- Internals --------------------------------------------------------
 
 async def _fetch_pdf_bytes(url: str, timeout: float = 30.0) -> bytes:
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
@@ -14,122 +91,150 @@ async def _fetch_pdf_bytes(url: str, timeout: float = 30.0) -> bytes:
         r.raise_for_status()
         return r.content
 
-def _expand(rect: fitz.Rect, pad_x: float, pad_y: float, clip: fitz.Rect) -> fitz.Rect:
-    out = fitz.Rect(rect.x0 - pad_x, rect.y0 - pad_y, rect.x1 + pad_x, rect.y1 + pad_y)
-    out.intersect(clip)  # clamp to page
-    return out
 
-def _pink() -> fitz.utils.Shape:
-    # placeholder; we’ll just return color tuple where needed
-    return (1.0, 0.0, 0.6)  # RGB 0..1
-
-async def generate_report_pdf(
+def _render_crop(
     *,
-    pdf_url: str,
-    marks: List[Dict],
-    entries: Dict[str, str],
-    padding_pct: float = 0.25,
-    render_zoom: float = 2.0,
-    title: Optional[str] = None,
-    author: Optional[str] = None,
-) -> bytes:
+    doc: pdfium.PdfDocument,
+    page_index: int,
+    rect_norm: Tuple[float, float, float, float],
+    render_zoom: float,
+    padding_pct: float
+) -> Image.Image:
     """
-    Build a report PDF:
-    - For each mark: render a cropped image with a pink box exactly on the marked rect,
-      then place it on an A4 page with the mark name + submitted value.
-    - `marks` must contain normalized coords: nx, ny, nw, nh and page_index (0-based).
+    Render a page with pdfium to a PIL image at `render_zoom`,
+    crop the normalized rectangle with padding, draw a magenta box, and return the PIL image.
     """
-    # Load source PDF (bytes -> in-memory doc)
-    pdf_bytes = await _fetch_pdf_bytes(pdf_url)
-    src = fitz.open(stream=pdf_bytes, filetype="pdf")
+    page = doc[page_index]
 
-    # Output doc (A4 portrait)
-    out = fitz.open()
-    if title:
-        out.set_metadata({"title": title})
-    if author:
-        meta = out.metadata or {}
-        meta["author"] = author
-        out.set_metadata(meta)
+    # Render entire page at desired zoom (scale factor, not DPI).
+    # Rough DPI = 72 * render_zoom. (render_zoom=2.5 ~ 180 DPI)
+    pil_page: Image.Image = page.render(scale=render_zoom).to_pil()
 
-    pink = _pink()
-    font_size_name = 12
-    font_size_value = 13
+    W, H = pil_page.size  # pixels
+    nx, ny, nw, nh = rect_norm
 
-    for m in sorted(marks, key=lambda x: x.get("order_index", 0)):
-        p_idx = int(m["page_index"])
-        page = src.load_page(p_idx)
-        w1, h1 = page.rect.width, page.rect.height  # points at zoom=1
+    # Rect in pixels
+    rx = int(round(nx * W))
+    ry = int(round(ny * H))
+    rw = int(round(nw * W))
+    rh = int(round(nh * H))
 
-        # Normalized -> absolute (points at zoom=1)
-        nx, ny, nw, nh = float(m["nx"]), float(m["ny"]), float(m["nw"]), float(m["nh"])
-        rect_abs = fitz.Rect(nx * w1, ny * h1, (nx + nw) * w1, (ny + nh) * h1)
+    # Padding in pixels (relative to larger dimension of rect)
+    pad = int(round(padding_pct * max(rw, rh)))
 
-        # Padding
-        pad_x, pad_y = rect_abs.width * padding_pct, rect_abs.height * padding_pct
-        crop_rect = _expand(rect_abs, pad_x, pad_y, page.rect)
+    # Crop box with padding, clamped
+    x0 = max(0, rx - pad)
+    y0 = max(0, ry - pad)
+    x1 = min(W, rx + rw + pad)
+    y1 = min(H, ry + rh + pad)
 
-        # Draw pink box on the *source* page (not saved anywhere) before rendering
-        shape = page.new_shape()
-        shape.draw_rect(rect_abs)
-        shape.finish(width=max(2, 1.5 * render_zoom), color=pink)  # stroke only
-        shape.commit(overlay=True)
+    crop = pil_page.crop((x0, y0, x1, y1)).convert("RGB")
 
-        # Render clipped region to pixmap
-        mat = fitz.Matrix(render_zoom, render_zoom)
-        pm = page.get_pixmap(matrix=mat, clip=crop_rect, alpha=False)
-
-        # New report page
-        rp = out.new_page(width=A4_W, height=A4_H)
-
-        # Place the raster on report page, fit within margins
-        margin = 36  # 0.5 inch
-        box_w = A4_W - margin * 2
-        box_h = A4_H - margin * 2 - 90  # reserve space for headers
-        # Compute image box preserving aspect ratio
-        img_ratio = pm.width / pm.height
-        avail_ratio = box_w / box_h
-        if img_ratio >= avail_ratio:
-            draw_w = box_w
-            draw_h = box_w / img_ratio
-        else:
-            draw_h = box_h
-            draw_w = box_h * img_ratio
-
-        draw_x = margin + (box_w - draw_w) / 2
-        draw_y = margin + 70  # leave header space above
-
-        # Insert raster
-        rp.insert_image(
-            fitz.Rect(draw_x, draw_y, draw_x + draw_w, draw_y + draw_h),
-            stream=pm.tobytes("png"),
-            keep_proportion=True,
+    # Draw a visual rectangle where the original mark sits inside the crop
+    draw = ImageDraw.Draw(crop)
+    # Offset of the mark inside the crop:
+    dx = rx - x0
+    dy = ry - y0
+    # Outline thickness
+    thick = max(2, int(round(min(crop.size) * 0.004)))  # scale with image size (≈2–4 px)
+    for t in range(thick):
+        draw.rectangle(
+            [dx + t, dy + t, dx + rw - 1 - t, dy + rh - 1 - t],
+            outline=(255, 0, 180)
         )
 
-        # Header texts (mark name + value)
-        mark_name = str(m.get("name", "Mark"))
-        mark_id = str(m.get("mark_id", ""))
-        value = entries.get(mark_id, "")
+    return crop
 
-        # Title line
-        rp.insert_text(
-            fitz.Point(margin, margin + 18),
-            f"{mark_name}",
-            fontsize=font_size_name,
-            fontname="helv",
-            color=(0, 0, 0),
-        )
-        # Value (slightly larger)
-        rp.insert_text(
-            fitz.Point(margin, margin + 40),
-            f"Input: {value}",
-            fontsize=font_size_value,
-            fontname="helv",
-            color=(0, 0, 0),
-        )
 
-    # Serialize
-    out_bytes = out.tobytes(deflate=True)
-    out.close()
-    src.close()
-    return out_bytes
+class _ReportBuilder:
+    """
+    Simple vertical-flow report:
+      - A4 portrait, margins (L=R=15mm, T=B=15mm)
+      - For each mark: Caption (bold name + value) then the crop image (fit width).
+      - Flows onto next page when needed.
+    """
+
+    def __init__(self, *, title: Optional[str], author: Optional[str]):
+        self._pdf = FPDF(orientation="P", unit="mm", format="A4")
+        self._pdf.set_auto_page_break(auto=True, margin=15)
+        self._pdf.add_page()
+        self._pdf.set_author(author or "")
+        self._pdf.set_title(title or "Report")
+
+        # Header
+        if title:
+            self._pdf.set_font("Helvetica", "B", 16)
+            self._pdf.cell(0, 10, txt=title, ln=1)
+        self._pdf.ln(2)
+
+        self.page_w = self._pdf.w  # total width (mm)
+        self.page_h = self._pdf.h
+        self.margin_l = self._pdf.l_margin
+        self.margin_r = self._pdf.r_margin
+        self.cursor_y = self._pdf.get_y()
+
+        # Content width (mm)
+        self.content_w = self.page_w - self.margin_l - self.margin_r
+
+    def _ensure_space(self, block_h_mm: float):
+        """Add page if the next block won't fit."""
+        bottom_margin = self._pdf.b_margin
+        if self.cursor_y + block_h_mm > (self.page_h - bottom_margin):
+            self._pdf.add_page()
+            self.cursor_y = self._pdf.get_y()
+
+    def add_block(self, *, image: Image.Image, caption_name: str, caption_value: str):
+        # 1) Caption
+        self._pdf.set_font("Helvetica", "B", 11)
+        name_text = f"{caption_name}"
+        self._pdf.multi_cell(0, 6, name_text)
+        self.cursor_y = self._pdf.get_y()
+
+        self._pdf.set_font("Helvetica", "", 10)
+        val_text = caption_value if caption_value else "—"
+        self._pdf.multi_cell(0, 6, f"Value: {val_text}")
+        self._pdf.ln(1)
+        self.cursor_y = self._pdf.get_y()
+
+        # 2) Image (fit to content width, keep aspect ratio)
+        img_w_px, img_h_px = image.size
+        if img_w_px == 0 or img_h_px == 0:
+            return  # skip invalid
+
+        # target width in mm
+        target_w_mm = self.content_w
+        # convert needed height (mm) preserving aspect
+        # fpdf uses 96 DPI by default when calculating images; to be safe, use ratio.
+        aspect = img_h_px / img_w_px
+        target_h_mm = target_w_mm * aspect
+
+        # Make sure it fits; if too tall, reduce width to fit remaining page height
+        space_left_mm = (self.page_h - self._pdf.b_margin) - self.cursor_y
+        if target_h_mm > space_left_mm:
+            # shrink to fit
+            target_h_mm = space_left_mm - 5
+            target_w_mm = max(10, target_h_mm / aspect)
+
+        # If still not enough space, new page
+        self._ensure_space(target_h_mm + 2)
+
+        # Save PIL image to in-memory PNG and embed
+        bio = io.BytesIO()
+        image.save(bio, format="PNG")
+        bio.seek(0)
+
+        x_mm = self.margin_l
+        y_mm = self.cursor_y
+        self._pdf.image(bio, x=x_mm, y=y_mm, w=target_w_mm)
+        self.cursor_y = y_mm + target_h_mm
+
+        # tiny gap before next block
+        self._pdf.ln(3)
+        self.cursor_y = self._pdf.get_y()
+
+    def build(self) -> bytes:
+        # fpdf2 returns str when dest='S' → encode to latin-1 (PDF is binary-safe there)
+        data = self._pdf.output(dest="S")
+        if isinstance(data, str):
+            return data.encode("latin-1")
+        return bytes(data)

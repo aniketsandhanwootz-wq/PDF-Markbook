@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: pdf-marker-api
+    rootDir: services/api
+    env: docker
+    plan: free
+    autoDeploy: true
+    region: oregon
+    dockerfilePath: services/api/Dockerfile
+    healthCheckPath: /healthz
+    envVars:
+      - key: PORT
+        value: "8000"
+      # Add your own env vars here (SHEETS spreadsheet id, etc.)

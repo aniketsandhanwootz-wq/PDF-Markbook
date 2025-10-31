@@ -33,6 +33,7 @@ from fastapi import Body
 from fastapi.responses import StreamingResponse
 from typing import Dict
 from core.report_pdf import generate_report_pdf  # NEW
+import io
 
 # ========== NEW: Request Context for Tracing ==========
 request_id_var = contextvars.ContextVar('request_id', default=None)
