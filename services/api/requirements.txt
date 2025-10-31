@@ -9,6 +9,6 @@ google-auth==2.35.0
 cachetools==5.3.2
 tenacity==8.2.3 
 httpx
-python-pdfium2>=4.27,<5
-Pillow>=10.0.0
+pypdfium2>=4.27,<5
+Pillow>=9.2
 fpdf2>=2.7.8
