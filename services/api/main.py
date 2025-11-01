@@ -321,7 +321,14 @@ def storage_get_marks(mark_set_id: str) -> List[Mark]:
     elif STORAGE_BACKEND == "sheets":
         try:
             marks_data = storage_adapter.list_marks(mark_set_id)
-            return [Mark(**m) for m in marks_data]
+            cleaned: list[Mark] = []
+            for m in marks_data:
+                try:
+                    cleaned.append(Mark(**m))
+                except Exception as e:
+                    logger.warning(f"Skipping invalid mark in {mark_set_id}: {e}")
+                    continue
+            return cleaned
         except ValueError as e:
             if "MARK_SET_NOT_FOUND" in str(e):
                 raise HTTPException(status_code=404, detail=f"Mark set {mark_set_id} not found")
@@ -353,17 +360,16 @@ def storage_replace_marks(mark_set_id: str, marks: List[Mark]) -> int:
         # Get the mark_set to find its doc_id
         mark_sets_data = storage_adapter._get_all_dicts("mark_sets")
         mark_set = next((ms for ms in mark_sets_data if ms["mark_set_id"] == mark_set_id), None)
-        
         if not mark_set:
             raise HTTPException(status_code=404, detail=f"Mark set {mark_set_id} not found")
-        
+
         doc_id = mark_set["doc_id"]
-        
+
         # Get existing pages for this document
         existing_pages = storage_adapter._pages_for_doc(doc_id)
         page_index_to_id = {p["idx"]: p["page_id"] for p in existing_pages}
-        
-        # Bootstrap any missing pages
+
+        # Bootstrap any missing pages for given marks
         needed_page_indices = set(mark.page_index for mark in marks)
         for page_idx in needed_page_indices:
             if page_idx not in page_index_to_id:
@@ -374,66 +380,83 @@ def storage_replace_marks(mark_set_id: str, marks: List[Mark]) -> int:
                 ]])
                 page_index_to_id[page_idx] = page_id
                 storage_adapter._pages_by_doc_cache.pop(doc_id, None)
-        
+
+        # ---- keep documents.page_count up to date (max page idx + 1) ----
+        pages_now = storage_adapter._pages_for_doc(doc_id)
+        max_idx = max((p["idx"] for p in pages_now), default=-1)
+        computed_page_count = max_idx + 1
+        doc_row_idx = storage_adapter._find_row_by_value("documents", "doc_id", doc_id)
+        if doc_row_idx:
+            storage_adapter._update_cells("documents", doc_row_idx, {
+                "page_count": computed_page_count,
+                "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            })
+
         # Get all existing marks
         all_marks = storage_adapter._get_all_dicts("marks")
         existing_marks_for_set = [m for m in all_marks if m.get("mark_set_id") == mark_set_id]
         deleted_count = len(existing_marks_for_set)
-        
-        # Build new marks list (keep other mark sets, replace this one)
-        header_marks = ["mark_id", "mark_set_id", "page_id", "order_index", "name", "label",
-                       "nx", "ny", "nw", "nh", "zoom_hint", "padding_pct", "anchor"]
-        
-        filtered_marks = [header_marks]
-        
-        # Keep marks from other mark_sets
-        for m in all_marks:
-            if m.get("mark_set_id") != mark_set_id:
-                filtered_marks.append([
-    m.get("mark_id", ""), m.get("mark_set_id", ""), m.get("page_id", ""),
-    m.get("order_index", ""), m.get("name", ""),
-    m.get("label", ""),   # NEW
-    m.get("nx", ""), m.get("ny", ""), m.get("nw", ""), m.get("nh", ""),
-    m.get("zoom_hint", ""), m.get("padding_pct", ""), m.get("anchor", "")
-])
 
-        
-        # Add new marks for this mark_set
+        # ---- Preserve REAL header & submission columns ----
+        current_header = storage_adapter.ws["marks"].row_values(1)
+        if not current_header:
+            # fall back to the adapter's canonical header (already includes submission cols)
+            current_header = storage_adapter.ws["marks"].get_values("1:1")[0] if storage_adapter.ws["marks"].get_values("1:1") else [
+                "mark_id","mark_set_id","page_id","order_index","name","label",
+                "nx","ny","nw","nh","zoom_hint","padding_pct","anchor",
+                "user_value","submitted_at","submitted_by"
+            ]
+
+        # Make sure the 3 extra columns exist
+        for extra in ["user_value","submitted_at","submitted_by"]:
+            if extra not in current_header:
+                current_header.append(extra)
+
+        # Keep marks from other mark_sets (preserve ALL columns)
+        filtered_rows = [current_header]
+        for m in all_marks:
+            if m.get("mark_set_id") == mark_set_id:
+                continue
+            row = [m.get(col, "") for col in current_header]
+            filtered_rows.append(row)
+
+        # Add new marks for this mark_set (submission columns blank)
         for mark in marks:
-            mark_id = mark.mark_id if mark.mark_id and not mark.mark_id.startswith('temp-') else str(uuid.uuid4())
+            mark_id = mark.mark_id if (mark.mark_id and not mark.mark_id.startswith('temp-')) else str(uuid.uuid4())
             page_id = page_index_to_id.get(mark.page_index)
-            
             if not page_id:
                 logger.error(f"Could not find page_id for page_index {mark.page_index}")
                 continue
-            
-            filtered_marks.append([
-    mark_id, mark_set_id, page_id, mark.order_index, mark.name,
-    (mark.label or ""),  # NEW
-    mark.nx, mark.ny, mark.nw, mark.nh,
-    mark.zoom_hint if mark.zoom_hint is not None else "",
-    0.1, "auto"
-])
 
+            base = {
+                "mark_id": mark_id,
+                "mark_set_id": mark_set_id,
+                "page_id": page_id,
+                "order_index": mark.order_index,
+                "name": mark.name,
+                "label": (mark.label or ""),
+                "nx": mark.nx, "ny": mark.ny, "nw": mark.nw, "nh": mark.nh,
+                "zoom_hint": (mark.zoom_hint if mark.zoom_hint is not None else ""),
+                "padding_pct": 0.1,
+                "anchor": "auto",
+                "user_value": "",
+                "submitted_at": "",
+                "submitted_by": "",
+            }
+            filtered_rows.append([base.get(col, "") for col in current_header])
             logger.info(f"Added mark '{mark.name}' with ID {mark_id} on page {mark.page_index}")
-        
+
         # Write everything back to the marks sheet
         storage_adapter.ws["marks"].clear()
-        storage_adapter.ws["marks"].update('A1', filtered_marks)
-        
-        logger.info(f"Replaced {deleted_count} marks with {len(marks)} new marks in Google Sheets")
-        
-        # Update document timestamp
-        current_timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        doc_row_idx = storage_adapter._find_row_by_value("documents", "doc_id", doc_id)
-        if doc_row_idx:
-            storage_adapter._update_cells("documents", doc_row_idx, {"updated_at": current_timestamp})
-        
+        storage_adapter.ws["marks"].update('A1', filtered_rows)
+
         # Clear caches
         storage_adapter._doc_cache.pop(doc_id, None)
         storage_adapter._pages_by_doc_cache.pop(doc_id, None)
-    
+
+        logger.info(f"Replaced {deleted_count} marks with {len(marks)} new marks in Google Sheets")
     return deleted_count
+
 def storage_delete_mark_set(mark_set_id: str) -> int:
     """Delete a mark set and all its marks from the configured storage backend."""
     marks_deleted = 0

@@ -16,11 +16,39 @@ HEADERS = {
     "documents": ["doc_id", "pdf_url", "hash", "page_count", "created_by", "created_at", "updated_at"],
     "pages":     ["page_id", "doc_id", "idx", "width_pt", "height_pt", "rotation_deg"],
     "mark_sets": ["mark_set_id", "doc_id", "label", "is_active", "created_by", "created_at"],
-    "marks":     ["mark_id", "mark_set_id", "page_id", "order_index", "name", "label", "nx", "ny", "nw", "nh", "zoom_hint", "padding_pct", "anchor"],
+    # ⬇️ add submission columns to the canonical header
+    "marks":     [
+        "mark_id", "mark_set_id", "page_id", "order_index", "name", "label",
+        "nx", "ny", "nw", "nh", "zoom_hint", "padding_pct", "anchor",
+        "user_value", "submitted_at", "submitted_by"
+    ],
 }
+
 
 SHEET_TAB_ORDER = ["documents", "pages", "mark_sets", "marks"]
 
+def _safe_float(v, default=None):
+    try:
+        if v is None:
+            return default
+        s = str(v).strip().lower()
+        if s in ("", "nan", "null", "none"):
+            return default
+        return float(s)
+    except Exception:
+        return default
+
+def _safe_int(v, default=None):
+    try:
+        if v is None:
+            return default
+        s = str(v).strip()
+        if s == "":
+            return default
+        # allow "3.0" etc
+        return int(float(s))
+    except Exception:
+        return default
 
 def _utc_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -107,13 +135,22 @@ class SheetsAdapter(StorageAdapter):
     def _ensure_headers(self, name: str) -> dict[str, int]:
         ws = self.ws[name]
         values = ws.get_values("1:1")
-        header = values[0] if values else []
-        if header != HEADERS[name]:
-            if values:
-                ws.update("1:1", [HEADERS[name]])
-            else:
-                ws.update("A1", [HEADERS[name]])
-        return {col: idx + 1 for idx, col in enumerate(HEADERS[name])}
+        existing = values[0] if values else []
+
+        base = HEADERS[name][:]
+        if not existing:
+            ws.update("A1", [base])
+            header = base
+        else:
+            # If required base columns are missing, append them at the end.
+            # If the sheet already has extra columns, KEEP them.
+            missing = [c for c in base if c not in existing]
+            header = existing + missing if missing else existing
+            if header != existing:
+                ws.update("1:1", [header])
+
+        return {col: idx + 1 for idx, col in enumerate(header)}
+
 
     @retry_sheets_api
     def _get_all_dicts(self, tab: str) -> list[dict[str, Any]]:
@@ -258,24 +295,53 @@ class SheetsAdapter(StorageAdapter):
     def list_marks(self, mark_set_id: str) -> list[dict[str, Any]]:
         """Get all marks for a mark set, ordered by order_index."""
         marks = [r for r in self._get_all_dicts("marks") if r["mark_set_id"] == mark_set_id]
+
+        # Build page_id -> page_index map once
         pages_all = self._get_all_dicts("pages")
-        pid_to_idx: dict[str, int] = {p["page_id"]: int(p["idx"]) for p in pages_all}
-        out = []
+        pid_to_idx: dict[str, int] = {}
+        for p in pages_all:
+            # tolerate blanks in the pages sheet too
+            pid = p.get("page_id", "")
+            idx = _safe_int(p.get("idx"), default=None)
+            if pid and idx is not None:
+                pid_to_idx[pid] = idx
+
+        out: list[dict[str, Any]] = []
         for m in marks:
-            out.append({
-    "mark_id": m["mark_id"],
-    "page_index": pid_to_idx.get(m["page_id"], 0),
-    "order_index": int(m["order_index"]),
-    "name": m["name"],
-    "label": m.get("label", "") or "",
-    "nx": float(m["nx"]), "ny": float(m["ny"]), "nw": float(m["nw"]), "nh": float(m["nh"]),
-    "zoom_hint": (None if m["zoom_hint"] == "" else float(m["zoom_hint"])),
-    "padding_pct": (0.1 if m["padding_pct"] == "" else float(m["padding_pct"])),
-    "anchor": m["anchor"] or "auto",
-})
+            try:
+                nx = _safe_float(m.get("nx"), default=None)
+                ny = _safe_float(m.get("ny"), default=None)
+                nw = _safe_float(m.get("nw"), default=None)
+                nh = _safe_float(m.get("nh"), default=None)
+
+                # Required fields missing? skip the row instead of crashing
+                if None in (nx, ny, nw, nh):
+                    # optional: log once per bad row
+                    # print(f"Skipping mark_id={m.get('mark_id')} due to blank geometry")
+                    continue
+
+                zoom_hint = _safe_float(m.get("zoom_hint"), default=None)
+                padding_pct = _safe_float(m.get("padding_pct"), default=0.1)
+
+                out.append({
+                    "mark_id": m.get("mark_id", ""),
+                    "page_index": pid_to_idx.get(m.get("page_id", ""), 0),
+                    "order_index": _safe_int(m.get("order_index"), default=0),
+                    "name": m.get("name", ""),
+                    "label": (m.get("label", "") or ""),
+                    "nx": nx, "ny": ny, "nw": nw, "nh": nh,
+                    "zoom_hint": zoom_hint,
+                    "padding_pct": padding_pct,
+                    "anchor": (m.get("anchor") or "auto"),
+                })
+            except Exception:
+                # Any unexpected row issues? just skip
+                continue
 
         out.sort(key=lambda r: r["order_index"])
         return out
+
+       
 
     def patch_mark(self, mark_id: str, updates: dict[str, Any]) -> dict[str, Any]:
         r = self._find_row_by_value("marks", "mark_id", mark_id)
