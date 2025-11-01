@@ -15,6 +15,7 @@ type ZoomToolbarProps = {
   currentPage?: number;
   totalPages?: number;
   onPageJump?: (page: number) => void;
+  onFinalize?: () => void; // Finalize & Download
 };
 
 export default function ZoomToolbar({
@@ -30,6 +31,7 @@ export default function ZoomToolbar({
   currentPage,
   totalPages,
   onPageJump,
+  onFinalize, // ✅ NEW
 }: ZoomToolbarProps) {
   const [pageInput, setPageInput] = useState('');
 
@@ -105,20 +107,19 @@ export default function ZoomToolbar({
 
       {/* Zoom Controls */}
       <div className="zoom-controls">
-        <button onClick={onZoomOut} className="toolbar-btn" title="Zoom out">
-          −
-        </button>
-        <span className="zoom-label">{Math.round(zoom * 100)}%</span>
-        <button onClick={onZoomIn} className="toolbar-btn" title="Zoom in">
-          +
-        </button>
-        <button onClick={onReset} className="toolbar-btn" title="Reset zoom (100%)">
-          Reset
-        </button>
-        <button onClick={onFit} className="toolbar-btn" title="Fit to width">
-          Fit
-        </button>
-      </div>
+  <button onClick={onZoomOut} className="toolbar-btn" title="Zoom out">−</button>
+  <span className="zoom-label">{Math.round(zoom * 100)}%</span>
+  <button onClick={onZoomIn} className="toolbar-btn" title="Zoom in">+</button>
+  <button onClick={onReset} className="toolbar-btn" title="Reset zoom (100%)">Reset</button>
+  <button onClick={onFit} className="toolbar-btn" title="Fit to width">Fit</button>
+
+  {onFinalize && (
+    <button onClick={onFinalize} className="toolbar-btn toolbar-primary" title="Finalize & Download">
+      Finalize & Download
+    </button>
+  )}
+</div>
+
     </div>
   );
 }

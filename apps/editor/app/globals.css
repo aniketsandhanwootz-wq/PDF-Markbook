@@ -512,3 +512,47 @@ body {
     min-width: 40px;
   }
 }
+
+/* Mark label circle on canvas */
+.mark-label-badge {
+  position: absolute;
+  top: -12px;
+  left: -12px;
+  width: 24px;
+  height: 24px;
+  border: 2px solid #000;
+  background: #fff;
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 700;
+  color: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+/* Label chip in sidebar */
+.label-chip {
+  display: inline-block;
+  min-width: 18px;
+  padding: 2px 6px;
+  margin-right: 8px;
+  border-radius: 999px;
+  border: 1px solid #bbb;
+  background: #fff;
+  color: #333;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+  vertical-align: baseline;
+}
+
+/* Primary toolbar button look (optional) */
+.toolbar-primary {
+  border-color: #1976d2;
+}
+.toolbar-primary:hover {
+  background: #e3f2fd;
+  border-color: #1565c0;
+}

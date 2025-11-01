@@ -6,11 +6,7 @@ export const metadata: Metadata = {
   description: 'Create and manage PDF marks',
 };
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
       <body>{children}</body>

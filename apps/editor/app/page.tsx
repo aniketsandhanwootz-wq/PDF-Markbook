@@ -11,6 +11,8 @@ import Toast from '../components/Toast';
 import FloatingNameBox from '../components/FloatingNameBox';
 import { clampZoom, computeZoomForRect, scrollToRect } from '../lib/pdf';
 import PDFSearch from '../components/PDFSearch';
+import { applyLabels, indexToLabel } from '../lib/labels';
+import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
@@ -24,6 +26,7 @@ type Mark = {
   nw: number;
   nh: number;
   zoom_hint?: number | null;
+  label?: string; // ✅ NEW
 };
 
 type Rect = { x: number; y: number; w: number; h: number };
@@ -250,6 +253,17 @@ function EditorContent() {
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [numPages, setNumPages] = useState(0);
   const [marks, setMarks] = useState<Mark[]>([]);
+  // Keep labels in sync with order_index so UI and saves stay consistent
+useEffect(() => {
+  setMarks(prev => {
+    if (prev.length === 0) return prev;
+    const withLabels = applyLabels(prev);
+    const changed = withLabels.some((m, i) => m.label !== prev[i].label);
+    return changed ? withLabels : prev;
+  });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [marks.length]);
+
   const [selectedMarkId, setSelectedMarkId] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1.0);
   const [loading, setLoading] = useState(false);
@@ -549,7 +563,7 @@ function EditorContent() {
       await fetch(`${apiBase}/mark-sets/${markSetId.current}/marks`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(marks),
+        body: JSON.stringify(applyLabels(marks)),
       });
 
       addToast('Saved successfully', 'success');
@@ -699,6 +713,71 @@ function EditorContent() {
       setZoom(clampZoom(newZoom));
     });
   }, [pdf]);
+
+const finalizeAndDownload = useCallback(async () => {
+  try {
+    const res = await fetch(pdfUrl.current);
+    const srcBytes: ArrayBuffer = await res.arrayBuffer();
+
+    const doc = await PDFDocument.load(srcBytes);
+    const font = await doc.embedFont(StandardFonts.Helvetica);
+
+    const toDraw = applyLabels(marks);
+    toDraw.forEach(m => {
+      const page = doc.getPage(m.page_index);
+      const { width, height } = page.getSize();
+
+      const x = m.nx * width;
+      const w = m.nw * width;
+      const y = (1 - m.ny - m.nh) * height;
+      const h = m.nh * height;
+
+      page.drawRectangle({
+        x, y, width: w, height: h,
+        borderWidth: 2,
+        color: undefined,
+        borderColor: rgb(0.0, 0.55, 0.2)
+      });
+
+      const r = Math.max(8, Math.min(12, Math.min(w, h) * 0.06));
+      const cx = x, cy = y + h;
+
+      page.drawCircle({
+        x: cx + r + 3, y: cy - r - 3, size: r,
+        borderWidth: 1.5,
+        borderColor: rgb(0, 0, 0),
+        color: undefined,
+      });
+
+      const label = m.label ?? indexToLabel(m.order_index);
+      const textSize = r;
+      const textWidth = font.widthOfTextAtSize(label, textSize);
+      const textX = cx + r + 3 - textWidth / 2;
+      const textY = cy - r - 3 - textSize / 3;
+
+      page.drawText(label, {
+        x: textX, y: textY, size: textSize, font, color: rgb(0, 0, 0),
+      });
+    });
+
+// 4) download
+const pdfBytes: Uint8Array = await doc.save(); // explicit
+const blob = new Blob([pdfBytes as unknown as BlobPart], { type: 'application/pdf' });
+const a = document.createElement('a');
+a.href = URL.createObjectURL(blob);
+a.download = 'marked-document.pdf';
+a.click();
+URL.revokeObjectURL(a.href);
+
+
+
+    addToast('PDF generated', 'success');
+  } catch (e) {
+    console.error(e);
+    addToast('Failed to generate PDF', 'error');
+  }
+}, [marks, addToast]);
+
 
   // Wheel zoom - prevent browser zoom, only zoom PDF (SLOWER SPEED)
   useEffect(() => {
@@ -1007,15 +1086,17 @@ const handleSearchResult = useCallback((pageNumber: number, highlights: any[]) =
 
       <div className="main-content">
         <ZoomToolbar
-          zoom={zoom}
-          onZoomIn={zoomIn}
-          onZoomOut={zoomOut}
-          onReset={resetZoom}
-          onFit={fitToWidthZoom}
-          currentPage={currentPage}
-          totalPages={numPages}
-          onPageJump={jumpToPage}
-        />
+  zoom={zoom}
+  onZoomIn={zoomIn}
+  onZoomOut={zoomOut}
+  onReset={resetZoom}
+  onFit={fitToWidthZoom}
+  currentPage={currentPage}
+  totalPages={numPages}
+  onPageJump={jumpToPage}
+  onFinalize={finalizeAndDownload}
+/>
+
 
         <div className="pdf-surface-wrap" ref={containerRef} style={{ touchAction: 'pan-y pan-x' }}>
           <div className="pdf-surface">
@@ -1068,31 +1149,40 @@ const handleSearchResult = useCallback((pageNumber: number, highlights: any[]) =
                     }}
                   />
                 )}
-                {markOverlays
-                  .filter((overlay) => overlay.pageIndex === pageNum - 1)
-                  .map((overlay) => (
-                    <div
-                      key={overlay.markId}
-                      className={`mark-rect ${selectedMarkId === overlay.markId ? 'selected' : ''} ${editingMarkId === overlay.markId ? 'editing' : ''}`}
-                      style={{
-                        position: 'absolute',
-                        left: overlay.style.left,
-                        top: overlay.style.top,
-                        width: overlay.style.width,
-                        height: overlay.style.height,
-                        border: editingMarkId === overlay.markId ? '3px dashed #1976d2' : '2px solid #4caf50',
-                        background: editingMarkId === overlay.markId ? 'rgba(25, 118, 210, 0.2)' : 'rgba(76, 175, 80, 0.15)',
-                        cursor: editingMarkId === overlay.markId ? (editMode === 'move' ? 'move' : 'nwse-resize') : 'pointer',
-                        transition: editingMarkId === overlay.markId ? 'none' : 'all 0.2s',
-                        zIndex: editingMarkId === overlay.markId ? 10 : 5,
-                      }}
-                      onClick={(e) => {
-                        if (editingMarkId) return;
-                        const mark = marks.find((m) => m.mark_id === overlay.markId);
-                        if (mark) navigateToMark(mark);
-                      }}
-                    />
-                  ))}
+  {markOverlays
+  .filter((overlay) => overlay.pageIndex === pageNum - 1)
+  .map((overlay) => {
+    const mark = marks.find((m) => m.mark_id === overlay.markId);
+    const label = mark?.label ?? indexToLabel(mark?.order_index ?? 0);
+
+    return (
+      <div
+        key={overlay.markId}
+        className={`mark-rect ${selectedMarkId === overlay.markId ? 'selected' : ''} ${editingMarkId === overlay.markId ? 'editing' : ''}`}
+        style={{
+          position: 'absolute',
+          left: overlay.style.left,
+          top: overlay.style.top,
+          width: overlay.style.width,
+          height: overlay.style.height,
+          border: editingMarkId === overlay.markId ? '3px dashed #1976d2' : '2px solid #4caf50',
+          background: editingMarkId === overlay.markId ? 'rgba(25, 118, 210, 0.2)' : 'rgba(76, 175, 80, 0.15)',
+          cursor: editingMarkId === overlay.markId ? (editMode === 'move' ? 'move' : 'nwse-resize') : 'pointer',
+          transition: editingMarkId === overlay.markId ? 'none' : 'all 0.2s',
+          zIndex: editingMarkId === overlay.markId ? 10 : 5,
+        }}
+        onClick={(e) => {
+          if (editingMarkId) return;
+          if (mark) navigateToMark(mark);
+        }}
+      >
+        {/* tiny label badge */}
+        <div className="mark-label-badge">{label}</div>
+      </div>
+    );
+  })}
+
+  
               </div>
             ))}
           </div>

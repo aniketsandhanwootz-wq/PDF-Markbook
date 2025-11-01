@@ -12,6 +12,7 @@ type Mark = {
   nw: number;
   nh: number;
   zoom_hint?: number | null;
+  label?: string;
 };
 
 type MarkListProps = {
@@ -236,36 +237,40 @@ export default function MarkList({
               ) : (
                 <>
                   <div className="mark-info" onClick={() => onSelect(mark)}>
-                    <div className="mark-name">{mark.name}</div>
-                    <div className="mark-page">
-                      Page {mark.page_index + 1}
-                      {mark.zoom_hint ? (
-                        <span style={{ 
-                          marginLeft: '8px', 
-                          fontSize: '11px',
-                          background: '#e3f2fd',
-                          color: '#1976d2',
-                          padding: '2px 6px',
-                          borderRadius: '3px',
-                          fontWeight: '500'
-                        }}>
-                          🔍 {Math.round(mark.zoom_hint * 100)}%
-                        </span>
-                      ) : (
-                        <span style={{ 
-                          marginLeft: '8px', 
-                          fontSize: '11px',
-                          background: '#f5f5f5',
-                          color: '#666',
-                          padding: '2px 6px',
-                          borderRadius: '3px',
-                          fontWeight: '500'
-                        }}>
-                          🔍 Auto
-                        </span>
-                      )}
-                    </div>
-                  </div>
+  <div className="mark-name">
+    <span className="label-chip">{mark.label ?? ''}</span>
+    {mark.name}
+  </div>
+  <div className="mark-page">
+    Page {mark.page_index + 1}
+    {mark.zoom_hint ? (
+      <span style={{
+        marginLeft: '8px',
+        fontSize: '11px',
+        background: '#e3f2fd',
+        color: '#1976d2',
+        padding: '2px 6px',
+        borderRadius: '3px',
+        fontWeight: '500'
+      }}>
+        🔍 {Math.round(mark.zoom_hint * 100)}%
+      </span>
+    ) : (
+      <span style={{
+        marginLeft: '8px',
+        fontSize: '11px',
+        background: '#f5f5f5',
+        color: '#666',
+        padding: '2px 6px',
+        borderRadius: '3px',
+        fontWeight: '500'
+      }}>
+        🔍 Auto
+      </span>
+    )}
+  </div>
+</div>
+
                   <div className="mark-actions">
                     <button
                       onClick={() => onReorder(mark.mark_id!, 'up')}
