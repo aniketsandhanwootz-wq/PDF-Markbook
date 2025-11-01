@@ -77,6 +77,7 @@ type MarkSetInfo = {
   pdf_url: string;
   name: string;
 };
+const SWIPE_TO_STEP_ENABLED = false;
 
 // Setup Screen Component
 function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string) => void }) {
@@ -903,8 +904,8 @@ const handleSubmit = useCallback(async () => {
 </div>
           </div>
 
-          <div
-          className="swipe-gesture-host"
+         <div
+  className="swipe-gesture-host"
   style={{
     flex: 1,
     display: 'flex',
@@ -912,8 +913,9 @@ const handleSubmit = useCallback(async () => {
     overflow: 'hidden',
     minWidth: 0
   }}
-  {...swipeHandlers}
+  {...(SWIPE_TO_STEP_ENABLED ? swipeHandlers : {})}
 >
+
 
             <ZoomToolbar
               zoom={zoom}
@@ -961,6 +963,20 @@ const handleSubmit = useCallback(async () => {
                           : null
                       }
                     />
+                    {/* NEW: yellow border around the flashed mark (mobile) */}
+{flashRect?.pageNumber === pageNum && (
+  <div
+    className="flash-outline"
+    style={{
+      position: 'absolute',
+      left: flashRect.x,
+      top:  flashRect.y,
+      width: flashRect.w,
+      height: flashRect.h,
+    }}
+  />
+)}
+
                   </div>
                 ))}
               </div>
@@ -1048,10 +1064,10 @@ return (
                   key={`highlight-${idx}`}
                   style={{
                     position: 'absolute',
-                    left: h.x * zoom,
-                    top: h.y * zoom,
-                    width: h.width * zoom,
-                    height: h.height * zoom,
+                    left: h.x,
+                    top: h.y,
+                    width: h.width,
+                    height: h.height,
                     background: 'rgba(255, 235, 59, 0.4)',
                     border: '1px solid rgba(255, 193, 7, 0.8)',
                     pointerEvents: 'none',

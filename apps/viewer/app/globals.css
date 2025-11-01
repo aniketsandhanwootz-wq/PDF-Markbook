@@ -405,3 +405,12 @@ body {
 .swipe-gesture-host {
   touch-action: pan-x pan-y !important; /* no pinch-zoom here */
 }
+
+/* Outline used when jumping to a mark */
+.flash-outline {
+  border: 3px solid #FFD54F;               /* amber/yellow */
+  box-shadow: 0 0 0 4px rgba(255, 235, 59, 0.35);
+  border-radius: 4px;
+  pointer-events: none;
+  z-index: 150;
+}
