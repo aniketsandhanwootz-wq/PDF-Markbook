@@ -345,6 +345,7 @@ export default memo(PageCanvas, (prevProps, nextProps) => {
     prevProps.pdf === nextProps.pdf &&
     prevProps.pageNumber === nextProps.pageNumber &&
     Math.abs(prevProps.zoom - nextProps.zoom) < 0.01 &&
-    prevProps.flashRect === nextProps.flashRect
+    prevProps.flashRect === nextProps.flashRect &&
+    prevProps.selectedRect === nextProps.selectedRect
   );
 });

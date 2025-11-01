@@ -541,7 +541,7 @@ setSelectedRect({
   h: rectAtZ.h,
 });
 
-// TEMPORARY red flash (auto-clears)
+// Flash the mark (temporary red)
 setFlashRect({
   pageNumber,
   x: rectAtZ.x,
@@ -550,6 +550,15 @@ setFlashRect({
   h: rectAtZ.h,
 });
 setTimeout(() => setFlashRect(null), 1200);
+
+// Persistent yellow outline
+setSelectedRect({
+  pageNumber,
+  x: rectAtZ.x,
+  y: rectAtZ.y,
+  w: rectAtZ.w,
+  h: rectAtZ.h,
+});
 
 
         // Get actual page position in scrollable container
