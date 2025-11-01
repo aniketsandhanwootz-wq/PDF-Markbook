@@ -270,6 +270,7 @@ function ViewerContent() {
   const [error, setError] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false); // Start closed on mobile
   const [flashRect, setFlashRect] = useState<FlashRect>(null);
+  const [selectedRect, setSelectedRect] = useState<FlashRect>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [showSearch, setShowSearch] = useState(false);
   const [searchHighlights, setSearchHighlights] = useState<Array<{ x: number; y: number; width: number; height: number }>>([]);
@@ -523,23 +524,33 @@ setZoom(targetZoom);
         const vpZ = vpExpected;
 
         
-        // Calculate mark rect at target zoom
-        const rectAtZ = {
-          x: mark.nx * vpZ.width,
-          y: mark.ny * vpZ.height,
-          w: mark.nw * vpZ.width,
-          h: mark.nh * vpZ.height,
-        };
+// Calculate mark rect at target zoom
+const rectAtZ = {
+  x: mark.nx * vpZ.width,
+  y: mark.ny * vpZ.height,
+  w: mark.nw * vpZ.width,
+  h: mark.nh * vpZ.height,
+};
 
-        // Flash the mark
-        setFlashRect({
-          pageNumber,
-          x: rectAtZ.x,
-          y: rectAtZ.y,
-          w: rectAtZ.w,
-          h: rectAtZ.h,
-        });
-        setTimeout(() => setFlashRect(null), 1200);
+// PERSISTENT yellow border (stays until next mark)
+setSelectedRect({
+  pageNumber,
+  x: rectAtZ.x,
+  y: rectAtZ.y,
+  w: rectAtZ.w,
+  h: rectAtZ.h,
+});
+
+// TEMPORARY red flash (auto-clears)
+setFlashRect({
+  pageNumber,
+  x: rectAtZ.x,
+  y: rectAtZ.y,
+  w: rectAtZ.w,
+  h: rectAtZ.h,
+});
+setTimeout(() => setFlashRect(null), 1200);
+
 
         // Get actual page position in scrollable container
         const containerRect = container.getBoundingClientRect();
@@ -569,6 +580,51 @@ container.scrollTo({ left: clampedL, top: clampedT, behavior: 'smooth' });
     },
     [marks, pdf]
   );
+
+  useEffect(() => {
+  (async () => {
+    if (!pdf || marks.length === 0) return;
+
+    const mark = marks[currentMarkIndex];
+    if (!mark) return;
+
+    const pageNumber = mark.page_index + 1;
+    const container = containerRef.current;
+    const pageEl = pageElsRef.current[mark.page_index];
+    if (!container || !pageEl) return;
+
+    try {
+      const page = await pdf.getPage(pageNumber);
+
+      // expected size at current zoom
+      const vpZ = page.getViewport({ scale: zoom });
+      const expectedW = Math.round(vpZ.width);
+      const expectedH = Math.round(vpZ.height);
+
+      // wait until canvas is actually at this CSS size
+      await waitForCanvasLayout(pageEl, expectedW, expectedH);
+
+      // recompute rect in current zoom
+      const rectAtZ = {
+        x: mark.nx * vpZ.width,
+        y: mark.ny * vpZ.height,
+        w: mark.nw * vpZ.width,
+        h: mark.nh * vpZ.height,
+      };
+
+      setSelectedRect({
+        pageNumber,
+        x: rectAtZ.x,
+        y: rectAtZ.y,
+        w: rectAtZ.w,
+        h: rectAtZ.h,
+      });
+    } catch {
+      // ignore if page gone
+    }
+  })();
+}, [zoom, currentMarkIndex, pdf, marks]);
+
   const prevMark = useCallback(() => {
     if (currentMarkIndex > 0) {
       navigateToMark(currentMarkIndex - 1);
@@ -943,29 +999,44 @@ const handleSubmit = useCallback(async () => {
   ref={containerRef}
 >
 
-              <div className="pdf-surface">
-                {Array.from({ length: numPages }, (_, i) => i + 1).map((pageNum) => (
-                  <div 
-                    key={pageNum} 
-                    style={{ position: 'relative' }}
-                    ref={(el) => {
-                      pageElsRef.current[pageNum - 1] = el;
-                    }}
-                  >
-                    <PageCanvas
-                      pdf={pdf}
-                      pageNumber={pageNum}
-                      zoom={zoom}
-                      onReady={(height) => handlePageReady(pageNum, height)}
-                      flashRect={
-                        flashRect?.pageNumber === pageNum
-                          ? { x: flashRect.x, y: flashRect.y, w: flashRect.w, h: flashRect.h }
-                          : null
-                      }
-                    />
-                  </div>
-                ))}
-              </div>
+ 
+<div className="pdf-surface">
+  {Array.from({ length: numPages }, (_, i) => i + 1).map((pageNum) => (
+    <div 
+      key={pageNum}
+      style={{ position: 'relative' }}
+      ref={(el) => { pageElsRef.current[pageNum - 1] = el; }}
+    >
+      <PageCanvas
+        pdf={pdf}
+        pageNumber={pageNum}
+        zoom={zoom}
+        onReady={(height) => handlePageReady(pageNum, height)}
+        flashRect={
+          flashRect?.pageNumber === pageNum
+            ? { x: flashRect.x, y: flashRect.y, w: flashRect.w, h: flashRect.h }
+            : null
+        }
+      />
+
+      {selectedRect?.pageNumber === pageNum && (
+        <div
+          className="flash-outline"
+          style={{
+            position: 'absolute',
+            left: selectedRect.x,
+            top: selectedRect.y,
+            width: selectedRect.w,
+            height: selectedRect.h,
+            pointerEvents: 'none',
+            zIndex: 120
+          }}
+        />
+      )}
+    </div>
+  ))}
+</div>
+
             </div>
           </div>
         </div>
@@ -1026,44 +1097,60 @@ return (
       />
 
       <div className="pdf-surface-wrap" ref={containerRef} style={{ touchAction: 'pan-y pan-x' }}>
-        <div className="pdf-surface">
-          {Array.from({ length: numPages }, (_, i) => i + 1).map((pageNum) => (
-            <div
-              key={pageNum}
-              style={{ position: 'relative' }}
-              ref={(el) => { pageElsRef.current[pageNum - 1] = el; }}
-            >
-              <PageCanvas
-                pdf={pdf}
-                pageNumber={pageNum}
-                zoom={zoom}
-                onReady={(height) => handlePageReady(pageNum, height)}
-                flashRect={
-                  flashRect?.pageNumber === pageNum
-                    ? { x: flashRect.x, y: flashRect.y, w: flashRect.w, h: flashRect.h }
-                    : null
-                }
-              />
+<div className="pdf-surface">
+  {Array.from({ length: numPages }, (_, i) => i + 1).map((pageNum) => (
+    <div
+      key={pageNum}
+      style={{ position: 'relative' }}
+      ref={(el) => { pageElsRef.current[pageNum - 1] = el; }}
+    >
+      <PageCanvas
+        pdf={pdf}
+        pageNumber={pageNum}
+        zoom={zoom}
+        onReady={(height) => handlePageReady(pageNum, height)}
+        flashRect={
+          flashRect?.pageNumber === pageNum
+            ? { x: flashRect.x, y: flashRect.y, w: flashRect.w, h: flashRect.h }
+            : null
+        }
+      />
 
-              {highlightPageNumber === pageNum && searchHighlights.map((h, idx) => (
-                <div
-                  key={`highlight-${idx}`}
-                  style={{
-                    position: 'absolute',
-                    left: h.x * zoom,
-                    top: h.y * zoom,
-                    width: h.width * zoom,
-                    height: h.height * zoom,
-                    background: 'rgba(255, 235, 59, 0.4)',
-                    border: '1px solid rgba(255, 193, 7, 0.8)',
-                    pointerEvents: 'none',
-                    zIndex: 100,
-                  }}
-                />
-              ))}
-            </div>
-          ))}
-        </div>
+      {selectedRect?.pageNumber === pageNum && (
+        <div
+          className="flash-outline"
+          style={{
+            position: 'absolute',
+            left: selectedRect.x,
+            top: selectedRect.y,
+            width: selectedRect.w,
+            height: selectedRect.h,
+            pointerEvents: 'none',
+            zIndex: 120
+          }}
+        />
+      )}
+
+      {highlightPageNumber === pageNum && searchHighlights.map((h, idx) => (
+        <div
+          key={`highlight-${idx}`}
+          style={{
+            position: 'absolute',
+            left: h.x * zoom,
+            top: h.y * zoom,
+            width: h.width * zoom,
+            height: h.height * zoom,
+            background: 'rgba(255, 235, 59, 0.4)',
+            border: '1px solid rgba(255, 193, 7, 0.8)',
+            pointerEvents: 'none',
+            zIndex: 100
+          }}
+        />
+      ))}
+    </div>
+  ))}
+</div>
+
       </div>
 
       {/* Keep Input Panel OUTSIDE the scroll area */}

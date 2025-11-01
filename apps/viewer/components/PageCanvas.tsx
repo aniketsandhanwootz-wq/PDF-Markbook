@@ -211,7 +211,7 @@ if (!ctx) {
     };
   }, [pdf, pageNumber, zoom, onReady]);
 
- // Draw flash overlay (red fill + yellow outline)
+// Draw flash overlay (red fill + yellow outline with halo)
 useEffect(() => {
   const overlay = overlayRef.current;
   const visibleCanvas =
@@ -224,19 +224,18 @@ useEffect(() => {
   const ctx = overlay.getContext('2d');
   if (!ctx) return;
 
-  // Match the overlay canvas size to the visible PDF canvas
+  // Match overlay to visible canvas
   overlay.width = visibleCanvas.width;
   overlay.height = visibleCanvas.height;
   overlay.style.width = visibleCanvas.style.width;
   overlay.style.height = visibleCanvas.style.height;
 
-  // Use the same DPR logic you already use for page rendering
+  // Use same DPR logic as renderer (kept simple and robust)
   const isTouch =
     typeof window !== 'undefined' &&
     (('ontouchstart' in window) || navigator.maxTouchPoints > 0);
   const baseDpr = isTouch ? 1.5 : Math.min(window.devicePixelRatio || 1, 2);
 
-  // Keep the overlay within ~8MP to avoid jank
   const MAX_PIXELS = 8_000_000;
   const vw = Number(visibleCanvas.style.width?.replace('px', '') || 0);
   const vh = Number(visibleCanvas.style.height?.replace('px', '') || 0);
@@ -247,19 +246,26 @@ useEffect(() => {
   }
   ctx.setTransform(effDpr, 0, 0, effDpr, 0, 0);
 
-  // --- RED fill ---
+  // Clear & draw
+  ctx.clearRect(0, 0, overlay.width, overlay.height);
+
+  // RED fill (same as before)
   ctx.fillStyle = 'rgba(255, 0, 0, 0.28)';
   ctx.fillRect(flashRect.x, flashRect.y, flashRect.w, flashRect.h);
 
-  // --- YELLOW outline + soft halo (the "yellow box") ---
-  ctx.save();
-  ctx.lineWidth = 3;
-  ctx.strokeStyle = 'rgba(255, 213, 79, 1)';      // Amber/yellow stroke
-  ctx.shadowColor = 'rgba(255, 235, 59, 0.35)';   // Soft halo like CSS box-shadow
-  ctx.shadowBlur = 4;
+  // YELLOW HALO (bigger, semi-transparent)
+  ctx.beginPath();
   ctx.lineJoin = 'round';
+  ctx.lineWidth = 9; // big halo
+  ctx.strokeStyle = 'rgba(255, 235, 59, 0.35)'; // soft amber
   ctx.strokeRect(flashRect.x, flashRect.y, flashRect.w, flashRect.h);
-  ctx.restore();
+
+  // CRISP YELLOW OUTLINE (on top)
+  ctx.beginPath();
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = 3; // crisp edge
+  ctx.strokeStyle = '#FFD54F'; // amber/yellow
+  ctx.strokeRect(flashRect.x, flashRect.y, flashRect.w, flashRect.h);
 
   const timer = setTimeout(() => {
     ctx.clearRect(0, 0, overlay.width, overlay.height);
@@ -270,7 +276,6 @@ useEffect(() => {
     ctx.clearRect(0, 0, overlay.width, overlay.height);
   };
 }, [flashRect]);
-
 
   return (
   <div className="page-wrapper" style={{ position: 'relative' }}>

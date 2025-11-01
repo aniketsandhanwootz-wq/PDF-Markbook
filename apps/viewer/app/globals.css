@@ -246,7 +246,9 @@ body {
   top: 0;
   left: 0;
   pointer-events: none;
+  z-index: 200;            /* ensure the outline sits above the page bitmaps */
 }
+
 
 /* Mobile Responsive */
 @media (max-width: 768px) {
@@ -406,11 +408,11 @@ body {
   touch-action: pan-x pan-y !important; /* no pinch-zoom here */
 }
 
-/* Outline used when jumping to a mark */
 .flash-outline {
-  border: 3px solid #FFD54F;               /* amber/yellow */
+  border: 3px solid #FFD54F;
   box-shadow: 0 0 0 4px rgba(255, 235, 59, 0.35);
   border-radius: 4px;
   pointer-events: none;
-  z-index: 150;
+  z-index: 300; /* ensure above canvases */
 }
+
