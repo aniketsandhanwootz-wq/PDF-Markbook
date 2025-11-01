@@ -36,19 +36,7 @@ export default function MarkList({
 }: MarkListProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
-  const [editZoom, setEditZoom] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-
-  const zoomPresets = [
-    { label: 'Auto', value: null },
-    { label: '100%', value: 1.0 },
-    { label: '125%', value: 1.25 },
-    { label: '150%', value: 1.5 },
-    { label: '175%', value: 1.75 },
-    { label: '200%', value: 2.0 },
-    { label: '250%', value: 2.5 },
-    { label: '300%', value: 3.0 },
-  ];
 
   // Filter marks based on search query
   const filteredMarks = useMemo(() => {
@@ -68,12 +56,11 @@ export default function MarkList({
   const handleEditStart = (mark: Mark) => {
     setEditingId(mark.mark_id || null);
     setEditName(mark.name);
-    setEditZoom(mark.zoom_hint || null);
   };
 
   const handleEditSave = (markId: string) => {
     if (editName.trim()) {
-      onUpdate(markId, { name: editName.trim(), zoom_hint: editZoom || null });
+      onUpdate(markId, { name: editName.trim() });
     }
     setEditingId(null);
   };
@@ -81,7 +68,6 @@ export default function MarkList({
   const handleEditCancel = () => {
     setEditingId(null);
     setEditName('');
-    setEditZoom(null);
   };
 
   return (
@@ -190,40 +176,6 @@ export default function MarkList({
                       autoFocus
                       className="mark-edit-input"
                     />
-                  </div>
-                  <div style={{ marginBottom: '8px' }}>
-                    <label style={{ 
-                      fontSize: '11px', 
-                      color: '#666', 
-                      display: 'block',
-                      marginBottom: '4px' 
-                    }}>
-                      Zoom Level
-                    </label>
-                    <div style={{ 
-                      display: 'flex', 
-                      gap: '4px', 
-                      flexWrap: 'wrap' 
-                    }}>
-                      {zoomPresets.map((preset) => (
-                        <button
-                          key={preset.label}
-                          onClick={() => setEditZoom(preset.value)}
-                          style={{
-                            padding: '4px 8px',
-                            fontSize: '11px',
-                            border: editZoom === preset.value ? '2px solid #1976d2' : '1px solid #ddd',
-                            background: editZoom === preset.value ? '#e3f2fd' : 'white',
-                            color: editZoom === preset.value ? '#1976d2' : '#666',
-                            borderRadius: '3px',
-                            cursor: 'pointer',
-                            fontWeight: editZoom === preset.value ? '600' : '400',
-                          }}
-                        >
-                          {preset.label}
-                        </button>
-                      ))}
-                    </div>
                   </div>
                   <div className="mark-edit-actions">
                     <button onClick={() => handleEditSave(mark.mark_id!)} className="btn-sm">
