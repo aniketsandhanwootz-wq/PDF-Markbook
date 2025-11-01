@@ -963,20 +963,6 @@ const handleSubmit = useCallback(async () => {
                           : null
                       }
                     />
-                    {/* NEW: yellow border around the flashed mark (mobile) */}
-{flashRect?.pageNumber === pageNum && (
-  <div
-    className="flash-outline"
-    style={{
-      position: 'absolute',
-      left: flashRect.x,
-      top:  flashRect.y,
-      width: flashRect.w,
-      height: flashRect.h,
-    }}
-  />
-)}
-
                   </div>
                 ))}
               </div>
@@ -1064,10 +1050,10 @@ return (
                   key={`highlight-${idx}`}
                   style={{
                     position: 'absolute',
-                    left: h.x,
-                    top: h.y,
-                    width: h.width,
-                    height: h.height,
+                    left: h.x * zoom,
+                    top: h.y * zoom,
+                    width: h.width * zoom,
+                    height: h.height * zoom,
                     background: 'rgba(255, 235, 59, 0.4)',
                     border: '1px solid rgba(255, 193, 7, 0.8)',
                     pointerEvents: 'none',

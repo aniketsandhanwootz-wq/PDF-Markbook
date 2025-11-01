@@ -211,46 +211,66 @@ if (!ctx) {
     };
   }, [pdf, pageNumber, zoom, onReady]);
 
-  // Draw flash overlay
-  useEffect(() => {
-    const overlay = overlayRef.current;
-    const visibleCanvas = currentCanvasRef.current === 'front' ? frontCanvasRef.current : backCanvasRef.current;
-    if (!overlay || !visibleCanvas || !flashRect) return;
+ // Draw flash overlay (red fill + yellow outline)
+useEffect(() => {
+  const overlay = overlayRef.current;
+  const visibleCanvas =
+    currentCanvasRef.current === 'front'
+      ? frontCanvasRef.current
+      : backCanvasRef.current;
 
-    const ctx = overlay.getContext('2d');
-    if (!ctx) return;
+  if (!overlay || !visibleCanvas || !flashRect) return;
 
-    overlay.width = visibleCanvas.width;
-    overlay.height = visibleCanvas.height;
-    overlay.style.width = visibleCanvas.style.width;
-    overlay.style.height = visibleCanvas.style.height;
+  const ctx = overlay.getContext('2d');
+  if (!ctx) return;
 
-const isTouch = typeof window !== 'undefined' && (('ontouchstart' in window) || navigator.maxTouchPoints > 0);
-const baseDpr = isTouch ? 1.5 : Math.min(window.devicePixelRatio || 1, 2);
-// Recompute effective DPR using the same MAX_PIXELS rule against the visible canvas size
-const MAX_PIXELS = 8_000_000;
-const vw = Number(visibleCanvas.style.width?.replace('px','') || 0);
-const vh = Number(visibleCanvas.style.height?.replace('px','') || 0);
-let effDpr = baseDpr;
-const estPixels = vw * vh * (baseDpr * baseDpr);
-if (estPixels > MAX_PIXELS) {
-  effDpr = Math.max(1, baseDpr * Math.sqrt(MAX_PIXELS / estPixels));
-}
-ctx.setTransform(effDpr, 0, 0, effDpr, 0, 0);
+  // Match the overlay canvas size to the visible PDF canvas
+  overlay.width = visibleCanvas.width;
+  overlay.height = visibleCanvas.height;
+  overlay.style.width = visibleCanvas.style.width;
+  overlay.style.height = visibleCanvas.style.height;
 
+  // Use the same DPR logic you already use for page rendering
+  const isTouch =
+    typeof window !== 'undefined' &&
+    (('ontouchstart' in window) || navigator.maxTouchPoints > 0);
+  const baseDpr = isTouch ? 1.5 : Math.min(window.devicePixelRatio || 1, 2);
 
-    ctx.fillStyle = 'rgba(255, 0, 0, 0.28)';
-    ctx.fillRect(flashRect.x, flashRect.y, flashRect.w, flashRect.h);
+  // Keep the overlay within ~8MP to avoid jank
+  const MAX_PIXELS = 8_000_000;
+  const vw = Number(visibleCanvas.style.width?.replace('px', '') || 0);
+  const vh = Number(visibleCanvas.style.height?.replace('px', '') || 0);
+  let effDpr = baseDpr;
+  const estPixels = vw * vh * (baseDpr * baseDpr);
+  if (estPixels > MAX_PIXELS) {
+    effDpr = Math.max(1, baseDpr * Math.sqrt(MAX_PIXELS / estPixels));
+  }
+  ctx.setTransform(effDpr, 0, 0, effDpr, 0, 0);
 
-    const timer = setTimeout(() => {
-      ctx.clearRect(0, 0, overlay.width, overlay.height);
-    }, 1200);
+  // --- RED fill ---
+  ctx.fillStyle = 'rgba(255, 0, 0, 0.28)';
+  ctx.fillRect(flashRect.x, flashRect.y, flashRect.w, flashRect.h);
 
-    return () => {
-      clearTimeout(timer);
-      ctx.clearRect(0, 0, overlay.width, overlay.height);
-    };
-  }, [flashRect]);
+  // --- YELLOW outline + soft halo (the "yellow box") ---
+  ctx.save();
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = 'rgba(255, 213, 79, 1)';      // Amber/yellow stroke
+  ctx.shadowColor = 'rgba(255, 235, 59, 0.35)';   // Soft halo like CSS box-shadow
+  ctx.shadowBlur = 4;
+  ctx.lineJoin = 'round';
+  ctx.strokeRect(flashRect.x, flashRect.y, flashRect.w, flashRect.h);
+  ctx.restore();
+
+  const timer = setTimeout(() => {
+    ctx.clearRect(0, 0, overlay.width, overlay.height);
+  }, 1200);
+
+  return () => {
+    clearTimeout(timer);
+    ctx.clearRect(0, 0, overlay.width, overlay.height);
+  };
+}, [flashRect]);
+
 
   return (
   <div className="page-wrapper" style={{ position: 'relative' }}>
