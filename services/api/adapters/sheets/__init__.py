@@ -16,7 +16,7 @@ HEADERS = {
     "documents": ["doc_id", "pdf_url", "hash", "page_count", "created_by", "created_at", "updated_at"],
     "pages":     ["page_id", "doc_id", "idx", "width_pt", "height_pt", "rotation_deg"],
     "mark_sets": ["mark_set_id", "doc_id", "label", "is_active", "created_by", "created_at"],
-    "marks":     ["mark_id", "mark_set_id", "page_id", "order_index", "name", "nx", "ny", "nw", "nh", "zoom_hint", "padding_pct", "anchor"],
+    "marks":     ["mark_id", "mark_set_id", "page_id", "order_index", "name", "label", "nx", "ny", "nw", "nh", "zoom_hint", "padding_pct", "anchor"],
 }
 
 SHEET_TAB_ORDER = ["documents", "pages", "mark_sets", "marks"]
@@ -246,6 +246,7 @@ class SheetsAdapter(StorageAdapter):
                 page_id,
                 int(m["order_index"]),
                 m.get("name", ""),
+                m.get("label", ""),   # NEW
                 float(m["nx"]), float(m["ny"]), float(m["nw"]), float(m["nh"]),
                 ("" if m.get("zoom_hint") is None else float(m["zoom_hint"])),
                 float(m.get("padding_pct", 0.1)),
@@ -262,15 +263,17 @@ class SheetsAdapter(StorageAdapter):
         out = []
         for m in marks:
             out.append({
-                "mark_id": m["mark_id"],
-                "page_index": pid_to_idx.get(m["page_id"], 0),
-                "order_index": int(m["order_index"]),
-                "name": m["name"],
-                "nx": float(m["nx"]), "ny": float(m["ny"]), "nw": float(m["nw"]), "nh": float(m["nh"]),
-                "zoom_hint": (None if m["zoom_hint"] == "" else float(m["zoom_hint"])),
-                "padding_pct": (0.1 if m["padding_pct"] == "" else float(m["padding_pct"])),
-                "anchor": m["anchor"] or "auto",
-            })
+    "mark_id": m["mark_id"],
+    "page_index": pid_to_idx.get(m["page_id"], 0),
+    "order_index": int(m["order_index"]),
+    "name": m["name"],
+    "label": m.get("label", "") or "",
+    "nx": float(m["nx"]), "ny": float(m["ny"]), "nw": float(m["nw"]), "nh": float(m["nh"]),
+    "zoom_hint": (None if m["zoom_hint"] == "" else float(m["zoom_hint"])),
+    "padding_pct": (0.1 if m["padding_pct"] == "" else float(m["padding_pct"])),
+    "anchor": m["anchor"] or "auto",
+})
+
         out.sort(key=lambda r: r["order_index"])
         return out
 

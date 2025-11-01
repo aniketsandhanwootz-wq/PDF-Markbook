@@ -174,6 +174,8 @@ class Mark(BaseModel):
     page_index: int = Field(ge=0, description="Page index (0-based)")
     order_index: int = Field(ge=0, description="Display order")
     name: str = Field(min_length=1, max_length=200, description="Mark name")
+
+    label: Optional[str] = Field(None, min_length=1, max_length=6, description="Excel-style label")
     
     # ✨ ENHANCED: Stricter bounds (must be > 0, not >= 0)
     nx: float = Field(ge=0.0, le=1.0, description="Normalized X (0-1)")
@@ -379,7 +381,7 @@ def storage_replace_marks(mark_set_id: str, marks: List[Mark]) -> int:
         deleted_count = len(existing_marks_for_set)
         
         # Build new marks list (keep other mark sets, replace this one)
-        header_marks = ["mark_id", "mark_set_id", "page_id", "order_index", "name", 
+        header_marks = ["mark_id", "mark_set_id", "page_id", "order_index", "name", "label",
                        "nx", "ny", "nw", "nh", "zoom_hint", "padding_pct", "anchor"]
         
         filtered_marks = [header_marks]
@@ -388,11 +390,13 @@ def storage_replace_marks(mark_set_id: str, marks: List[Mark]) -> int:
         for m in all_marks:
             if m.get("mark_set_id") != mark_set_id:
                 filtered_marks.append([
-                    m.get("mark_id", ""), m.get("mark_set_id", ""), m.get("page_id", ""),
-                    m.get("order_index", ""), m.get("name", ""),
-                    m.get("nx", ""), m.get("ny", ""), m.get("nw", ""), m.get("nh", ""),
-                    m.get("zoom_hint", ""), m.get("padding_pct", ""), m.get("anchor", "")
-                ])
+    m.get("mark_id", ""), m.get("mark_set_id", ""), m.get("page_id", ""),
+    m.get("order_index", ""), m.get("name", ""),
+    m.get("label", ""),   # NEW
+    m.get("nx", ""), m.get("ny", ""), m.get("nw", ""), m.get("nh", ""),
+    m.get("zoom_hint", ""), m.get("padding_pct", ""), m.get("anchor", "")
+])
+
         
         # Add new marks for this mark_set
         for mark in marks:
@@ -404,11 +408,13 @@ def storage_replace_marks(mark_set_id: str, marks: List[Mark]) -> int:
                 continue
             
             filtered_marks.append([
-                mark_id, mark_set_id, page_id, mark.order_index, mark.name,
-                mark.nx, mark.ny, mark.nw, mark.nh,
-                mark.zoom_hint if mark.zoom_hint is not None else "",
-                0.1, "auto"
-            ])
+    mark_id, mark_set_id, page_id, mark.order_index, mark.name,
+    (mark.label or ""),  # NEW
+    mark.nx, mark.ny, mark.nw, mark.nh,
+    mark.zoom_hint if mark.zoom_hint is not None else "",
+    0.1, "auto"
+])
+
             logger.info(f"Added mark '{mark.name}' with ID {mark_id} on page {mark.page_index}")
         
         # Write everything back to the marks sheet
