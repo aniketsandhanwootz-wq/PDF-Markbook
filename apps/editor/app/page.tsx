@@ -55,6 +55,19 @@ type MarkOverlay = {
     height: number;
   };
 };
+// ---- Normalizers ----
+function normalizeMarks(arr: Mark[]): Mark[] {
+  // 1) ensure every mark has a stable id
+  const withIds = arr.map((m, i) =>
+    m.mark_id ? m : { ...m, mark_id: `m-${i}-${Date.now()}` }
+  );
+
+  // 2) reindex order_index to match array order
+  const withOrder = withIds.map((m, i) => ({ ...m, order_index: i }));
+
+  // 3) compute labels from order_index
+  return applyLabels(withOrder);
+}
 
 // Setup Screen Component
 function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetName: string) => void }) {
@@ -253,16 +266,37 @@ function EditorContent() {
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [numPages, setNumPages] = useState(0);
   const [marks, setMarks] = useState<Mark[]>([]);
-  // Keep labels in sync with order_index so UI and saves stay consistent
+  // Gap between pages in .pdf-surface-wrap
+const PAGE_GAP = 16;
+
+/** Top scroll offset for a given 0-based page index */
+const pageTopFor = useCallback((pageIndex: number) => {
+  let top = PAGE_GAP; // initial padding
+  for (let i = 0; i < pageIndex; i++) {
+    top += (pageHeightsRef.current[i] || 0) + PAGE_GAP;
+  }
+  return top;
+}, []);
+
+// Keep IDs, order_index, labels in sync after any change
 useEffect(() => {
-  setMarks(prev => {
+  setMarks((prev) => {
     if (prev.length === 0) return prev;
-    const withLabels = applyLabels(prev);
-    const changed = withLabels.some((m, i) => m.label !== prev[i].label);
-    return changed ? withLabels : prev;
+
+    const normalized = normalizeMarks(prev);
+
+    const changed =
+      normalized.length !== prev.length ||
+      normalized.some((m, i) =>
+        m.mark_id !== prev[i].mark_id ||
+        m.order_index !== prev[i].order_index ||
+        m.label !== prev[i].label
+      );
+
+    return changed ? normalized : prev;
   });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [marks.length]);
+}, [marks]);
+
 
   const [selectedMarkId, setSelectedMarkId] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1.0);
@@ -378,10 +412,11 @@ useEffect(() => {
                 return res.json();
               })
               .then((data: any) => {
-                const sorted = [...data].sort((a: Mark, b: Mark) => a.order_index - b.order_index);
-                setMarks(sorted);
-                setLoading(false);
-              });
+  const sorted = [...data].sort((a: Mark, b: Mark) => a.order_index - b.order_index);
+  setMarks(normalizeMarks(sorted));
+  setLoading(false);
+});
+
           } else {
             setMarks([]);
             setLoading(false);
@@ -427,74 +462,83 @@ useEffect(() => {
     updateOverlays();
   }, [pdf, marks, zoom]);
 
-  // ✅ NEW: Track current page while scrolling
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container || !pdf) return;
+// Track current page while user scrolls (manual scroll -> toolbar updates)
+useEffect(() => {
+  const container = containerRef.current;
+  if (!container) return;
 
-    const handleScroll = () => {
-      let accumulatedHeight = 16;
-      let foundPage = 1;
+  let raf = 0;
 
-      for (let i = 0; i < numPages; i++) {
-        const pageHeight = pageHeightsRef.current[i] || 0;
-        if (container.scrollTop < accumulatedHeight + pageHeight / 2) {
-          foundPage = i + 1;
-          break;
-        }
-        accumulatedHeight += pageHeight + 16;
+  const computeCurrentPage = () => {
+    const scrollTop = container.scrollTop;
+    const pages = numPages;
+
+    let found = 1;
+    let top = PAGE_GAP; // same gap as jumpToPage/pageTopFor
+    for (let i = 0; i < pages; i++) {
+      const h = pageHeightsRef.current[i] || 0;
+      const midpoint = top + h / 2;
+      if (scrollTop < midpoint) {
+        found = i + 1;
+        break;
       }
-
-      setCurrentPage(foundPage);
-    };
-
-    container.addEventListener('scroll', handleScroll);
-    handleScroll(); // Initial call
-
-    return () => container.removeEventListener('scroll', handleScroll);
-  }, [pdf, numPages]);
-// ✅ NEW: Jump to specific page
-  const jumpToPage = useCallback(async (pageNumber: number) => {
-    if (!pdf || !containerRef.current) return;
-    
-    const container = containerRef.current;
-    
-    try {
-      // Calculate cumulative offset to target page
-      let cumulativeTop = 16; // Initial padding
-      
-      for (let i = 0; i < pageNumber - 1; i++) {
-        const prevPage = await pdf.getPage(i + 1);
-        const prevVp = prevPage.getViewport({ scale: zoom });
-        cumulativeTop += prevVp.height + 16;
-      }
-      
-      container.scrollTo({
-        left: 0,
-        top: cumulativeTop,
-        behavior: 'smooth',
-      });
-    } catch (error) {
-      console.error('Jump to page error:', error);
+      top += h + PAGE_GAP;
     }
-  }, [pdf, zoom]);
+    setCurrentPage(found);
+  };
 
-const navigateToMark = useCallback(
-  (mark: Mark) => {
-    if (!pdf || !containerRef.current) return;
+  const onScroll = () => {
+    if (raf) return;
+    raf = requestAnimationFrame(() => {
+      raf = 0;
+      computeCurrentPage();
+    });
+  };
 
-    setSelectedMarkId(mark.mark_id || null);
+  container.addEventListener('scroll', onScroll, { passive: true });
 
-    const pageNumber = mark.page_index + 1;
+  // Initial sync (in case we mount mid-document or after a jump/zoom)
+  computeCurrentPage();
 
-    // If it's the same page, do nothing (no scroll, no zoom)
-    if (pageNumber === currentPage) return;
+  return () => {
+    container.removeEventListener('scroll', onScroll);
+    if (raf) cancelAnimationFrame(raf);
+  };
+}, [numPages, zoom]); // re-evaluate when page count or zoom changes
 
-    // Different page? scroll to that page (top). No zoom.
-    jumpToPage(pageNumber);
-  },
-  [pdf, currentPage, jumpToPage]
-);
+// ✅ NEW: Jump to specific page
+const jumpToPage = useCallback((pageNumber: number) => {
+  const container = containerRef.current;
+  if (!container) return;
+
+  const top = pageTopFor(pageNumber - 1);
+  container.scrollTo({ left: 0, top, behavior: 'smooth' });
+
+  // keep the toolbar in sync immediately
+  setCurrentPage(pageNumber);
+}, [pageTopFor]);
+
+
+const navigateToMark = useCallback((mark: Mark) => {
+  const container = containerRef.current;
+  if (!container) return;
+
+  setSelectedMarkId(mark.mark_id || null);
+
+  // compute where that page starts
+  const targetTop = pageTopFor(mark.page_index);
+  const curTop = container.scrollTop;
+  const pageH = pageHeightsRef.current[mark.page_index] || 0;
+
+  // robust "same page" check that does NOT rely on currentPage state
+  const samePage = curTop > (targetTop - pageH / 2) && curTop < (targetTop + pageH / 2);
+
+  if (!samePage) {
+    container.scrollTo({ left: 0, top: targetTop, behavior: 'smooth' });
+    setCurrentPage(mark.page_index + 1); // sync toolbar right away
+  }
+}, [pageTopFor]);
+
 
         
   
@@ -611,10 +655,11 @@ const createMark = useCallback((name: string) => {
     addToast('Mark updated', 'success');
   }, [addToast]);
 
-  const deleteMark = useCallback((markId: string) => {
-    setMarks((prev) => prev.filter((m) => m.mark_id !== markId));
-    addToast('Mark deleted', 'success');
-  }, [addToast]);
+const deleteMark = useCallback((markId: string) => {
+  setMarks((prev) => normalizeMarks(prev.filter((m) => m.mark_id !== markId)));
+  addToast('Mark deleted', 'success');
+}, [addToast]);
+
 
   const duplicateMark = useCallback((markId: string) => {
     const source = marks.find((m) => m.mark_id === markId);
@@ -631,20 +676,21 @@ const createMark = useCallback((name: string) => {
     addToast('Mark duplicated', 'success');
   }, [marks, addToast]);
 
-  const reorderMark = useCallback((markId: string, direction: 'up' | 'down') => {
-    setMarks((prev) => {
-      const index = prev.findIndex((m) => m.mark_id === markId);
-      if (index === -1) return prev;
+ const reorderMark = useCallback((markId: string, direction: 'up' | 'down') => {
+  setMarks((prev) => {
+    const index = prev.findIndex((m) => m.mark_id === markId);
+    if (index === -1) return prev;
 
-      const newIndex = direction === 'up' ? index - 1 : index + 1;
-      if (newIndex < 0 || newIndex >= prev.length) return prev;
+    const newIndex = direction === 'up' ? index - 1 : index + 1;
+    if (newIndex < 0 || newIndex >= prev.length) return prev;
 
-      const newMarks = [...prev];
-      [newMarks[index], newMarks[newIndex]] = [newMarks[newIndex], newMarks[index]];
+    const newMarks = [...prev];
+    [newMarks[index], newMarks[newIndex]] = [newMarks[newIndex], newMarks[index]];
 
-      return newMarks.map((m, i) => ({ ...m, order_index: i }));
-    });
-  }, []);
+    return normalizeMarks(newMarks);
+  });
+}, []);
+
 
   const zoomIn = useCallback(() => setZoom((z) => clampZoom(z * 1.2)), []);
   const zoomOut = useCallback(() => setZoom((z) => clampZoom(z / 1.2)), []);
@@ -685,25 +731,49 @@ const finalizeAndDownload = useCallback(async () => {
         borderColor: rgb(0.0, 0.55, 0.2)
       });
 
-      const r = Math.max(8, Math.min(12, Math.min(w, h) * 0.06));
-      const cx = x, cy = y + h;
+// Stroke used on the rectangle; nudge the circle to hug the corner
+const stroke = 2;
 
-      page.drawCircle({
-        x: cx + r + 3, y: cy - r - 3, size: r,
-        borderWidth: 1.5,
-        borderColor: rgb(0, 0, 0),
-        color: undefined,
-      });
+// Circle radius (same scaling)
+const r = Math.max(8, Math.min(12, Math.min(w, h) * 0.06));
 
-      const label = m.label ?? indexToLabel(m.order_index);
-      const textSize = r;
-      const textWidth = font.widthOfTextAtSize(label, textSize);
-      const textX = cx + r + 3 - textWidth / 2;
-      const textY = cy - r - 3 - textSize / 3;
+// Smaller pad for export (PDF only)
+const PAD_PDF = 0.75; // ↓ make this 0.5 if you want it even tighter
 
-      page.drawText(label, {
-        x: textX, y: textY, size: textSize, font, color: rgb(0, 0, 0),
-      });
+// Top-left corner in PDF coords
+const cornerX = x;
+const cornerY = y + h;
+
+// Circle center just outside the corner, adjusted for stroke so it sits closer
+const circleCX = cornerX - r - PAD_PDF + stroke / 2;
+const circleCY = cornerY + r + PAD_PDF - stroke / 2;
+
+// Draw the circle
+page.drawCircle({
+  x: circleCX,
+  y: circleCY,
+  size: r,
+  borderWidth: 1.5,
+  borderColor: rgb(0, 0, 0),
+  color: undefined,
+});
+
+
+// Draw the label centered in the circle
+const label = m.label ?? indexToLabel(m.order_index);
+const textSize = r;
+const textWidth = font.widthOfTextAtSize(label, textSize);
+const textX = circleCX - textWidth / 2;
+const textY = circleCY - textSize / 3;
+
+page.drawText(label, {
+  x: textX,
+  y: textY,
+  size: textSize,
+  font,
+  color: rgb(0, 0, 0),
+});
+
     });
 
 // 4) download
@@ -1095,7 +1165,7 @@ const handleSearchResult = useCallback((pageNumber: number, highlights: any[]) =
                     }}
                   />
                 )}
-  {markOverlays
+{markOverlays
   .filter((overlay) => overlay.pageIndex === pageNum - 1)
   .map((overlay) => {
     const mark = marks.find((m) => m.mark_id === overlay.markId);
@@ -1111,8 +1181,6 @@ const handleSearchResult = useCallback((pageNumber: number, highlights: any[]) =
           top: overlay.style.top,
           width: overlay.style.width,
           height: overlay.style.height,
-          border: editingMarkId === overlay.markId ? '3px dashed #1976d2' : '2px solid #4caf50',
-          background: editingMarkId === overlay.markId ? 'rgba(25, 118, 210, 0.2)' : 'rgba(76, 175, 80, 0.15)',
           cursor: editingMarkId === overlay.markId ? (editMode === 'move' ? 'move' : 'nwse-resize') : 'pointer',
           transition: editingMarkId === overlay.markId ? 'none' : 'all 0.2s',
           zIndex: editingMarkId === overlay.markId ? 10 : 5,
@@ -1122,11 +1190,42 @@ const handleSearchResult = useCallback((pageNumber: number, highlights: any[]) =
           if (mark) navigateToMark(mark);
         }}
       >
-        {/* tiny label badge */}
-        <div className="mark-label-badge">{label}</div>
+        {(() => {
+          const w = overlay.style.width;
+          const h = overlay.style.height;
+          const r = Math.max(8, Math.min(12, Math.min(w, h) * 0.06));
+          const pad = 2;
+          const diameter = 2 * r;
+
+          return (
+            <div
+              style={{
+                position: 'absolute',
+                left: -(diameter + pad),
+                top: -(diameter + pad),
+                width: diameter,
+                height: diameter,
+                borderRadius: '50%',
+                border: '2px solid #000',
+                background: '#fff',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontWeight: 600,
+                fontSize: r,
+                lineHeight: 1,
+                pointerEvents: 'none',
+                boxSizing: 'border-box',
+              }}
+            >
+              {label}
+            </div>
+          );
+        })()}
       </div>
     );
   })}
+
 
   
               </div>

@@ -114,10 +114,10 @@ export default function ZoomToolbar({
   <button onClick={onFit} className="toolbar-btn" title="Fit to width">Fit</button>
 
   {onFinalize && (
-    <button onClick={onFinalize} className="toolbar-btn toolbar-primary" title="Finalize & Download">
-      Finalize & Download
-    </button>
-  )}
+  <button onClick={onFinalize} className="toolbar-btn toolbar-primary" title="Final Submit">
+    Final Submit
+  </button>
+)}
 </div>
 
     </div>
