@@ -1007,32 +1007,24 @@ const handleSubmit = useCallback(async () => {
       style={{ position: 'relative' }}
       ref={(el) => { pageElsRef.current[pageNum - 1] = el; }}
     >
-      <PageCanvas
-        pdf={pdf}
-        pageNumber={pageNum}
-        zoom={zoom}
-        onReady={(height) => handlePageReady(pageNum, height)}
-        flashRect={
-          flashRect?.pageNumber === pageNum
-            ? { x: flashRect.x, y: flashRect.y, w: flashRect.w, h: flashRect.h }
-            : null
-        }
-      />
+     <PageCanvas
+  pdf={pdf}
+  pageNumber={pageNum}
+  zoom={zoom}
+  onReady={(height) => handlePageReady(pageNum, height)}
+  flashRect={
+    flashRect?.pageNumber === pageNum
+      ? { x: flashRect.x, y: flashRect.y, w: flashRect.w, h: flashRect.h }
+      : null
+  }
+  selectedRect={
+    selectedRect?.pageNumber === pageNum
+      ? { x: selectedRect.x, y: selectedRect.y, w: selectedRect.w, h: selectedRect.h }
+      : null
+  }
+/>
 
-      {selectedRect?.pageNumber === pageNum && (
-        <div
-          className="flash-outline"
-          style={{
-            position: 'absolute',
-            left: selectedRect.x,
-            top: selectedRect.y,
-            width: selectedRect.w,
-            height: selectedRect.h,
-            pointerEvents: 'none',
-            zIndex: 120
-          }}
-        />
-      )}
+
     </div>
   ))}
 </div>
@@ -1104,32 +1096,24 @@ return (
       style={{ position: 'relative' }}
       ref={(el) => { pageElsRef.current[pageNum - 1] = el; }}
     >
-      <PageCanvas
-        pdf={pdf}
-        pageNumber={pageNum}
-        zoom={zoom}
-        onReady={(height) => handlePageReady(pageNum, height)}
-        flashRect={
-          flashRect?.pageNumber === pageNum
-            ? { x: flashRect.x, y: flashRect.y, w: flashRect.w, h: flashRect.h }
-            : null
-        }
-      />
+     <PageCanvas
+  pdf={pdf}
+  pageNumber={pageNum}
+  zoom={zoom}
+  onReady={(height) => handlePageReady(pageNum, height)}
+  flashRect={
+    flashRect?.pageNumber === pageNum
+      ? { x: flashRect.x, y: flashRect.y, w: flashRect.w, h: flashRect.h }
+      : null
+  }
+  selectedRect={
+    selectedRect?.pageNumber === pageNum
+      ? { x: selectedRect.x, y: selectedRect.y, w: selectedRect.w, h: selectedRect.h }
+      : null
+  }
+/>
 
-      {selectedRect?.pageNumber === pageNum && (
-        <div
-          className="flash-outline"
-          style={{
-            position: 'absolute',
-            left: selectedRect.x,
-            top: selectedRect.y,
-            width: selectedRect.w,
-            height: selectedRect.h,
-            pointerEvents: 'none',
-            zIndex: 120
-          }}
-        />
-      )}
+
 
       {highlightPageNumber === pageNum && searchHighlights.map((h, idx) => (
         <div

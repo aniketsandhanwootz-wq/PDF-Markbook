@@ -8,8 +8,12 @@ type PageCanvasProps = {
   pageNumber: number;
   zoom: number;
   onReady?: (pageHeightPx: number) => void;
+  // temporary red flash
   flashRect?: { x: number; y: number; w: number; h: number } | null;
+  // persistent yellow outline
+  selectedRect?: { x: number; y: number; w: number; h: number } | null;
 };
+
 
 // Canvas render cache to avoid re-rendering identical views
 const renderCache = new Map<string, ImageBitmap>();
@@ -21,6 +25,7 @@ function PageCanvas({
   zoom,
   onReady,
   flashRect,
+  selectedRect,
 }: PageCanvasProps) {
   const frontCanvasRef = useRef<HTMLCanvasElement>(null);
   const backCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -211,7 +216,7 @@ if (!ctx) {
     };
   }, [pdf, pageNumber, zoom, onReady]);
 
-// Draw flash overlay (red fill + yellow outline with halo)
+// Draw overlay: persistent yellow outline + optional red flash
 useEffect(() => {
   const overlay = overlayRef.current;
   const visibleCanvas =
@@ -219,23 +224,22 @@ useEffect(() => {
       ? frontCanvasRef.current
       : backCanvasRef.current;
 
-  if (!overlay || !visibleCanvas || !flashRect) return;
+  if (!overlay || !visibleCanvas) return;
 
   const ctx = overlay.getContext('2d');
   if (!ctx) return;
 
-  // Match overlay to visible canvas
+  // Match overlay to visible canvas size (buffer + CSS)
   overlay.width = visibleCanvas.width;
   overlay.height = visibleCanvas.height;
   overlay.style.width = visibleCanvas.style.width;
   overlay.style.height = visibleCanvas.style.height;
 
-  // Use same DPR logic as renderer (kept simple and robust)
+  // DPR handling identical to the renderer so coordinates match exactly
   const isTouch =
     typeof window !== 'undefined' &&
     (('ontouchstart' in window) || navigator.maxTouchPoints > 0);
   const baseDpr = isTouch ? 1.5 : Math.min(window.devicePixelRatio || 1, 2);
-
   const MAX_PIXELS = 8_000_000;
   const vw = Number(visibleCanvas.style.width?.replace('px', '') || 0);
   const vh = Number(visibleCanvas.style.height?.replace('px', '') || 0);
@@ -246,36 +250,49 @@ useEffect(() => {
   }
   ctx.setTransform(effDpr, 0, 0, effDpr, 0, 0);
 
-  // Clear & draw
-  ctx.clearRect(0, 0, overlay.width, overlay.height);
+  const drawPersistent = () => {
+    if (!selectedRect) return;
+    // soft halo
+    ctx.beginPath();
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = 'rgba(255, 212, 0, 0.35)';
+    ctx.strokeRect(selectedRect.x, selectedRect.y, selectedRect.w, selectedRect.h);
+    // crisp edge
+    ctx.beginPath();
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#FFD400';
+    ctx.strokeRect(selectedRect.x, selectedRect.y, selectedRect.w, selectedRect.h);
+  };
 
-  // RED fill (same as before)
-  ctx.fillStyle = 'rgba(255, 0, 0, 0.28)';
-  ctx.fillRect(flashRect.x, flashRect.y, flashRect.w, flashRect.h);
-
-  // YELLOW HALO (bigger, semi-transparent)
-  ctx.beginPath();
-  ctx.lineJoin = 'round';
-  ctx.lineWidth = 9; // big halo
-  ctx.strokeStyle = 'rgba(255, 235, 59, 0.35)'; // soft amber
-  ctx.strokeRect(flashRect.x, flashRect.y, flashRect.w, flashRect.h);
-
-  // CRISP YELLOW OUTLINE (on top)
-  ctx.beginPath();
-  ctx.lineJoin = 'round';
-  ctx.lineWidth = 3; // crisp edge
-  ctx.strokeStyle = '#FFD54F'; // amber/yellow
-  ctx.strokeRect(flashRect.x, flashRect.y, flashRect.w, flashRect.h);
-
-  const timer = setTimeout(() => {
+  const draw = (withFlash: boolean) => {
     ctx.clearRect(0, 0, overlay.width, overlay.height);
-  }, 1200);
+    drawPersistent();
+    if (withFlash && flashRect) {
+      ctx.fillStyle = 'rgba(255, 0, 0, 0.28)';
+      ctx.fillRect(flashRect.x, flashRect.y, flashRect.w, flashRect.h);
+      ctx.beginPath();
+      ctx.lineJoin = 'round';
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = '#FFD54F';
+      ctx.strokeRect(flashRect.x, flashRect.y, flashRect.w, flashRect.h);
+    }
+  };
+
+  // initial draw
+  draw(Boolean(flashRect));
+
+  // if flashing, remove flash after 1200ms but keep persistent outline
+  let t: number | undefined;
+  if (flashRect) {
+    t = window.setTimeout(() => draw(false), 1200);
+  }
 
   return () => {
-    clearTimeout(timer);
-    ctx.clearRect(0, 0, overlay.width, overlay.height);
+    if (t) window.clearTimeout(t);
   };
-}, [flashRect]);
+}, [flashRect, selectedRect]);
 
   return (
   <div className="page-wrapper" style={{ position: 'relative' }}>
