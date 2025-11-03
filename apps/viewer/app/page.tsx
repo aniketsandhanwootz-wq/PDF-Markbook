@@ -972,19 +972,23 @@ const handleSubmit = useCallback(async () => {
 >
 
 
-            <ZoomToolbar
-              zoom={zoom}
-              onZoomIn={zoomIn}
-              onZoomOut={zoomOut}
-              onReset={resetZoom}
-              onFit={fitToWidthZoom}
-              currentPage={currentPage}
-              totalPages={numPages}
-              onPageJump={jumpToPage}
-              showSidebarToggle={true}
-              sidebarOpen={sidebarOpen}
-              onSidebarToggle={() => setSidebarOpen(!sidebarOpen)}
-            />
+                        <div className="toolbar-overlay">
+              <ZoomToolbar
+                zoom={zoom}
+                onZoomIn={zoomIn}
+                onZoomOut={zoomOut}
+                onReset={resetZoom}
+                onFit={fitToWidthZoom}
+                currentPage={currentPage}
+                totalPages={numPages}
+                onPageJump={jumpToPage}
+                showSidebarToggle={true}
+                sidebarOpen={sidebarOpen}
+                onSidebarToggle={() => setSidebarOpen(!sidebarOpen)}
+                transparent
+              />
+            </div>
+
 
           <div
   style={{
@@ -1072,20 +1076,24 @@ return (
     )}
 
     <div className="main-content">
-      <ZoomToolbar
-        zoom={zoom}
-        onZoomIn={zoomIn}
-        onZoomOut={zoomOut}
-        onReset={resetZoom}
-        onFit={fitToWidthZoom}
-        onPrev={marks.length > 0 ? prevMark : undefined}
-        onNext={marks.length > 0 ? nextMark : undefined}
-        canPrev={currentMarkIndex > 0}
-        canNext={currentMarkIndex < marks.length - 1}
-        currentPage={currentPage}
-        totalPages={numPages}
-        onPageJump={jumpToPage}
-      />
+            <div className="toolbar-overlay">
+        <ZoomToolbar
+          zoom={zoom}
+          onZoomIn={zoomIn}
+          onZoomOut={zoomOut}
+          onReset={resetZoom}
+          onFit={fitToWidthZoom}
+          onPrev={marks.length > 0 ? prevMark : undefined}
+          onNext={marks.length > 0 ? nextMark : undefined}
+          canPrev={currentMarkIndex > 0}
+          canNext={currentMarkIndex < marks.length - 1}
+          currentPage={currentPage}
+          totalPages={numPages}
+          onPageJump={jumpToPage}
+          transparent
+        />
+      </div>
+
 
       <div className="pdf-surface-wrap" ref={containerRef} style={{ touchAction: 'pan-y pan-x' }}>
 <div className="pdf-surface">

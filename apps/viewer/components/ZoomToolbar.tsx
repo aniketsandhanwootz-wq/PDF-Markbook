@@ -19,6 +19,8 @@ type ZoomToolbarProps = {
   showSidebarToggle?: boolean;
   sidebarOpen?: boolean;
   onSidebarToggle?: () => void;
+    /** make bar transparent/floating when true (viewer will pass this) */
+  transparent?: boolean;              // <-- add this line
 };
 
 export default function ZoomToolbar({
@@ -37,6 +39,7 @@ export default function ZoomToolbar({
   showSidebarToggle,
   sidebarOpen,
   onSidebarToggle,
+  transparent,  
 }: ZoomToolbarProps) {
   const [pageInput, setPageInput] = useState('');
 
@@ -75,19 +78,30 @@ export default function ZoomToolbar({
       (e.target as HTMLInputElement).blur();
     }
   };
+    const baseStyle: React.CSSProperties = {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '6px 10px',
+    background: '#fff',
+    borderBottom: '1px solid #ddd',
+    gap: '8px',
+    flexWrap: 'nowrap',
+    minHeight: '36px'
+  };
 
+  const rootStyle: React.CSSProperties = transparent
+    ? {
+        ...baseStyle,
+        background: 'transparent',
+        borderBottom: 'none',
+        boxShadow: 'none',
+        padding: '6px 10px',
+      }
+    : baseStyle;
   return (
-    <div style={{
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      padding: '6px 10px',
-      background: '#fff',
-      borderBottom: '1px solid #ddd',
-      gap: '8px',
-      flexWrap: 'nowrap',
-      minHeight: '36px'
-    }}>
+    <div style={rootStyle}>
+
       {/* Left Section: Sidebar Toggle + Mark Navigation */}
       <div style={{ display: 'flex', gap: '4px', flexShrink: 0, alignItems: 'center' }}>
         {/* Sidebar Toggle - Only show when closed */}
