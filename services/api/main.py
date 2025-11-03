@@ -173,71 +173,75 @@ class Mark(BaseModel):
     mark_id: Optional[str] = None
     page_index: int = Field(ge=0, description="Page index (0-based)")
     order_index: int = Field(ge=0, description="Display order")
-    name: str = Field(min_length=1, max_length=200, description="Mark name")
 
+    # ✅ Name is now OPTIONAL on input; we’ll fill it from label/order_index
+    name: Optional[str] = Field(
+        default=None,
+        description="Mark name (optional; defaults to label or A,B,...)"
+    )
+
+    # Label may come from the editor; we’ll reuse it for name if name is blank
     label: Optional[str] = Field(None, min_length=1, max_length=6, description="Excel-style label")
-    
-    # ✨ ENHANCED: Stricter bounds (must be > 0, not >= 0)
+
     nx: float = Field(ge=0.0, le=1.0, description="Normalized X (0-1)")
     ny: float = Field(ge=0.0, le=1.0, description="Normalized Y (0-1)")
     nw: float = Field(gt=0.0, le=1.0, description="Normalized width (must be > 0)")
     nh: float = Field(gt=0.0, le=1.0, description="Normalized height (must be > 0)")
-    
     zoom_hint: Optional[float] = Field(None, ge=0.25, le=6.0, description="Zoom level")
 
-        
-    # ✅ ADD THESE VALIDATORS
-    @field_validator('name')
+    # --- helpers ---
+    @staticmethod
+    def _idx_to_label(idx: int) -> str:
+        """0->A, 1->B, ... 25->Z, 26->AA, etc."""
+        i = int(idx)
+        s = ""
+        while True:
+            i, r = divmod(i, 26)
+            s = chr(65 + r) + s
+            if i == 0:
+                break
+            i -= 1
+        return s
+
+    # ✅ If name missing/blank, fill from label; if label also missing, use A/B/…
+    @model_validator(mode='before')
     @classmethod
-    def normalize_empty_name(cls, v: str) -> str:
-        """Convert empty names to 'Untitled'."""
-        if not v or not v.strip():
-            return "Untitled"
-        return v.strip()
-    
+    def fill_name_from_label_or_index(cls, data):
+        if isinstance(data, dict):
+            raw_name = (data.get("name") or "").strip()
+            if not raw_name:
+                lbl = (data.get("label") or "").strip()
+                if lbl:
+                    data["name"] = lbl
+                else:
+                    data["name"] = cls._idx_to_label(int(data.get("order_index", 0)))
+        return data
+
+    @field_validator("name")
+    @classmethod
+    def strip_name(cls, v: Optional[str]) -> Optional[str]:
+        return v.strip() if isinstance(v, str) else v
+
     @field_validator('label')
     @classmethod
     def normalize_empty_label(cls, v: Optional[str]) -> Optional[str]:
-        """Convert empty strings to None."""
         if v == "" or (v and not v.strip()):
             return None
         return v
-    @field_validator('name')
-    @classmethod
-    def name_not_empty(cls, v):
-        """Validate name is not empty."""
-        if not v or not v.strip():
-            raise ValueError('Name cannot be empty')
-        return v.strip()
-    
+
     @model_validator(mode='after')
     def validate_mark_bounds(self):
-        """
-        ✨ Pydantic V2: Validate mark stays within page bounds and has minimum size.
-        Uses model_validator instead of field validator with 'values'.
-        """
-        # Check right edge
-        if self.nx + self.nw > 1.0001:  # Small tolerance for floating point
+        if self.nx + self.nw > 1.0001:
             raise ValueError(
-                f'Mark extends beyond page width: '
-                f'nx({self.nx:.4f}) + nw({self.nw:.4f}) = {self.nx + self.nw:.4f} > 1.0'
+                f'Mark extends beyond page width: nx({self.nx:.4f}) + nw({self.nw:.4f}) = {self.nx + self.nw:.4f} > 1.0'
             )
-        
-        # Check bottom edge
         if self.ny + self.nh > 1.0001:
             raise ValueError(
-                f'Mark extends beyond page height: '
-                f'ny({self.ny:.4f}) + nh({self.nh:.4f}) = {self.ny + self.nh:.4f} > 1.0'
+                f'Mark extends beyond page height: ny({self.ny:.4f}) + nh({self.nh:.4f}) = {self.ny + self.nh:.4f} > 1.0'
             )
-        
-        # Check minimum area (prevent invisible marks)
         area = self.nw * self.nh
-        if area < 0.00001:  # Minimum area
-            raise ValueError(
-                f'Mark area too small ({area:.6f}). '
-                f'Mark would be invisible or unclickable.'
-            )
-        
+        if area < 0.00001:
+            raise ValueError(f'Mark area too small ({area:.6f}).')
         return self
 
 class MarkSet(BaseModel):
