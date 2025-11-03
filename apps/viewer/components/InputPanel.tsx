@@ -10,6 +10,7 @@ type Mark = {
   nw: number;
   nh: number;
   zoom_hint?: number | null;
+  label?: string; // ✅ add this
 };
 
 type InputPanelProps = {
@@ -23,6 +24,17 @@ type InputPanelProps = {
   canNext: boolean;
   canPrev: boolean;
 };
+function indexToLabel(idx: number): string {
+  // 0 -> A, 25 -> Z, 26 -> AA ...
+  let n = idx + 1;
+  let s = '';
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    s = String.fromCharCode(65 + rem) + s;
+    n = Math.floor((n - 1) / 26);
+  }
+  return s;
+}
 
 export default function InputPanel({
   currentMark,
@@ -49,6 +61,8 @@ export default function InputPanel({
       </div>
     );
   }
+  // ✅ Prefer DB label; fallback to deterministic index-based label
+  const displayLabel = (currentMark.label?.trim() || indexToLabel(currentIndex));
 
   return (
     <div style={{
@@ -72,13 +86,16 @@ export default function InputPanel({
         gap: '8px',
         flexShrink: 0
       }}>
-        <div style={{ 
-          fontSize: '12px', 
-          fontWeight: '600',
-          whiteSpace: 'nowrap'
-        }}>
-          {currentIndex + 1}/{totalMarks}
-        </div>
+       <div style={{
+  fontSize: '13px',
+  fontWeight: '600',
+  whiteSpace: 'nowrap',
+  letterSpacing: '0.5px'
+}}>
+  {displayLabel}
+</div>
+
+
         <div style={{ 
           fontSize: '13px', 
           fontWeight: '600',
