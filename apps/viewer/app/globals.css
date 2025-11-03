@@ -429,3 +429,97 @@ body {
   box-shadow: 0 2px 8px rgba(0,0,0,0.15);
   border-radius: 8px;
 }
+/* ===== Floating HUD (maps-style) ===== */
+.hud-left,
+.hud-right {
+  position: fixed;                               /* don't consume layout space */
+  z-index: 500;                                  /* above canvases/overlays */
+  pointer-events: none;                          /* PDF can scroll/drag behind */
+}
+
+.hud-left {
+  top: max(10px, env(safe-area-inset-top));
+  left: max(8px, env(safe-area-inset-left));
+}
+
+.hud-right {
+  top: max(10px, env(safe-area-inset-top));
+  right: max(8px, env(safe-area-inset-right));
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+/* clickable children */
+.hud-left > *,
+.hud-right > * {
+  pointer-events: auto;
+}
+
+/* generic floating button */
+.hud-btn {
+  min-width: 44px;
+  height: 44px;
+  padding: 0 12px;
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid rgba(0,0,0,0.15);
+  border-radius: 10px;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.15);
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: saturate(120%) blur(2px);
+}
+
+.hud-btn:active {
+  transform: translateY(1px);
+}
+
+/* Sidebar button a bit wider */
+.hud-sidebar-btn {
+  min-width: 52px;
+  font-size: 22px;    /* larger icon */
+}
+
+/* progress badge (rounded square) */
+.hud-badge {
+  padding: 8px 12px;
+  font-weight: 600;
+  font-size: 14px;
+  color: #111;
+  background: rgba(255,255,255,0.96);
+  border: 1px solid rgba(0,0,0,0.12);
+  border-radius: 12px;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.15);
+}
+
+/* vertical zoom buttons */
+.hud-zoomstack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Sidebar should always be above canvases when open */
+.sidebar {
+  z-index: 600;            /* above HUD too, so lists are clickable */
+  position: relative;      /* create stacking context (desktop) */
+}
+
+@media (max-width: 768px) {
+  .sidebar {
+    position: absolute;    /* you already do this in mobile; keep it above all */
+    top: 0;
+    left: 0;
+    height: 100%;
+  }
+}
+/* ✅ Keep sidebar above canvases and overlays */
+.sidebar {
+  position: relative;
+  z-index: 2000; /* higher than page overlays and HUD */
+}

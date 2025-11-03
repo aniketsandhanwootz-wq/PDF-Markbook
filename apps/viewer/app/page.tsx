@@ -8,7 +8,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import PageCanvas from '../components/PageCanvas';
 import MarkList from '../components/MarkList';
-import ZoomToolbar from '../components/ZoomToolbar';
+import FloatingHUD from '../components/FloatingHUD';
 import InputPanel from '../components/InputPanel';
 import ReviewScreen from '../components/ReviewScreen';
 import { clampZoom } from '../lib/pdf';
@@ -972,22 +972,16 @@ const handleSubmit = useCallback(async () => {
 >
 
 
-                        <div className="toolbar-overlay">
-              <ZoomToolbar
-                zoom={zoom}
-                onZoomIn={zoomIn}
-                onZoomOut={zoomOut}
-                onReset={resetZoom}
-                onFit={fitToWidthZoom}
-                currentPage={currentPage}
-                totalPages={numPages}
-                onPageJump={jumpToPage}
-                showSidebarToggle={true}
-                sidebarOpen={sidebarOpen}
-                onSidebarToggle={() => setSidebarOpen(!sidebarOpen)}
-                transparent
-              />
-            </div>
+   {/* ✅ Floating HUD (mobile) */}
+<FloatingHUD
+  sidebarOpen={sidebarOpen}
+  onSidebarToggle={() => setSidebarOpen(!sidebarOpen)}
+  currentMarkIndex={currentMarkIndex}
+  totalMarks={marks.length}
+  onZoomIn={zoomIn}
+  onZoomOut={zoomOut}
+/>
+
 
 
           <div
@@ -1076,23 +1070,16 @@ return (
     )}
 
     <div className="main-content">
-            <div className="toolbar-overlay">
-        <ZoomToolbar
-          zoom={zoom}
-          onZoomIn={zoomIn}
-          onZoomOut={zoomOut}
-          onReset={resetZoom}
-          onFit={fitToWidthZoom}
-          onPrev={marks.length > 0 ? prevMark : undefined}
-          onNext={marks.length > 0 ? nextMark : undefined}
-          canPrev={currentMarkIndex > 0}
-          canNext={currentMarkIndex < marks.length - 1}
-          currentPage={currentPage}
-          totalPages={numPages}
-          onPageJump={jumpToPage}
-          transparent
-        />
-      </div>
+            {/* ✅ Floating HUD (desktop) */}
+<FloatingHUD
+  sidebarOpen={sidebarOpen}
+  onSidebarToggle={() => setSidebarOpen(!sidebarOpen)}
+  currentMarkIndex={currentMarkIndex}
+  totalMarks={marks.length}
+  onZoomIn={zoomIn}
+  onZoomOut={zoomOut}
+/>
+
 
 
       <div className="pdf-surface-wrap" ref={containerRef} style={{ touchAction: 'pan-y pan-x' }}>
