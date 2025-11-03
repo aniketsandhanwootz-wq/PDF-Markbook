@@ -532,15 +532,6 @@ const rectAtZ = {
   h: mark.nh * vpZ.height,
 };
 
-// PERSISTENT yellow border (stays until next mark)
-setSelectedRect({
-  pageNumber,
-  x: rectAtZ.x,
-  y: rectAtZ.y,
-  w: rectAtZ.w,
-  h: rectAtZ.h,
-});
-
 // Flash the mark (temporary red)
 setFlashRect({
   pageNumber,
@@ -551,7 +542,7 @@ setFlashRect({
 });
 setTimeout(() => setFlashRect(null), 1200);
 
-// Persistent yellow outline
+// Persistent yellow outline (stays until next mark)
 setSelectedRect({
   pageNumber,
   x: rectAtZ.x,
@@ -559,7 +550,6 @@ setSelectedRect({
   w: rectAtZ.w,
   h: rectAtZ.h,
 });
-
 
         // Get actual page position in scrollable container
         const containerRect = container.getBoundingClientRect();

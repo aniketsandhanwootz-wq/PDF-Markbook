@@ -34,7 +34,7 @@ function PageCanvas({
   const currentCanvasRef = useRef<'front' | 'back'>('front');
   const lastRenderedZoomRef = useRef<number>(0);
   const [isLoading, setIsLoading] = useState(true);
-
+  const [currentCanvas, setCurrentCanvas] = useState<'front' | 'back'>('front');
   // Generate cache key
   const getCacheKey = (page: number, zoomLevel: number) => {
     return `${page}_${zoomLevel.toFixed(2)}`;
@@ -128,8 +128,9 @@ if (!ctx) {
   ctx.drawImage(bmp, 0, 0, viewport.width, viewport.height);
 
   // Swap canvases
-  currentCanvasRef.current =
-    currentCanvasRef.current === 'front' ? 'back' : 'front';
+ currentCanvasRef.current =
+  currentCanvasRef.current === 'front' ? 'back' : 'front';
+setCurrentCanvas(currentCanvasRef.current);
 
   if (currentCanvasRef.current === 'back') {
     backCanvas!.style.display = 'block';
@@ -175,8 +176,9 @@ if (!ctx) {
     }
 
     // Swap canvases
-    currentCanvasRef.current =
-      currentCanvasRef.current === 'front' ? 'back' : 'front';
+currentCanvasRef.current =
+  currentCanvasRef.current === 'front' ? 'back' : 'front';
+setCurrentCanvas(currentCanvasRef.current);
 
     if (currentCanvasRef.current === 'back') {
       backCanvas!.style.display = 'block';
@@ -218,6 +220,13 @@ if (!ctx) {
 
 // Draw overlay: persistent yellow outline + optional red flash
 useEffect(() => {
+    console.log('🎨 Overlay effect:', { 
+    pageNumber, 
+    hasFlash: !!flashRect, 
+    hasSelected: !!selectedRect,
+    currentCanvas,
+    zoom 
+  });
   const overlay = overlayRef.current;
   const visibleCanvas =
     currentCanvasRef.current === 'front'
@@ -229,11 +238,21 @@ useEffect(() => {
   const ctx = overlay.getContext('2d');
   if (!ctx) return;
 
-  // Match overlay to visible canvas size (buffer + CSS)
-  overlay.width = visibleCanvas.width;
-  overlay.height = visibleCanvas.height;
-  overlay.style.width = visibleCanvas.style.width;
-  overlay.style.height = visibleCanvas.style.height;
+// Size overlay to match visible canvas
+overlay.width = visibleCanvas.width || 300;
+overlay.height = visibleCanvas.height || 150;
+
+const cssWidth = visibleCanvas.style.width;
+const cssHeight = visibleCanvas.style.height;
+
+// Only set CSS dimensions if canvas has been sized
+if (cssWidth && cssHeight) {
+  overlay.style.width = cssWidth;
+  overlay.style.height = cssHeight;
+} else {
+  // Canvas not rendered yet - skip drawing this frame
+  return;
+}
 
   // DPR handling identical to the renderer so coordinates match exactly
   const isTouch =
@@ -292,7 +311,7 @@ useEffect(() => {
   return () => {
     if (t) window.clearTimeout(t);
   };
-}, [flashRect, selectedRect]);
+}, [flashRect, selectedRect, currentCanvas, zoom]);
 
   return (
   <div className="page-wrapper" style={{ position: 'relative' }}>
@@ -333,7 +352,13 @@ useEffect(() => {
     <canvas
   ref={overlayRef}
   className="page-overlay"
-  style={{ pointerEvents: 'none' }}
+  style={{ 
+    pointerEvents: 'none',
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    zIndex: 300
+  }}
 />
   </div>
 );
