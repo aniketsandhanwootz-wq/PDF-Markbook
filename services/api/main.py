@@ -175,7 +175,16 @@ class Mark(BaseModel):
     order_index: int = Field(ge=0, description="Display order")
     name: str = Field(min_length=1, max_length=200, description="Mark name")
 
-    label: Optional[str] = Field(None, min_length=1, max_length=6, description="Excel-style label")
+    label: Optional[str] = Field(None, max_length=6, description="Excel-style label")  # ✅ REMOVED min_length=1
+    
+    # ✅ ADD THIS VALIDATOR (right after the label field)
+    @field_validator('label')
+    @classmethod
+    def normalize_empty_label(cls, v: Optional[str]) -> Optional[str]:
+        """Convert empty strings to None for consistency."""
+        if v == "":
+            return None
+        return v
     
     # ✨ ENHANCED: Stricter bounds (must be > 0, not >= 0)
     nx: float = Field(ge=0.0, le=1.0, description="Normalized X (0-1)")
