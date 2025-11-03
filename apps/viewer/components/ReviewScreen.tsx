@@ -5,6 +5,7 @@ import { useState } from 'react';
 type Mark = {
   mark_id?: string;
   name: string;
+  label?: string;
 };
 
 type Entry = {
@@ -18,7 +19,10 @@ type ReviewScreenProps = {
   onBack: () => void;
   onSubmit: () => void;
   isSubmitting: boolean;
+  /** ✅ called when a review row is clicked */
+  onJumpTo: (index: number) => void;
 };
+
 
 export default function ReviewScreen({
   marks,
@@ -26,6 +30,7 @@ export default function ReviewScreen({
   onBack,
   onSubmit,
   isSubmitting,
+  onJumpTo,             // ✅ add this
 }: ReviewScreenProps) {
   const completedCount = Object.values(entries).filter(v => v.trim() !== '').length;
   const allFilled = completedCount === marks.length;
@@ -107,16 +112,26 @@ export default function ReviewScreen({
           const isFilled = value.trim() !== '';
 
           return (
-            <div
-              key={mark.mark_id || idx}
-              style={{
-                marginBottom: '12px',
-                padding: '12px',
-                background: isFilled ? '#f1f8e9' : '#ffebee',
-                border: `2px solid ${isFilled ? '#c5e1a5' : '#ffcdd2'}`,
-                borderRadius: '8px'
-              }}
-            >
+  <div
+    key={mark.mark_id || idx}
+    onClick={() => onJumpTo(idx)}                     // ✅ jump to mark
+    role="button"
+    tabIndex={0}
+    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onJumpTo(idx); }}
+    style={{
+      marginBottom: '12px',
+      padding: '12px',
+      background: isFilled ? '#f1f8e9' : '#ffebee',
+      border: `2px solid ${isFilled ? '#c5e1a5' : '#ffcdd2'}`,
+      borderRadius: '8px',
+      cursor: 'pointer',                              // ✅ affordance
+      userSelect: 'none',
+      transition: 'transform 120ms ease, box-shadow 120ms ease',
+    }}
+    onMouseDown={(e) => (e.currentTarget.style.transform = 'scale(0.995)')}
+    onMouseUp={(e) => (e.currentTarget.style.transform = 'scale(1)')}
+    onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
+  >
               <div style={{
                 display: 'flex',
                 alignItems: 'flex-start',
@@ -135,7 +150,7 @@ export default function ReviewScreen({
                     color: '#333',
                     marginBottom: '4px'
                   }}>
-                    {idx + 1}. {mark.name}
+                    {mark.label ?? '–'}. {mark.name}
                   </div>
                   {isFilled ? (
                     <div style={{

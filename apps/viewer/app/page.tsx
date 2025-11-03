@@ -64,6 +64,7 @@ type Mark = {
   zoom_hint?: number | null;
   padding_pct?: number;
   anchor?: string;
+  label?: string;
 };
 
 type FlashRect = {
@@ -640,6 +641,13 @@ container.scrollTo({ left: clampedL, top: clampedT, behavior: 'smooth' });
     }
   }, [currentMarkIndex, marks.length, navigateToMark]);
   
+  const handleJumpFromReview = useCallback((index: number) => {
+  setShowReview(false);           // close review
+  setTimeout(() => {
+    navigateToMark(index);        // jump to the chosen mark
+  }, 0);                          // let ReviewScreen unmount first
+}, [navigateToMark]);
+
   const selectFromList = useCallback((index: number) => {
   // If mobile and sidebar is open, we may close it and the container width changes.
   // Give layout a tick, then navigate so zoom math uses the final width.
@@ -857,20 +865,22 @@ const handleSubmit = useCallback(async () => {
     );
   }
 
-  if (showReview) {
-    return (
-      <>
-        <ReviewScreen
-          marks={marks}
-          entries={entries}
-          onBack={() => setShowReview(false)}
-          onSubmit={handleSubmit}
-          isSubmitting={isSubmitting}
-        />
-        <Toaster position="top-center" />
-      </>
-    );
-  }
+if (showReview) {
+  return (
+    <>
+      <ReviewScreen
+        marks={marks}
+        entries={entries}
+        onBack={() => setShowReview(false)}
+        onSubmit={handleSubmit}
+        isSubmitting={isSubmitting}
+        onJumpTo={handleJumpFromReview}   // ✅ new prop
+      />
+      <Toaster position="top-center" />
+    </>
+  );
+}
+
 
   // Mobile input mode
   if (isMobileInputMode && marks.length > 0) {

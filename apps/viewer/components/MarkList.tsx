@@ -12,6 +12,7 @@ type Mark = {
   nw: number;
   nh: number;
   zoom_hint?: number | null;
+  label?: string;
 };
 
 type MarkListProps = {
@@ -28,10 +29,11 @@ export default function MarkList({ marks, currentIndex, onSelect }: MarkListProp
     if (!searchQuery.trim()) return marks;
     
     const query = searchQuery.toLowerCase();
-    return marks.filter(mark => 
-      mark.name.toLowerCase().includes(query) ||
-      `page ${mark.page_index + 1}`.includes(query)
-    );
+    return marks.filter(mark =>
+  mark.name.toLowerCase().includes(query) ||
+  (mark.label?.toLowerCase() ?? '').includes(query) ||
+  `page ${mark.page_index + 1}`.includes(query)
+);
   }, [marks, searchQuery]);
 
   const handleClearSearch = () => {
@@ -113,16 +115,46 @@ export default function MarkList({ marks, currentIndex, onSelect }: MarkListProp
       {/* Mark List */}
       <div className="mark-list-items">
         {filteredMarks.map((mark) => {
-          const originalIndex = marks.findIndex(m => m.mark_id === mark.mark_id);
-          return (
-            <button
-              key={mark.mark_id || originalIndex}
-              className={`mark-item ${originalIndex === currentIndex ? 'active' : ''}`}
-              onClick={() => onSelect(originalIndex)}
-            >
-              <div className="mark-name">{mark.name}</div>
-              <div className="mark-page">Page {mark.page_index + 1}</div>
-            </button>
+  const originalIndex = marks.findIndex(m => m.mark_id === mark.mark_id);
+  const isActive = originalIndex === currentIndex; // ✅ add this
+  return (
+    <button
+  key={mark.mark_id || originalIndex}
+  className={`mark-item ${originalIndex === currentIndex ? 'active' : ''}`}
+  onClick={() => onSelect(originalIndex)}
+>
+  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+    {/* ✅ Label badge from DB */}
+    <div
+  style={{
+    minWidth: 22,
+    height: 22,
+    borderRadius: '50%',
+    border: `2px solid ${isActive ? '#ffffff' : '#dddddd'}`, // ✅ white ring on blue
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: 12,
+    fontWeight: 700,
+    background: '#ffffff',          // ✅ keep white pill
+    color: '#1976d2',               // ✅ force blue text so it shows on active row
+    lineHeight: 1
+  }}
+  title="Label"
+>
+  {mark.label ?? '–'}
+</div>
+
+
+    <div style={{ flex: 1, minWidth: 0 }}>
+      <div className="mark-name" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        {mark.name}
+      </div>
+      <div className="mark-page">Page {mark.page_index + 1}</div>
+    </div>
+  </div>
+</button>
+
           );
         })}
         {filteredMarks.length === 0 && (
