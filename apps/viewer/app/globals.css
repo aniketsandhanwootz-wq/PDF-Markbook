@@ -407,33 +407,25 @@ body {
 .swipe-gesture-host {
   touch-action: pan-x pan-y !important; /* no pinch-zoom here */
 }
-/* Floating toolbar overlay for viewer */
 .toolbar-overlay {
-  position: sticky;          /* stays near top while scrolling pages */
-  top: 8px;
-  z-index: 300;               /* above canvas and highlights */
-  width: 100%;
+  position: fixed;                               /* does NOT take layout space */
+  top: max(8px, env(safe-area-inset-top));       /* safe area on iOS */
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 300;                                   /* above canvases/overlays */
+  width: auto;                                    /* no full-width white strip */
   display: flex;
   justify-content: center;
-  pointer-events: none;      /* let clicks pass through the overlay itself */
+  pointer-events: none;                           /* let the PDF receive scroll/drag */
 }
 
-/* Re-enable clicks on the toolbar content */
+/* Re-enable clicks on toolbar content */
 .toolbar-overlay > * {
   pointer-events: auto;
 }
 
-/* Optional: slightly elevate buttons so they’re readable over drawings */
+/* Optional: subtle elevation for buttons only (kept from before) */
 .toolbar-overlay button {
   box-shadow: 0 2px 8px rgba(0,0,0,0.15);
   border-radius: 8px;
 }
-
-/* Better notch/phone handling */
-@supports (padding: max(0px)) {
-  .toolbar-overlay { top: max(8px, env(safe-area-inset-top)); }
-}
-
-
-
-
