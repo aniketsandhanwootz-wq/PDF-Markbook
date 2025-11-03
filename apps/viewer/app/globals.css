@@ -564,3 +564,16 @@ body {
 
 /* Keep old .sidebar visually above if it exists somewhere else */
 .sidebar { z-index: 10; }
+
+/* ---- Prevent side-scroll & wrap long mark names in all sidebars ---- */
+.mark-list { overflow-x: hidden; }
+.mark-item { width: 100%; }
+.mark-name {
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+/* If any sidebar container elsewhere caused horizontal scroll, force-hide it */
+.sidebar,
+.slide-sidebar__body { overflow-x: hidden; }

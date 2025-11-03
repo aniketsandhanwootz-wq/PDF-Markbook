@@ -147,9 +147,18 @@ export default function MarkList({ marks, currentIndex, onSelect }: MarkListProp
 
 
     <div style={{ flex: 1, minWidth: 0 }}>
-      <div className="mark-name" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-        {mark.name}
-      </div>
+      <div
+  className="mark-name"
+  style={{
+    whiteSpace: 'normal',
+    wordBreak: 'break-word',
+    overflowWrap: 'anywhere',
+    lineHeight: 1.25
+  }}
+>
+  {mark.name}
+</div>
+
       <div className="mark-page">Page {mark.page_index + 1}</div>
     </div>
   </div>

@@ -868,14 +868,23 @@ const handleSubmit = useCallback(async () => {
 if (showReview) {
   return (
     <>
-      <ReviewScreen
-        marks={marks}
-        entries={entries}
-        onBack={() => setShowReview(false)}
-        onSubmit={handleSubmit}
-        isSubmitting={isSubmitting}
-        onJumpTo={handleJumpFromReview}   // ✅ new prop
-      />
+    <ReviewScreen
+  marks={marks}
+  entries={entries}
+  onBack={() => {
+    setShowReview(false);
+    // give the viewer a tick to reflow before centering
+    setTimeout(() => navigateToMark(currentMarkIndex), 120);
+  }}
+  onSubmit={handleSubmit}
+  isSubmitting={isSubmitting}
+  onJumpTo={(i) => {
+    setShowReview(false);
+    // jump straight to the chosen mark (center + zoom)
+    setTimeout(() => navigateToMark(i), 120);
+  }}
+/>
+
       <Toaster position="top-center" />
     </>
   );

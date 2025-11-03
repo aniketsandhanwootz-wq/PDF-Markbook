@@ -67,8 +67,8 @@ export default function InputPanel({
   return (
     <div style={{
   height: 'auto',
-  minHeight: '120px',
-  maxHeight: '25vh',
+  minHeight: '160px',
+  maxHeight: '32vh',
   background: 'white',
   borderTop: '2px solid #ddd',
   display: 'flex',
@@ -77,7 +77,7 @@ export default function InputPanel({
 }}>
       {/* Compressed Header */}
       <div style={{
-        padding: '6px 10px',
+        padding: '8px 12px',
         background: '#1976d2',
         color: 'white',
         display: 'flex',
@@ -87,28 +87,31 @@ export default function InputPanel({
         flexShrink: 0
       }}>
        <div style={{
-  fontSize: '13px',
-  fontWeight: '600',
+  fontSize: '15px',
+  fontWeight: '700',
   whiteSpace: 'nowrap',
   letterSpacing: '0.5px'
 }}>
   {displayLabel}
 </div>
-
+<div
+  style={{
+    fontSize: '15px',
+    fontWeight: '600',
+    flex: 1,
+    overflow: 'hidden',
+    whiteSpace: 'normal',
+    overflowWrap: 'anywhere',
+    wordBreak: 'break-word',
+    textAlign: 'center',
+    lineHeight: '1.25',
+  }}
+>
+  {currentMark.name}
+</div>
 
         <div style={{ 
-          fontSize: '13px', 
-          fontWeight: '600',
-          flex: 1,
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-          textAlign: 'center'
-        }}>
-          {currentMark.name}
-        </div>
-        <div style={{ 
-          fontSize: '11px', 
+          fontSize: '12px', 
           opacity: 0.9,
           whiteSpace: 'nowrap'
         }}>
@@ -130,15 +133,15 @@ export default function InputPanel({
           placeholder="Type value here..."
           autoFocus
           style={{
-            width: '100%',
-            padding: '6px 10px',
-            fontSize: '16px',
-            border: '2px solid #ddd',
-            borderRadius: '4px',
-            outline: 'none',
-            transition: 'border-color 0.2s',
-            height: '36px'
-          }}
+  width: '100%',
+  padding: '10px 12px',
+  fontSize: '16px',
+  border: '2px solid #ddd',
+  borderRadius: '8px',
+  outline: 'none',
+  transition: 'border-color 0.2s',
+  height: '44px'
+}}
           onFocus={(e) => {
             e.target.style.borderColor = '#1976d2';
           }}
@@ -161,36 +164,36 @@ export default function InputPanel({
           onClick={onPrev}
           disabled={!canPrev}
           style={{
-            flex: 1,
-            padding: '4px',
-            fontSize: '14px',
-            fontWeight: '600',
-            border: '2px solid #ddd',
-            background: canPrev ? 'white' : '#f5f5f5',
-            color: canPrev ? '#333' : '#999',
-            borderRadius: '6px',
-            cursor: canPrev ? 'pointer' : 'not-allowed',
-            minHeight: '36px',
-            transition: 'all 0.2s'
-          }}
+  flex: 1,
+  padding: '8px 12px',
+  fontSize: '16px',
+  fontWeight: '700',
+  border: '2px solid #ddd',
+  background: canPrev ? 'white' : '#f5f5f5',
+  color: canPrev ? '#333' : '#999',
+  borderRadius: '10px',
+  cursor: canPrev ? 'pointer' : 'not-allowed',
+  minHeight: '44px',
+  transition: 'all 0.2s'
+}}
         >
           ← Prev
         </button>
         <button
           onClick={onNext}
           style={{
-            flex: 1,
-            padding: '4px',
-            fontSize: '14px',
-            fontWeight: '600',
-            border: 'none',
-            background: '#1976d2',
-            color: 'white',
-            borderRadius: '6px',
-            cursor: 'pointer',
-            minHeight: '36px',
-            transition: 'all 0.2s'
-          }}
+  flex: 1,
+  padding: '8px 12px',
+  fontSize: '16px',
+  fontWeight: '700',
+  border: 'none',
+  background: '#1976d2',
+  color: 'white',
+  borderRadius: '10px',
+  cursor: 'pointer',
+  minHeight: '44px',
+  transition: 'all 0.2s'
+}}
         >
           {currentIndex < totalMarks - 1 ? 'Next →' : '✓ Review'}
         </button>

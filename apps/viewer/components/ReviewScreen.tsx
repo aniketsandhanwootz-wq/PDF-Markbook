@@ -144,14 +144,21 @@ export default function ReviewScreen({
                   {isFilled ? '✓' : '⚠️'}
                 </div>
                 <div style={{ flex: 1 }}>
-                  <div style={{
-                    fontSize: '14px',
-                    fontWeight: '600',
-                    color: '#333',
-                    marginBottom: '4px'
-                  }}>
-                    {mark.label ?? '–'}. {mark.name}
-                  </div>
+                  <div
+  style={{
+    fontSize: '14px',
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: '4px',
+    whiteSpace: 'normal',
+    overflowWrap: 'anywhere',
+    wordBreak: 'break-word',
+    lineHeight: '1.25',
+  }}
+>
+  <span style={{ opacity: 0.85 }}>{mark.label ?? '–'}.</span> {mark.name}
+</div>
+
                   {isFilled ? (
                     <div style={{
                       fontSize: '14px',
