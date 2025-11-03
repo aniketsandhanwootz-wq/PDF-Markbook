@@ -765,8 +765,39 @@ const handleSubmit = useCallback(async () => {
   swipeDuration: 500, // Must swipe within 500ms
 });
 
-  const zoomIn = useCallback(() => setZoom((z) => clampZoom(z * 1.2)), []);
-  const zoomOut = useCallback(() => setZoom((z) => clampZoom(z / 1.2)), []);
+// ---- Center-preserving zoom helper for HUD buttons ----
+const zoomBy = useCallback((factor: number) => {
+  const container = containerRef.current;
+
+  // Fallback: if container is not ready, just scale
+  if (!container) {
+    setZoom((prev) => clampZoom(prev * factor));
+    return;
+  }
+
+  const prevZoom = zoomRef.current;
+  const nextZoom = clampZoom(prevZoom * factor);
+  const scale = nextZoom / prevZoom;
+
+  // Content coordinates of the viewport center
+  const cx = container.scrollLeft + container.clientWidth / 2;
+  const cy = container.scrollTop + container.clientHeight / 2;
+
+  // Apply zoom
+  setZoom(nextZoom);
+
+  // After layout updates, reposition scroll so the same center stays centered
+  requestAnimationFrame(() => {
+    const targetLeft = cx * scale - container.clientWidth / 2;
+    const targetTop  = cy * scale - container.clientHeight / 2;
+
+    const { left, top } = clampScroll(container, targetLeft, targetTop);
+    container.scrollTo({ left, top, behavior: 'auto' });
+  });
+}, []);
+
+const zoomIn = useCallback(() => zoomBy(1.2), [zoomBy]);
+const zoomOut = useCallback(() => zoomBy(1 / 1.2), [zoomBy]);
   const resetZoom = useCallback(() => setZoom(1.0), []);
 
   const fitToWidthZoom = useCallback(() => {
