@@ -220,13 +220,6 @@ setCurrentCanvas(currentCanvasRef.current);
 
 // Draw overlay: persistent yellow outline + optional red flash
 useEffect(() => {
-    console.log('🎨 Overlay effect:', { 
-    pageNumber, 
-    hasFlash: !!flashRect, 
-    hasSelected: !!selectedRect,
-    currentCanvas,
-    zoom 
-  });
   const overlay = overlayRef.current;
   const visibleCanvas =
     currentCanvasRef.current === 'front'
@@ -235,129 +228,28 @@ useEffect(() => {
 
   if (!overlay || !visibleCanvas) return;
 
-  const ctx = overlay.getContext('2d');
-  if (!ctx) return;
-// Draw overlay: persistent yellow outline + optional red flash
-useEffect(() => {
-  console.log('🎨 Overlay effect:', { 
-    pageNumber, 
-    hasFlash: !!flashRect, 
-    hasSelected: !!selectedRect,
-    currentCanvas,
-    zoom 
-  });
-  
-  const overlay = overlayRef.current;
-  const visibleCanvas =
-    currentCanvasRef.current === 'front'
-      ? frontCanvasRef.current
-      : backCanvasRef.current;
+  // Use actual rendered size (don’t rely on style strings)
+  const cssW = visibleCanvas.clientWidth;
+  const cssH = visibleCanvas.clientHeight;
+  const bufW = visibleCanvas.width;
+  const bufH = visibleCanvas.height;
 
-  if (!overlay || !visibleCanvas) return;
+  // Wait until the page bitmap has real sizes
+  if (!cssW || !cssH || !bufW || !bufH) return;
 
-  // CRITICAL: Check if canvas is actually rendered before proceeding
-  const cssWidth = visibleCanvas.style.width;
-  const cssHeight = visibleCanvas.style.height;
-  const bufferWidth = visibleCanvas.width;
-  
-  if (!cssWidth || !cssHeight || bufferWidth === 0) {
-    console.log('⏭️ Skipping overlay - canvas not ready yet', {
-      cssWidth, cssHeight, bufferWidth, pageNumber
-    });
-    return;  // Skip this frame, will re-run when canvas is ready
-  }
+  // Size overlay to match the visible bitmap and its CSS size
+  overlay.width = bufW;
+  overlay.height = bufH;
+  overlay.style.width = `${cssW}px`;
+  overlay.style.height = `${cssH}px`;
 
   const ctx = overlay.getContext('2d');
   if (!ctx) return;
 
-  // NOW size overlay to match visible canvas (canvas is confirmed ready)
-  overlay.width = bufferWidth;
-  overlay.height = visibleCanvas.height;
-  overlay.style.width = cssWidth;
-  overlay.style.height = cssHeight;
-
-  console.log('✅ Overlay sized:', {
-    pageNumber,
-    overlayWidth: overlay.width,
-    overlayHeight: overlay.height,
-    cssWidth, cssHeight
-  });
-
-  // DPR handling identical to the renderer so coordinates match exactly
-  const isTouch =
-    typeof window !== 'undefined' &&
-    (('ontouchstart' in window) || navigator.maxTouchPoints > 0);
-  const baseDpr = isTouch ? 1.5 : Math.min(window.devicePixelRatio || 1, 2);
-  const MAX_PIXELS = 8_000_000;
-  const vw = Number(cssWidth.replace('px', '') || 0);
-  const vh = Number(cssHeight.replace('px', '') || 0);
-  let effDpr = baseDpr;
-  const estPixels = vw * vh * (baseDpr * baseDpr);
-  if (estPixels > MAX_PIXELS) {
-    effDpr = Math.max(1, baseDpr * Math.sqrt(MAX_PIXELS / estPixels));
-  }
-  ctx.setTransform(effDpr, 0, 0, effDpr, 0, 0);
-
-  const drawPersistent = () => {
-    if (!selectedRect) return;
-    console.log('🟡 Drawing yellow outline:', { pageNumber, rect: selectedRect });
-    // soft halo
-    ctx.beginPath();
-    ctx.lineJoin = 'round';
-    ctx.lineWidth = 6;
-    ctx.strokeStyle = 'rgba(255, 212, 0, 0.35)';
-    ctx.strokeRect(selectedRect.x, selectedRect.y, selectedRect.w, selectedRect.h);
-    // crisp edge
-    ctx.beginPath();
-    ctx.lineJoin = 'round';
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = '#FFD400';
-    ctx.strokeRect(selectedRect.x, selectedRect.y, selectedRect.w, selectedRect.h);
-  };
-
-  const draw = (withFlash: boolean) => {
-    ctx.clearRect(0, 0, overlay.width, overlay.height);
-    drawPersistent();
-    if (withFlash && flashRect) {
-      console.log('🔴 Drawing red flash:', { pageNumber, rect: flashRect });
-      ctx.fillStyle = 'rgba(255, 0, 0, 0.28)';
-      ctx.fillRect(flashRect.x, flashRect.y, flashRect.w, flashRect.h);
-      ctx.beginPath();
-      ctx.lineJoin = 'round';
-      ctx.lineWidth = 3;
-      ctx.strokeStyle = '#FFD54F';
-      ctx.strokeRect(flashRect.x, flashRect.y, flashRect.w, flashRect.h);
-    }
-  };
-
-  // initial draw
-  draw(Boolean(flashRect));
-
-  // if flashing, remove flash after 1200ms but keep persistent outline
-  let t: number | undefined;
-  if (flashRect) {
-    t = window.setTimeout(() => draw(false), 1200);
-  }
-
-  return () => {
-    if (t) window.clearTimeout(t);
-  };
-}, [flashRect, selectedRect, currentCanvas, zoom, pageNumber]);
-
-  // DPR handling identical to the renderer so coordinates match exactly
-  const isTouch =
-    typeof window !== 'undefined' &&
-    (('ontouchstart' in window) || navigator.maxTouchPoints > 0);
-  const baseDpr = isTouch ? 1.5 : Math.min(window.devicePixelRatio || 1, 2);
-  const MAX_PIXELS = 8_000_000;
-  const vw = Number(visibleCanvas.style.width?.replace('px', '') || 0);
-  const vh = Number(visibleCanvas.style.height?.replace('px', '') || 0);
-  let effDpr = baseDpr;
-  const estPixels = vw * vh * (baseDpr * baseDpr);
-  if (estPixels > MAX_PIXELS) {
-    effDpr = Math.max(1, baseDpr * Math.sqrt(MAX_PIXELS / estPixels));
-  }
-  ctx.setTransform(effDpr, 0, 0, effDpr, 0, 0);
+  // Map CSS coords → buffer pixels exactly
+  const sx = bufW / cssW;
+  const sy = bufH / cssH;
+  ctx.setTransform(sx, 0, 0, sy, 0, 0);
 
   const drawPersistent = () => {
     if (!selectedRect) return;
@@ -392,16 +284,18 @@ useEffect(() => {
   // initial draw
   draw(Boolean(flashRect));
 
-  // if flashing, remove flash after 1200ms but keep persistent outline
+  // clear flash after 1200ms but keep the outline
   let t: number | undefined;
-  if (flashRect) {
-    t = window.setTimeout(() => draw(false), 1200);
-  }
-
-  return () => {
-    if (t) window.clearTimeout(t);
-  };
-}, [flashRect, selectedRect, currentCanvas, zoom]);
+  if (flashRect) t = window.setTimeout(() => draw(false), 1200);
+  return () => { if (t) window.clearTimeout(t); };
+}, [
+  flashRect,
+  selectedRect,
+  currentCanvas,  // toggles when we swap front/back
+  isLoading,      // re-run once the page finished rendering
+  zoom,
+  pageNumber
+]);
 
   return (
   <div className="page-wrapper" style={{ position: 'relative' }}>
