@@ -14,6 +14,8 @@ import ReviewScreen from '../components/ReviewScreen';
 import { clampZoom } from '../lib/pdf';
 import PDFSearch from '../components/PDFSearch';
 import usePinchZoom from '../hooks/usePinchZoom';
+import SlideSidebar from '../components/SlideSidebar';
+
 
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
@@ -892,72 +894,24 @@ const handleSubmit = useCallback(async () => {
   overflow: 'hidden'
 }}>
 
-          <div style={{
-            width: sidebarOpen ? '280px' : '0px',
-            minWidth: sidebarOpen ? '280px' : '0px',
-            height: '100%',
-            background: '#fff',
-            borderRight: sidebarOpen ? '1px solid #ddd' : 'none',
-            transition: 'width 0.15s ease-out, min-width 0.15s ease-out',
-            overflow: 'hidden',
-            display: 'flex',
-            flexDirection: 'column',
-            boxShadow: sidebarOpen ? '2px 0 8px rgba(0,0,0,0.1)' : 'none'
-          }}>
-            <div style={{
-              padding: '6px 10px',
-              borderBottom: '1px solid #ddd',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '10px',
-              background: '#f9f9f9',
-              minHeight: '36px'
-            }}>
-              <button
-                onClick={() => setSidebarOpen(false)}
-                style={{
-                  width: '32px',
-                  height: '32px',
-                  border: 'none',
-                  background: 'transparent',
-                  color: '#5f6368',
-                  borderRadius: '0',
-                  cursor: 'pointer',
-                  fontSize: '20px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  padding: 0,
-                  flexShrink: 0
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = 'rgba(60,64,67,0.08)';
-                  e.currentTarget.style.borderRadius = '50%';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = 'transparent';
-                  e.currentTarget.style.borderRadius = '0';
-                }}
-                title="Close sidebar"
-              >
-                ☰
-              </button>
-              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '600', flex: 1 }}>Marks</h3>
-            </div>
-
-            <div style={{ flex: 1, overflow: 'auto' }}>
+ {/* Slide-over sidebar (mobile) */}
+<SlideSidebar
+  open={sidebarOpen}
+  onClose={() => setSidebarOpen(false)}
+  title="Marks"
+>
   <MarkList
-  marks={marks}
-  currentIndex={currentMarkIndex}
-  onSelect={(index) => {
-    setCurrentMarkIndex(index);
-    selectFromList(index);   // ← will close sidebar (if needed) and then zoom+center
-  }}
-/>
+    marks={marks}
+    currentIndex={currentMarkIndex}
+    onSelect={(index) => {
+      setCurrentMarkIndex(index);
+      setSidebarOpen(false);
+      // allow layout to settle before centering
+      setTimeout(() => selectFromList(index), 80);
+    }}
+  />
+</SlideSidebar>
 
-
-</div>
-          </div>
 
          <div
   className="swipe-gesture-host"
@@ -1051,23 +1005,23 @@ return (
     <Toaster position="top-center" />
 
     {marks.length > 0 && (
-      <div className={`sidebar ${sidebarOpen ? 'open' : 'closed'}`}>
-        <div className="sidebar-header">
-          <button className="sidebar-toggle" onClick={() => setSidebarOpen(!sidebarOpen)}>
-            {sidebarOpen ? '◀' : '▶'}
-          </button>
-          {sidebarOpen && <h3>Marks</h3>}
-        </div>
-        {sidebarOpen && (
-          <MarkList
-  marks={marks}
-  currentIndex={currentMarkIndex}
-  onSelect={selectFromList}
-/>
-
-        )}
-      </div>
+      <SlideSidebar
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        title="Marks"
+      >
+        <MarkList
+          marks={marks}
+          currentIndex={currentMarkIndex}
+          onSelect={(index) => {
+            setCurrentMarkIndex(index);
+            setSidebarOpen(false);
+            setTimeout(() => selectFromList(index), 0);
+          }}
+        />
+      </SlideSidebar>
     )}
+
 
     <div className="main-content">
             {/* ✅ Floating HUD (desktop) */}

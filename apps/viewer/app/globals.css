@@ -47,25 +47,6 @@ body {
   color: #d32f2f;
 }
 
-/* Sidebar */
-.sidebar {
-  display: flex;
-  flex-direction: column;
-  background: #fff;
-  border-right: 1px solid #ddd;
-  box-shadow: 2px 0 4px rgba(0, 0, 0, 0.1);
-  transition: width 0.3s ease;
-  overflow: hidden;
-}
-
-.sidebar.open {
-  width: 280px;
-}
-
-.sidebar.closed {
-  width: 48px;
-}
-
 .sidebar-header {
   display: flex;
   align-items: center;
@@ -523,3 +504,63 @@ body {
   position: relative;
   z-index: 2000; /* higher than page overlays and HUD */
 }
+/* ===== Slide-over Sidebar (GPU-accelerated) ===== */
+.slide-scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.20);
+  backdrop-filter: blur(1.5px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 200ms ease;
+  z-index: 1999; /* below sidebar, above PDF */
+}
+
+.slide-scrim.show {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.slide-sidebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 100dvh;
+  background: #fff;
+  box-shadow: 2px 0 24px rgba(0,0,0,0.20);
+  transform: translate3d(-100%, 0, 0);  /* off-screen */
+  transition: transform 220ms cubic-bezier(.2,.7,.2,1);
+  will-change: transform;               /* hint for GPU path */
+  z-index: 2000;                        /* above scrim & canvases */
+  display: flex;
+  flex-direction: column;
+  max-width: 90vw;                      /* safety on tiny phones */
+}
+
+.slide-sidebar.open {
+  transform: translate3d(0, 0, 0);
+}
+
+.slide-sidebar__header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-bottom: 1px solid #eee;
+  background: #fafafa;
+  min-height: 44px;
+}
+
+.slide-sidebar__title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.slide-sidebar__body {
+  flex: 1;
+  overflow: auto;
+}
+
+/* Keep old .sidebar visually above if it exists somewhere else */
+.sidebar { z-index: 10; }
