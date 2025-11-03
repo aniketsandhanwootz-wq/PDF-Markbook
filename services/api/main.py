@@ -175,16 +175,7 @@ class Mark(BaseModel):
     order_index: int = Field(ge=0, description="Display order")
     name: str = Field(min_length=1, max_length=200, description="Mark name")
 
-    label: Optional[str] = Field(None, max_length=6, description="Excel-style label")  # ✅ REMOVED min_length=1
-    
-    # ✅ ADD THIS VALIDATOR (right after the label field)
-    @field_validator('label')
-    @classmethod
-    def normalize_empty_label(cls, v: Optional[str]) -> Optional[str]:
-        """Convert empty strings to None for consistency."""
-        if v == "":
-            return None
-        return v
+    label: Optional[str] = Field(None, min_length=1, max_length=6, description="Excel-style label")
     
     # ✨ ENHANCED: Stricter bounds (must be > 0, not >= 0)
     nx: float = Field(ge=0.0, le=1.0, description="Normalized X (0-1)")
@@ -194,6 +185,23 @@ class Mark(BaseModel):
     
     zoom_hint: Optional[float] = Field(None, ge=0.25, le=6.0, description="Zoom level")
 
+        
+    # ✅ ADD THESE VALIDATORS
+    @field_validator('name')
+    @classmethod
+    def normalize_empty_name(cls, v: str) -> str:
+        """Convert empty names to 'Untitled'."""
+        if not v or not v.strip():
+            return "Untitled"
+        return v.strip()
+    
+    @field_validator('label')
+    @classmethod
+    def normalize_empty_label(cls, v: Optional[str]) -> Optional[str]:
+        """Convert empty strings to None."""
+        if v == "" or (v and not v.strip()):
+            return None
+        return v
     @field_validator('name')
     @classmethod
     def name_not_empty(cls, v):
