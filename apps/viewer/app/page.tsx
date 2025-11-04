@@ -42,6 +42,10 @@ async function waitForCanvasLayout(
     await sleep(50);
   }
 }
+// --- smooth zoom helpers ---
+const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+// ease-out cubic for pleasant feel
+const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
 
 function clampScroll(container: HTMLElement, left: number, top: number) {
   const maxL = Math.max(0, container.scrollWidth - container.clientWidth);
@@ -284,13 +288,72 @@ function ViewerContent() {
   const [entries, setEntries] = useState<Record<string, string>>({});
   const [showReview, setShowReview] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Refs used by the viewer and smooth zoom
+const containerRef = useRef<HTMLDivElement>(null);
+const pageHeightsRef = useRef<number[]>([]);
+const pageElsRef = useRef<Array<HTMLDivElement | null>>([]);
 
-  const containerRef = useRef<HTMLDivElement>(null);
-  const pageHeightsRef = useRef<number[]>([]);
-  const pageElsRef = useRef<Array<HTMLDivElement | null>>([]);
-  // keep current zoom in a ref for synchronous math
+// keep current zoom in a ref for synchronous math
 const zoomRef = useRef(zoom);
 useEffect(() => { zoomRef.current = zoom; }, [zoom]);
+
+// smooth zoom animation bookkeeping
+const animRafRef = useRef<number | null>(null);
+const isZoomAnimatingRef = useRef(false);
+
+// Smooth animated zoom that keeps the same focal point centered
+const smoothZoom = useCallback(
+  (toZoomRaw: number, durationMs = 240) => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const toZoom = clampZoom(toZoomRaw);
+
+    // cancel an in-flight animation
+    if (animRafRef.current) cancelAnimationFrame(animRafRef.current);
+
+    const startZoom = zoomRef.current;
+    if (Math.abs(toZoom - startZoom) < 1e-4) return;
+
+    // anchor at the center of the viewport
+    const anchorX = container.clientWidth / 2;
+    const anchorY = container.clientHeight / 2;
+
+    // content coords under that anchor at start
+    const contentX = container.scrollLeft + anchorX;
+    const contentY = container.scrollTop + anchorY;
+
+    const t0 = performance.now();
+    isZoomAnimatingRef.current = true;
+
+    const step = (now: number) => {
+      const t = Math.min(1, (now - t0) / durationMs);
+      const z = lerp(startZoom, toZoom, easeOutCubic(t));
+      const k = z / startZoom;
+
+      // 1) apply zoom (triggers canvas resize/layout)
+      setZoom(z);
+
+      // 2) keep focal point centered (clamped)
+      const targetLeft = contentX * k - anchorX;
+      const targetTop  = contentY * k - anchorY;
+      const { left, top } = clampScroll(container, targetLeft, targetTop);
+      container.scrollLeft = left;
+      container.scrollTop  = top;
+
+      if (t < 1) {
+        animRafRef.current = requestAnimationFrame(step);
+      } else {
+        animRafRef.current = null;
+        isZoomAnimatingRef.current = false;
+      }
+    };
+
+    animRafRef.current = requestAnimationFrame(step);
+  },
+  [setZoom] // refs don't need to be listed; clampZoom is stable import
+);
+
 
   const isDemo = searchParams?.get('demo') === '1';
   const pdfUrlParam = searchParams?.get('pdf_url') || '';
@@ -586,6 +649,7 @@ container.scrollTo({ left: clampedL, top: clampedT, behavior: 'smooth' });
   useEffect(() => {
   (async () => {
     if (!pdf || marks.length === 0) return;
+    if (isZoomAnimatingRef.current) return;
 
     const mark = marks[currentMarkIndex];
     if (!mark) return;
@@ -765,39 +829,17 @@ const handleSubmit = useCallback(async () => {
   swipeDuration: 500, // Must swipe within 500ms
 });
 
-// ---- Center-preserving zoom helper for HUD buttons ----
-const zoomBy = useCallback((factor: number) => {
-  const container = containerRef.current;
+const zoomIn = useCallback(() => {
+  smoothZoom(clampZoom(zoomRef.current * 1.2));
+}, [smoothZoom, clampZoom]);
 
-  // Fallback: if container is not ready, just scale
-  if (!container) {
-    setZoom((prev) => clampZoom(prev * factor));
-    return;
-  }
+const zoomOut = useCallback(() => {
+  smoothZoom(clampZoom(zoomRef.current / 1.2));
+}, [smoothZoom, clampZoom]);
 
-  const prevZoom = zoomRef.current;
-  const nextZoom = clampZoom(prevZoom * factor);
-  const scale = nextZoom / prevZoom;
+// (optional) make reset smooth as well:
+// const resetZoom = useCallback(() => smoothZoom(1.0), [smoothZoom]);
 
-  // Content coordinates of the viewport center
-  const cx = container.scrollLeft + container.clientWidth / 2;
-  const cy = container.scrollTop + container.clientHeight / 2;
-
-  // Apply zoom
-  setZoom(nextZoom);
-
-  // After layout updates, reposition scroll so the same center stays centered
-  requestAnimationFrame(() => {
-    const targetLeft = cx * scale - container.clientWidth / 2;
-    const targetTop  = cy * scale - container.clientHeight / 2;
-
-    const { left, top } = clampScroll(container, targetLeft, targetTop);
-    container.scrollTo({ left, top, behavior: 'auto' });
-  });
-}, []);
-
-const zoomIn = useCallback(() => zoomBy(1.2), [zoomBy]);
-const zoomOut = useCallback(() => zoomBy(1 / 1.2), [zoomBy]);
   const resetZoom = useCallback(() => setZoom(1.0), []);
 
   const fitToWidthZoom = useCallback(() => {
