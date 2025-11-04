@@ -140,28 +140,33 @@ export default function InputPanel({
         flexShrink: 0
       }}>
         <input
-          type="text"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder="Type value here..."
-          autoFocus
-          style={{
-  width: '100%',
-  padding: '10px 12px',
-  fontSize: '16px',
-  border: '2px solid #ddd',
-  borderRadius: '8px',
-  outline: 'none',
-  transition: 'border-color 0.2s',
-  height: '44px'
-}}
-          onFocus={(e) => {
-            e.target.style.borderColor = '#1976d2';
-          }}
-          onBlur={(e) => {
-            e.target.style.borderColor = '#ddd';
-          }}
-        />
+  type="text"
+  value={value}
+  onChange={(e) => onChange(e.target.value)}
+  placeholder="Type value here..."
+  // ❌ remove: autoFocus
+  ref={(el) => {
+    // only focus if user has interacted (clicked manually)
+    if (el && document.activeElement === el) return;
+  }}
+  style={{
+    width: '100%',
+    padding: '10px 12px',
+    fontSize: '16px',
+    border: '2px solid #ddd',
+    borderRadius: '8px',
+    outline: 'none',
+    transition: 'border-color 0.2s',
+    height: '44px',
+  }}
+  onFocus={(e) => {
+    e.target.style.borderColor = '#1976d2';
+  }}
+  onBlur={(e) => {
+    e.target.style.borderColor = '#ddd';
+  }}
+/>
+
       </div>
 
       {/* Navigation Buttons */}
