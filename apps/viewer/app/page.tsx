@@ -292,6 +292,8 @@ function ViewerContent() {
 const containerRef = useRef<HTMLDivElement>(null);
 const pageHeightsRef = useRef<number[]>([]);
 const pageElsRef = useRef<Array<HTMLDivElement | null>>([]);
+const basePageSizeRef = useRef<Array<{ w: number; h: number }>>([]);
+
 
 // keep current zoom in a ref for synchronous math
 const zoomRef = useRef(zoom);
@@ -301,6 +303,7 @@ useEffect(() => { zoomRef.current = zoom; }, [zoom]);
 const animRafRef = useRef<number | null>(null);
 const isZoomAnimatingRef = useRef(false);
 
+// Smooth animated zoom that keeps the same focal point centered
 // Smooth animated zoom that keeps the same focal point centered
 const smoothZoom = useCallback(
   (toZoomRaw: number, durationMs = 240) => {
@@ -323,11 +326,14 @@ const smoothZoom = useCallback(
     const contentX = container.scrollLeft + anchorX;
     const contentY = container.scrollTop + anchorY;
 
+    const mark = marks[currentMarkIndex];                 // ⬅️ use current mark
+    const base = mark ? basePageSizeRef.current[mark.page_index] : undefined;
+
     const t0 = performance.now();
     isZoomAnimatingRef.current = true;
 
     const step = (now: number) => {
-      const t = Math.min(1, (now - t0) / durationMs);
+      const t = Math.min(1, durationMs === 0 ? 1 : (now - t0) / durationMs);
       const z = lerp(startZoom, toZoom, easeOutCubic(t));
       const k = z / startZoom;
 
@@ -341,6 +347,19 @@ const smoothZoom = useCallback(
       container.scrollLeft = left;
       container.scrollTop  = top;
 
+      // 3) move the yellow rect *in sync* with zoom (no waiting)
+      if (mark && base) {
+        const wZ = base.w * z;
+        const hZ = base.h * z;
+        setSelectedRect({
+          pageNumber: mark.page_index + 1,
+          x: mark.nx * wZ,
+          y: mark.ny * hZ,
+          w: mark.nw * wZ,
+          h: mark.nh * hZ,
+        });
+      }
+
       if (t < 1) {
         animRafRef.current = requestAnimationFrame(step);
       } else {
@@ -351,7 +370,8 @@ const smoothZoom = useCallback(
 
     animRafRef.current = requestAnimationFrame(step);
   },
-  [setZoom] // refs don't need to be listed; clampZoom is stable import
+  // deps: include things we read directly
+  [marks, currentMarkIndex, clampZoom]
 );
 
 
@@ -558,6 +578,7 @@ const navigateToMark = useCallback(
       try {
         const page = await pdf.getPage(pageNumber);
         const vp1 = page.getViewport({ scale: 1 });
+        basePageSizeRef.current[mark.page_index] = { w: vp1.width, h: vp1.height };
         
         const rectAt1 = {
           x: mark.nx * vp1.width,
@@ -877,16 +898,20 @@ const zoomOut = useCallback(() => {
       const zoomFactor = e.deltaY > 0 ? 0.95 : 1.05;
 
       setZoom((prevZoom) => {
-        const newZoom = clampZoom(prevZoom * zoomFactor);
-        const scale = newZoom / prevZoom;
+  const newZoom = clampZoom(prevZoom * zoomFactor);
+  const scale = newZoom / prevZoom;
 
-        requestAnimationFrame(() => {
-          container.scrollLeft = contentX * scale - mouseX;
-          container.scrollTop = contentY * scale - mouseY;
-        });
+  // keep the same focal scroll correction you already do
+  requestAnimationFrame(() => {
+    container.scrollLeft = contentX * scale - mouseX;
+    container.scrollTop = contentY * scale - mouseY;
+  });
 
-        return newZoom;
-      });
+  // run a short smooth zoom so the yellow rect updates in sync
+  requestAnimationFrame(() => smoothZoom(newZoom, 80));   // 80ms micro-animation
+  return prevZoom; // smoothZoom will drive zoom; don't jump here
+});
+
     };
 
     document.addEventListener('wheel', handleWheel, { passive: false, capture: true });

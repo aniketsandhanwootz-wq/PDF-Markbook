@@ -70,11 +70,15 @@ export default function InputPanel({
   minHeight: '160px',
   maxHeight: '32vh',
   background: 'white',
-  borderTop: '2px solid #ddd',
   display: 'flex',
   flexDirection: 'column',
-  flexShrink: 0
+  flexShrink: 0,
+  borderTopLeftRadius: '12px',
+  borderTopRightRadius: '12px',
+  overflow: 'hidden',                             // ⬅️ clips inner square edges
+  boxShadow: '0 -2px 10px rgba(0,0,0,0.08)'      // subtle elevation
 }}>
+
       {/* Compressed Header */}
  {/* Header with circle label + wrapping title + progress */}
 <div style={{
