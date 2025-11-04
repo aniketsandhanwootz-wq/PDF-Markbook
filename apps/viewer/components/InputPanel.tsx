@@ -76,48 +76,61 @@ export default function InputPanel({
   flexShrink: 0
 }}>
       {/* Compressed Header */}
-      <div style={{
-        padding: '8px 12px',
-        background: '#1976d2',
-        color: 'white',
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        gap: '8px',
-        flexShrink: 0
-      }}>
-       <div style={{
-  fontSize: '15px',
-  fontWeight: '700',
-  whiteSpace: 'nowrap',
-  letterSpacing: '0.5px'
+ {/* Header with circle label + wrapping title + progress */}
+<div style={{
+  padding: '10px 14px',
+  background: '#1976d2',
+  color: 'white',
+  display: 'grid',
+  gridTemplateColumns: 'auto 1fr auto',  // label | title | progress
+  columnGap: '10px',
+  rowGap: '4px',
+  alignItems: 'center',
+  flexShrink: 0,
+  borderTopLeftRadius: '12px',
+  borderTopRightRadius: '12px',
 }}>
-  {displayLabel}
-</div>
-<div
-  style={{
-    fontSize: '15px',
+  {/* Label Circle */}
+  <div style={{
+    minWidth: '28px',
+    height: '28px',
+    borderRadius: '50%',
+    background: 'white',
+    color: '#1976d2',
+    fontWeight: '700',
+    fontSize: '14px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    boxShadow: '0 1px 3px rgba(0,0,0,0.25)',
+  }}>
+    {displayLabel}
+  </div>
+
+  {/* Mark Name (wraps over multiple lines) */}
+  <div style={{
+    fontSize: '14px',
     fontWeight: '600',
-    flex: 1,
-    overflow: 'hidden',
-    whiteSpace: 'normal',
-    overflowWrap: 'anywhere',
-    wordBreak: 'break-word',
-    textAlign: 'center',
-    lineHeight: '1.25',
-  }}
->
-  {currentMark.name}
+    lineHeight: 1.25,
+    whiteSpace: 'normal',         // ✅ allow wrapping
+    overflowWrap: 'anywhere',     // ✅ break long tokens
+    wordBreak: 'break-word',      // ✅ fallback
+    textAlign: 'left',
+  }}>
+    {currentMark.name}
+  </div>
+
+  {/* Progress */}
+  <div style={{
+    fontSize: '12px',
+    opacity: 0.9,
+    whiteSpace: 'nowrap',
+    justifySelf: 'end',
+  }}>
+    {Math.round(((currentIndex + 1) / totalMarks) * 100)}%
+  </div>
 </div>
 
-        <div style={{ 
-          fontSize: '12px', 
-          opacity: 0.9,
-          whiteSpace: 'nowrap'
-        }}>
-          {Math.round(((currentIndex + 1) / totalMarks) * 100)}%
-        </div>
-      </div>
 
   {/* Compact Input Field */}
       <div style={{
