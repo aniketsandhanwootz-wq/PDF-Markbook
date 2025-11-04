@@ -1,4 +1,3 @@
-```markdown
 # 📄 PDF Mark Viewer
 
 <div align="center">
@@ -394,38 +393,34 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 Made with ❤️ by [Wootz.work](https:wootz.work)
 
 </div>
-```
 
 
-### Performance Benchmarks
-```markdown
+
+
+
 ## ⚡ Performance
 
 - **Page Load**: < 2s for 100-page PDFs
 - **Mark Navigation**: < 200ms zoom + scroll
 - **Memory Usage**: ~50MB for typical document
 - **Mobile Performance**: 60fps on modern devices
-```
 
-### Deployment
-```markdown
+
+
 ## 🚢 Deployment
 
-### Frontend (Vercel)
+
 ```bash
 npm run build
 vercel --prod
 ```
 
-### Backend (Railway/Heroku)
 ```bash
 # Configure environment variables
 railway up
 ```
-```
 
-### Roadmap
-```markdown
+
 ## 🗺️ Roadmap
 
 - [ ] Offline mode with Service Workers
@@ -434,4 +429,4 @@ railway up
 - [ ] Audio annotations
 - [ ] Advanced analytics dashboard
 - [ ] Mobile app (React Native)
-```
+
