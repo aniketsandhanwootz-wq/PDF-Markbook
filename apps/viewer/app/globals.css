@@ -283,9 +283,11 @@ body {
 
 .input-panel-section {
   height: 25vh;
-  background: white;
-  border-top: 2px solid #ddd;
+  background: transparent;    /* transparent so rounded card shows cleanly */
+  border-top: 0;
+  padding: 8px 8px 10px;
 }
+
 
 /* Swipeable area */
 .swipeable-pdf {
@@ -381,9 +383,12 @@ body {
   position: sticky;
   bottom: 0;
   z-index: 5;
-  background: #fff;
-  border-top: 1px solid #ddd;
+  /* Let InputPanel render its own rounded card */
+  background: transparent;
+  border-top: 0;
+  padding: 8px 8px 10px; /* small breathing room around the rounded card */
 }
+
 /* Ensure containers that host swipe handlers don't consume pinch */
 .swipe-gesture-host {
   touch-action: pan-x pan-y !important; /* no pinch-zoom here */
