@@ -162,10 +162,24 @@ body {
 }
 
 .mark-name {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex-wrap: wrap;           /* allows wrapping after the label chip */
   font-size: 14px;
   font-weight: 500;
   margin-bottom: 4px;
+  min-width: 0;              /* helps wrapping in flex containers */
 }
+.mark-name-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;    /* wraps very long tokens without spaces */
+  word-break: break-word;     /* fallback for some browsers */
+  line-height: 1.25;
+}
+
 
 .mark-page {
   font-size: 12px;

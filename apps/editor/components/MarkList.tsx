@@ -190,8 +190,8 @@ export default function MarkList({
                 <>
                   <div className="mark-info" onClick={() => onSelect(mark)}>
   <div className="mark-name">
-    <span className="label-chip">{mark.label ?? ''}</span>
-    {mark.name}
+<span className="label-chip">{mark.label ?? ''}</span>
+<span className="mark-name-text">{mark.name}</span>
   </div>
   <div className="mark-page">
     Page {mark.page_index + 1}
