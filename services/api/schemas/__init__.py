@@ -1,23 +1,12 @@
 """
 Pydantic schemas for API request/response validation.
-These define the contract between frontend and backend.
-✨ Enhanced with strict validation to prevent corrupt data.
 """
+from .document import DocumentCreate, DocumentInit, DocumentOut, DocumentWithMarkSets
+from .user_input import UserInputCreate, UserInputBatchCreate, UserInputOut, UserInputUpdate
+
+# Keep existing imports for backward compatibility
 from typing import List, Optional
 from pydantic import BaseModel, Field, field_validator, model_validator
-
-
-# ============ Document Schemas ============
-
-class DocumentCreate(BaseModel):
-    """Request to create a new document."""
-    pdf_url: str = Field(..., description="URL of the PDF document")
-    created_by: Optional[str] = Field(None, description="User ID of creator")
-
-
-class DocumentOut(BaseModel):
-    """Response after creating a document."""
-    doc_id: str
 
 
 # ============ Page Schemas ============
@@ -32,7 +21,6 @@ class PageDimensions(BaseModel):
     @field_validator("rotation_deg")
     @classmethod
     def validate_rotation(cls, v: int) -> int:
-        """Ensure rotation is one of: 0, 90, 180, 270."""
         if v not in (0, 90, 180, 270):
             raise ValueError(f"rotation_deg must be 0, 90, 180, or 270, got {v}")
         return v
@@ -46,39 +34,32 @@ class PagesBootstrap(BaseModel):
     @field_validator("dims")
     @classmethod
     def validate_dims_count(cls, v: List[PageDimensions], info) -> List[PageDimensions]:
-        """Ensure dims list matches page_count."""
         page_count = info.data.get("page_count")
         if page_count and len(v) != page_count:
             raise ValueError(f"dims length ({len(v)}) must match page_count ({page_count})")
         return v
 
 
-# ============ Mark Schemas (ENHANCED) ============
+# ============ Mark Schemas ============
 
 class MarkCreate(BaseModel):
-    """
-    Single mark in a mark set creation request.
-    ✨ Enhanced with strict coordinate validation.
-    """
+    """Single mark in a mark set creation request."""
     page_index: int = Field(..., ge=0, description="0-based page index")
     order_index: int = Field(..., ge=0, description="Sequential order for navigation")
     name: str = Field(..., min_length=1, max_length=200, description="User-friendly label")
     
-    # ✨ ENHANCED: Stricter normalized coordinates (0-1 range)
-    nx: float = Field(..., gt=0, le=1.0, description="Normalized x (left edge) - must be > 0 and ≤ 1")
-    ny: float = Field(..., gt=0, le=1.0, description="Normalized y (top edge) - must be > 0 and ≤ 1")
-    nw: float = Field(..., gt=0, le=1.0, description="Normalized width - must be > 0 and ≤ 1")
-    nh: float = Field(..., gt=0, le=1.0, description="Normalized height - must be > 0 and ≤ 1")
+    nx: float = Field(..., gt=0, le=1.0, description="Normalized x")
+    ny: float = Field(..., gt=0, le=1.0, description="Normalized y")
+    nw: float = Field(..., gt=0, le=1.0, description="Normalized width")
+    nh: float = Field(..., gt=0, le=1.0, description="Normalized height")
     
-    # Optional display preferences
-    zoom_hint: Optional[float] = Field(None, gt=0.1, le=10.0, description="Custom zoom multiplier (0.1-10x)")
-    padding_pct: Optional[float] = Field(0.1, ge=0, le=0.5, description="Padding as percentage (0-0.5)")
-    anchor: Optional[str] = Field("auto", description="Zoom anchor point")
+    zoom_hint: Optional[float] = Field(None, gt=0.1, le=10.0, description="Custom zoom")
+    padding_pct: Optional[float] = Field(0.1, ge=0, le=0.5, description="Padding")
+    anchor: Optional[str] = Field("auto", description="Zoom anchor")
     
     @field_validator('anchor')
     @classmethod
     def validate_anchor(cls, v: Optional[str]) -> str:
-        """✨ NEW: Ensure anchor is in valid set."""
         if v is None:
             return "auto"
         valid_anchors = {"auto", "center", "top-left", "top-right", "bottom-left", "bottom-right"}
@@ -88,71 +69,31 @@ class MarkCreate(BaseModel):
     
     @model_validator(mode='after')
     def validate_bounds(self) -> 'MarkCreate':
-        """
-        ✨ NEW: Ensure mark is within page bounds and has non-zero area.
-        This prevents corrupt data from reaching the database.
-        """
-        # Check right edge (with small floating point tolerance)
         if self.nx + self.nw > 1.0001:
-            raise ValueError(
-                f"Mark extends beyond page width: "
-                f"nx({self.nx:.4f}) + nw({self.nw:.4f}) = {self.nx + self.nw:.4f} > 1.0"
-            )
-        
-        # Check bottom edge
+            raise ValueError(f"Mark extends beyond page width")
         if self.ny + self.nh > 1.0001:
-            raise ValueError(
-                f"Mark extends beyond page height: "
-                f"ny({self.ny:.4f}) + nh({self.nh:.4f}) = {self.ny + self.nh:.4f} > 1.0"
-            )
-        
-        # Check minimum area (prevent invisible marks)
+            raise ValueError(f"Mark extends beyond page height")
         area = self.nw * self.nh
-        if area < 0.0001:  # Minimum 0.01% of page
-            raise ValueError(
-                f"Mark area too small ({area:.6f} < 0.0001). "
-                f"Mark would be invisible or unclickable."
-            )
-        
+        if area < 0.0001:
+            raise ValueError(f"Mark area too small")
         return self
 
 
 class MarkSetCreate(BaseModel):
-    """
-    Request to create a new mark set.
-    ✨ Enhanced with duplicate detection and auto-normalization.
-    """
+    """Request to create a new mark set."""
     doc_id: str = Field(..., min_length=1, description="Document ID")
-    label: Optional[str] = Field("v1", max_length=100, description="Version label for the mark set")
+    label: Optional[str] = Field("v1", max_length=100, description="Version label")
     created_by: Optional[str] = Field(None, description="User ID of creator")
-    marks: List[MarkCreate] = Field(
-        ..., 
-        min_length=1, 
-        max_length=500,
-        description="List of marks (1-500 marks)"
-    )
+    marks: List[MarkCreate] = Field(..., min_length=1, max_length=500, description="List of marks")
     
     @model_validator(mode='after')
     def validate_and_normalize_order(self) -> 'MarkSetCreate':
-        """
-        ✨ NEW: Ensure order_index values are unique and normalize to 0..n-1.
-        Server automatically reorders marks to prevent gaps or duplicates.
-        """
         order_indexes = [m.order_index for m in self.marks]
-        
-        # Check for duplicates
         if len(order_indexes) != len(set(order_indexes)):
-            duplicates = [idx for idx in set(order_indexes) if order_indexes.count(idx) > 1]
-            raise ValueError(
-                f"Duplicate order_index values found: {duplicates}. "
-                f"Each mark must have a unique order_index."
-            )
-        
-        # Auto-normalize to 0..n-1 (prevents gaps in sequence)
+            raise ValueError("Duplicate order_index values")
         sorted_marks = sorted(self.marks, key=lambda m: m.order_index)
         for i, mark in enumerate(sorted_marks):
             mark.order_index = i
-        
         return self
 
 
@@ -177,18 +118,14 @@ class MarkOut(BaseModel):
 
 
 class MarkPatch(BaseModel):
-    """
-    Partial update for a mark's display preferences.
-    ✨ Enhanced with validation.
-    """
-    zoom_hint: Optional[float] = Field(None, gt=0.1, le=10.0, description="Custom zoom multiplier (0.1-10x)")
-    padding_pct: Optional[float] = Field(None, ge=0, le=0.5, description="Padding percentage (0-0.5)")
-    anchor: Optional[str] = Field(None, description="Zoom anchor point")
+    """Partial update for mark display preferences."""
+    zoom_hint: Optional[float] = Field(None, gt=0.1, le=10.0)
+    padding_pct: Optional[float] = Field(None, ge=0, le=0.5)
+    anchor: Optional[str] = Field(None)
     
     @field_validator('anchor')
     @classmethod
     def validate_anchor(cls, v: Optional[str]) -> Optional[str]:
-        """✨ NEW: Ensure anchor is in valid set."""
         if v is None:
             return v
         valid_anchors = {"auto", "center", "top-left", "top-right", "bottom-left", "bottom-right"}
@@ -203,3 +140,24 @@ class HealthCheck(BaseModel):
     """Health check response."""
     ok: bool = True
     backend: Optional[str] = None
+
+
+# Re-export all
+__all__ = [
+    "DocumentCreate",
+    "DocumentInit",
+    "DocumentOut",
+    "DocumentWithMarkSets",
+    "PageDimensions",
+    "PagesBootstrap",
+    "MarkCreate",
+    "MarkSetCreate",
+    "MarkSetOut",
+    "MarkOut",
+    "MarkPatch",
+    "UserInputCreate",
+    "UserInputBatchCreate",
+    "UserInputOut",
+    "UserInputUpdate",
+    "HealthCheck",
+]

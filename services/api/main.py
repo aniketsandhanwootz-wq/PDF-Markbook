@@ -21,6 +21,8 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from contextlib import contextmanager
 from cachetools import TTLCache
+from schemas.document import DocumentInit, DocumentWithMarkSets
+from schemas.user_input import UserInputBatchCreate
 import uuid
 import logging
 import os
@@ -1009,70 +1011,18 @@ class SubmissionReportRequest(PydanticBaseModel):
     title: str | None = "Markbook Submission"
     author: str | None = "PDF Viewer"
 
-
-@app.post("/mark-sets/{mark_set_id}/submissions")
-async def submit_mark_values(mark_set_id: str, submission: SubmissionRequest):
-    """
-    Submit user-entered values for marks.
-    Stores values in Google Sheets marks tab.
-    """
-    try:
-        if STORAGE_BACKEND != "sheets":
-            raise HTTPException(
-                status_code=501,
-                detail="Submissions only supported with Google Sheets backend"
-            )
-        
-        # Validate mark set exists
-        mark_sets_data = storage_adapter._get_all_dicts("mark_sets")
-        mark_set = next((ms for ms in mark_sets_data if ms["mark_set_id"] == mark_set_id), None)
-        
-        if not mark_set:
-            raise HTTPException(status_code=404, detail=f"Mark set {mark_set_id} not found")
-        
-        # Save submissions
-        result = storage_adapter.save_submissions(mark_set_id, submission.entries)
-        
-        logger.info(f"Saved {result['updated_count']} submissions for mark set {mark_set_id}")
-        
-        return {
-            "status": "success",
-            "mark_set_id": mark_set_id,
-            "updated_count": result["updated_count"],
-            "submitted_at": result["submitted_at"]
-        }
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error saving submissions: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to save submissions: {str(e)}"
-        )
-
 @app.post("/mark-sets/{mark_set_id}/submissions/report")
 async def submit_and_build_report(mark_set_id: str, body: SubmissionReportRequest = Body(...)):
     """
-    Save submissions (if Sheets backend) and build a PDF report on the server.
-    Returns `application/pdf` stream. Caller should download.
+    Save submissions and build PDF report.
+    Now saves to mark_user_input table instead of marks table.
     """
-    # 1) Resolve marks for this set
     marks = storage_get_marks(mark_set_id)
 
-    # 2) Resolve PDF URL
+    # Resolve PDF URL
     pdf_url = body.pdf_url
     if not pdf_url:
-        # Fallback: derive from storage (sqlite or sheets)
-        if STORAGE_BACKEND == "sqlite":
-            # simple scan using the existing helper
-            all_sets = storage_list_mark_sets()
-            for ms in all_sets:
-                if ms.id == mark_set_id:
-                    pdf_url = ms.pdf_url
-                    break
-        elif STORAGE_BACKEND == "sheets":
-            # scan sheets to map mark_set -> doc -> pdf_url
+        if STORAGE_BACKEND == "sheets":
             ms_all = storage_adapter._get_all_dicts("mark_sets")
             ms = next((r for r in ms_all if r["mark_set_id"] == mark_set_id), None)
             if ms:
@@ -1080,17 +1030,21 @@ async def submit_and_build_report(mark_set_id: str, body: SubmissionReportReques
                 if doc:
                     pdf_url = doc.get("pdf_url")
     if not pdf_url:
-        raise HTTPException(status_code=400, detail="pdf_url is required and could not be inferred")
+        raise HTTPException(status_code=400, detail="pdf_url required")
 
-    # 3) Persist submitted values when using Google Sheets
+    # Save to NEW mark_user_input table
     try:
-        if STORAGE_BACKEND == "sheets":
-            storage_adapter.save_submissions(mark_set_id, body.entries)
+        if STORAGE_BACKEND == "sheets" and body.entries:
+            submitted_by = body.author or "viewer_user"
+            storage_adapter.create_user_inputs_batch(
+                mark_set_id=mark_set_id,
+                entries=body.entries,
+                submitted_by=submitted_by
+            )
     except Exception as e:
-        # Non-fatal for the report; still generate PDF
-        logger.warning(f"save_submissions failed (non-fatal): {e}")
+        logger.warning(f"save to mark_user_input failed: {e}")
 
-    # 4) Build PDF report (server-side)
+    # Generate report
     try:
         pdf_bytes = await generate_report_pdf(
             pdf_url=pdf_url,
@@ -1105,7 +1059,6 @@ async def submit_and_build_report(mark_set_id: str, body: SubmissionReportReques
         logger.error(f"Report generation failed: {e}")
         raise HTTPException(status_code=500, detail=f"Report generation failed: {e}")
 
-    # 5) Stream back to client
     fname = f"submission_{mark_set_id}.pdf"
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
@@ -1115,7 +1068,137 @@ async def submit_and_build_report(mark_set_id: str, body: SubmissionReportReques
             "Cache-Control": "no-store",
         },
     )
+# ========== NEW: Document Management Endpoints ==========
 
+@app.post("/documents/init", response_model=dict, status_code=status.HTTP_201_CREATED)
+async def initialize_document(data: DocumentInit):
+    """
+    Initialize document from Glide app.
+    Checks if document exists, creates if not, returns doc_id and available marksets.
+    """
+    try:
+        if STORAGE_BACKEND != "sheets":
+            raise HTTPException(status_code=501, detail="Only supported with Google Sheets")
+        
+        # Check if document exists by identifier
+        existing_doc = storage_adapter.get_document_by_identifier(data.id)
+        
+        if existing_doc:
+            doc_id = existing_doc["doc_id"]
+            logger.info(f"Document exists: {doc_id}")
+        else:
+            # TODO: Convert JPEG to PDF (for now, just use the URL as-is)
+            pdf_url = data.assembly_drawing
+            
+            doc_id = storage_adapter.create_document(
+                pdf_url=pdf_url,
+                created_by=data.user_mail,
+                part_number=data.part_number,
+                project_name=data.project_name
+            )
+            logger.info(f"Created new document: {doc_id}")
+        
+        # Get available marksets
+        marksets = storage_adapter.list_mark_sets_by_document(doc_id)
+        
+        return {
+            "doc_id": doc_id,
+            "exists": existing_doc is not None,
+            "marksets": marksets,
+            "markset_count": len(marksets)
+        }
+    except Exception as e:
+        logger.error(f"Error initializing document: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/documents/by-identifier", response_model=dict)
+async def get_document_by_identifier(identifier: str):
+    """Get document by business identifier."""
+    try:
+        if STORAGE_BACKEND != "sheets":
+            raise HTTPException(status_code=501, detail="Only supported with Google Sheets")
+        
+        doc = storage_adapter.get_document_by_identifier(identifier)
+        if not doc:
+            raise HTTPException(status_code=404, detail="Document not found")
+        
+        marksets = storage_adapter.list_mark_sets_by_document(doc["doc_id"])
+        
+        return {
+            "document": doc,
+            "marksets": marksets
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching document: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/documents/{doc_id}/mark-sets", response_model=List[dict])
+async def list_document_marksets(doc_id: str):
+    """List all mark sets for a document."""
+    try:
+        if STORAGE_BACKEND != "sheets":
+            raise HTTPException(status_code=501, detail="Only supported with Google Sheets")
+        
+        marksets = storage_adapter.list_mark_sets_by_document(doc_id)
+        return marksets
+    except Exception as e:
+        logger.error(f"Error listing marksets: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ========== NEW: Mark Set Status Endpoint ==========
+
+@app.get("/mark-sets/{mark_set_id}/status", response_model=dict)
+async def get_markset_status(mark_set_id: str):
+    """Get markset completion status and list of users who submitted."""
+    try:
+        if STORAGE_BACKEND != "sheets":
+            raise HTTPException(status_code=501, detail="Only supported with Google Sheets")
+        
+        # Get all marks in markset
+        marks = storage_get_marks(mark_set_id)
+        total_marks = len(marks)
+        
+        # Get all user inputs
+        user_inputs = storage_adapter.get_user_inputs(mark_set_id)
+        
+        # Group by user
+        users = {}
+        for inp in user_inputs:
+            user = inp.get("submitted_by", "unknown")
+            if user not in users:
+                users[user] = {
+                    "submitted_by": user,
+                    "submitted_at": inp.get("submitted_at"),
+                    "marks_filled": 0
+                }
+            users[user]["marks_filled"] += 1
+        
+        # Calculate completion percentage for each user
+        for user_data in users.values():
+            user_data["completion_percentage"] = round(
+                (user_data["marks_filled"] / total_marks * 100) if total_marks > 0 else 0, 
+                2
+            )
+        
+        return {
+            "mark_set_id": mark_set_id,
+            "total_marks": total_marks,
+            "users": list(users.values()),
+            "user_count": len(users)
+        }
+    except Exception as e:
+        logger.error(f"Error fetching markset status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Import and include user_input router
+from routers.user_input import router as user_input_router
+app.include_router(user_input_router)
 # ========== End of Submissions ==========
 
 startup_time = time.time()

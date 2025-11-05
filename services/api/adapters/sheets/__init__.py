@@ -13,19 +13,18 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 from ..base import StorageAdapter
 
 HEADERS = {
-    "documents": ["doc_id", "pdf_url", "hash", "page_count", "created_by", "created_at", "updated_at"],
+    "documents": ["doc_id", "pdf_url", "hash", "page_count", "part_number", "project_name", "created_by", "created_at", "updated_at"],
     "pages":     ["page_id", "doc_id", "idx", "width_pt", "height_pt", "rotation_deg"],
-    "mark_sets": ["mark_set_id", "doc_id", "label", "is_active", "created_by", "created_at"],
-    # ⬇️ add submission columns to the canonical header
+    "mark_sets": ["mark_set_id", "doc_id", "label", "is_active", "created_by", "created_at", "updation_log", "updated_by"],
     "marks":     [
         "mark_id", "mark_set_id", "page_id", "order_index", "name", "label",
-        "nx", "ny", "nw", "nh", "zoom_hint", "padding_pct", "anchor",
-        "user_value", "submitted_at", "submitted_by"
+        "nx", "ny", "nw", "nh", "zoom_hint", "padding_pct", "anchor"
     ],
+    "mark_user_input": ["input_id", "mark_id", "mark_set_id", "user_value", "submitted_at", "submitted_by"],
 }
 
 
-SHEET_TAB_ORDER = ["documents", "pages", "mark_sets", "marks"]
+SHEET_TAB_ORDER = ["documents", "pages", "mark_sets", "marks", "mark_user_input"]
 
 def _safe_float(v, default=None):
     try:
@@ -123,6 +122,7 @@ class SheetsAdapter(StorageAdapter):
         # Simple in-memory caches (no TTL, cleared on write)
         self._doc_cache: dict[str, dict[str, Any]] = {}
         self._pages_by_doc_cache: dict[str, list[dict[str, Any]]] = {}
+        self._user_input_cache: dict[str, list[dict[str, Any]]] = {}
 
     # ========== Worksheet helpers ==========
 
@@ -194,15 +194,22 @@ class SheetsAdapter(StorageAdapter):
 
     # ========== StorageAdapter API ==========
 
-    def create_document(self, pdf_url: str, created_by: str | None = None) -> str:
+    def create_document(self, pdf_url: str, created_by: str | None = None, 
+                       part_number: str | None = None, project_name: str | None = None) -> str:
         doc_id = _uuid()
         now = _utc_iso()
-        self._append_rows("documents", [[doc_id, pdf_url, "", 0, (created_by or ""), now, now]])
+        self._append_rows("documents", [[
+            doc_id, pdf_url, "", 0, 
+            (part_number or ""), (project_name or ""), 
+            (created_by or ""), now, now
+        ]])
         self._doc_cache[doc_id] = {
             "doc_id": doc_id,
             "pdf_url": pdf_url,
             "hash": "",
             "page_count": "0",
+            "part_number": part_number or "",
+            "project_name": project_name or "",
             "created_by": created_by or "",
             "created_at": now,
             "updated_at": now,
@@ -262,7 +269,10 @@ class SheetsAdapter(StorageAdapter):
 
         mark_set_id = _uuid()
         now = _utc_iso()
-        self._append_rows("mark_sets", [[mark_set_id, doc_id, (label or "v1"), "FALSE", (created_by or ""), now]])
+        self._append_rows("mark_sets", [[
+            mark_set_id, doc_id, (label or "v1"), "FALSE", 
+            (created_by or ""), now, "[]", (created_by or "")
+        ]])
 
         seen = set()
         for m in marks:
@@ -283,7 +293,7 @@ class SheetsAdapter(StorageAdapter):
                 page_id,
                 int(m["order_index"]),
                 m.get("name", ""),
-                m.get("label", ""),   # NEW
+                m.get("label", ""),
                 float(m["nx"]), float(m["ny"]), float(m["nw"]), float(m["nh"]),
                 ("" if m.get("zoom_hint") is None else float(m["zoom_hint"])),
                 float(m.get("padding_pct", 0.1)),
@@ -383,52 +393,141 @@ class SheetsAdapter(StorageAdapter):
                 updates.append({"range": a1, "values": [[val]]})
         if updates:
             self.ws["mark_sets"].batch_update(updates)
-      # ========== NEW: Save Submissions ==========
-  
-    @retry_sheets_api
-    def save_submissions(self, mark_set_id: str, entries: dict[str, str]) -> dict[str, Any]:
-        """
-        Save user-submitted values to marks sheet.
-        Updates user_value, submitted_at, submitted_by columns.
-        This function works even if these columns already exist or are missing.
-        """
-        # --- 1) Read current header and sync our colmap to the REAL sheet header
-        header = self.ws["marks"].row_values(1)
-        if not header:
-            # Seed with the base header if the sheet is empty
-            header = HEADERS["marks"][:]
-            self.ws["marks"].update('A1', [header])
 
-        # IMPORTANT: reflect the ACTUAL header in colmap (it may already have extra columns)
-        self.colmap["marks"] = {col: idx + 1 for idx, col in enumerate(header)}
-
-        # --- 2) Ensure required extra columns exist (append if missing)
-        required_extras = ["user_value", "submitted_at", "submitted_by"]
-        missing = [c for c in required_extras if c not in header]
-        if missing:
-            new_header = header + missing
-            # Write the new header row (preserve existing order, just append)
-            self.ws["marks"].update('1:1', [new_header])
-            header = new_header
-            # Rebuild colmap to include the new columns
-            self.colmap["marks"] = {col: idx + 1 for idx, col in enumerate(header)}
-
-        # --- 3) Perform row updates
-        submitted_at = _utc_iso()
-        updated_count = 0
-
-        for mark_id, value in entries.items():
-            row_idx = self._find_row_by_value("marks", "mark_id", mark_id)
-            if row_idx:
-                # Use _update_cells which depends on self.colmap["marks"]. We have synced it above.
-                self._update_cells("marks", row_idx, {
-                    "user_value": value,
-                    "submitted_at": submitted_at,
-                    "submitted_by": "viewer_user"
-                })
-                updated_count += 1
-
-        return {
-            "updated_count": updated_count,
-            "submitted_at": submitted_at
+    # ========== NEW: Document Lookup Methods ==========
+    
+    def get_document_by_identifier(self, identifier: str) -> dict[str, Any] | None:
+        """Get document by business identifier (project_name + part_name)."""
+        docs = self._get_all_dicts("documents")
+        # Search by doc_id first (for backward compatibility)
+        for doc in docs:
+            if doc.get("doc_id") == identifier:
+                return doc
+        # Search by composite identifier (could be stored in part_number or separate field)
+        for doc in docs:
+            if doc.get("part_number") == identifier:
+                return doc
+        return None
+    
+    def list_mark_sets_by_document(self, doc_id: str) -> list[dict[str, Any]]:
+        """List all mark sets for a document."""
+        mark_sets = self._get_all_dicts("mark_sets")
+        return [ms for ms in mark_sets if ms.get("doc_id") == doc_id]
+    
+    def update_document(self, doc_id: str, updates: dict[str, Any]) -> None:
+        """Update document fields."""
+        row_idx = self._find_row_by_value("documents", "doc_id", doc_id)
+        if not row_idx:
+            raise ValueError("DOCUMENT_NOT_FOUND")
+        updates["updated_at"] = _utc_iso()
+        self._update_cells("documents", row_idx, updates)
+        self._doc_cache.pop(doc_id, None)
+    
+    # ========== NEW: Mark Set Management Methods ==========
+    
+    def update_mark_set(self, mark_set_id: str, label: str | None, updated_by: str) -> None:
+        """Update mark set metadata."""
+        row_idx = self._find_row_by_value("mark_sets", "mark_set_id", mark_set_id)
+        if not row_idx:
+            raise ValueError("MARK_SET_NOT_FOUND")
+        
+        # Get existing updation_log
+        header = HEADERS["mark_sets"]
+        vals = self.ws["mark_sets"].row_values(row_idx)
+        row_data = {header[i]: (vals[i] if i < len(vals) else "") for i in range(len(header))}
+        
+        try:
+            updation_log = json.loads(row_data.get("updation_log", "[]"))
+        except:
+            updation_log = []
+        
+        updation_log.append({
+            "updated_by": updated_by,
+            "updated_at": _utc_iso()
+        })
+        
+        updates = {
+            "updated_by": updated_by,
+            "updation_log": json.dumps(updation_log)
         }
+        if label:
+            updates["label"] = label
+        
+        self._update_cells("mark_sets", row_idx, updates)
+    
+    # ========== NEW: User Input Methods ==========
+    
+    def create_user_input(self, mark_id: str, mark_set_id: str, user_value: str, submitted_by: str) -> str:
+        """Create a single user input entry."""
+        input_id = _uuid()
+        now = _utc_iso()
+        self._append_rows("mark_user_input", [[
+            input_id, mark_id, mark_set_id, user_value, now, submitted_by
+        ]])
+        self._user_input_cache.pop(mark_set_id, None)
+        return input_id
+    
+    def create_user_inputs_batch(self, mark_set_id: str, entries: dict[str, str], submitted_by: str) -> int:
+        """Create multiple user input entries in batch."""
+        now = _utc_iso()
+        rows = []
+        for mark_id, user_value in entries.items():
+            input_id = _uuid()
+            rows.append([input_id, mark_id, mark_set_id, user_value, now, submitted_by])
+        
+        if rows:
+            self._append_rows("mark_user_input", rows)
+            self._user_input_cache.pop(mark_set_id, None)
+        
+        return len(rows)
+    
+    def get_user_inputs(self, mark_set_id: str, submitted_by: str | None = None) -> list[dict[str, Any]]:
+        """Get user inputs for a mark set, optionally filtered by user."""
+        cache_key = f"{mark_set_id}:{submitted_by or 'all'}"
+        if cache_key in self._user_input_cache:
+            return self._user_input_cache[cache_key]
+        
+        all_inputs = self._get_all_dicts("mark_user_input")
+        filtered = [inp for inp in all_inputs if inp.get("mark_set_id") == mark_set_id]
+        
+        if submitted_by:
+            filtered = [inp for inp in filtered if inp.get("submitted_by") == submitted_by]
+        
+        self._user_input_cache[cache_key] = filtered
+        return filtered
+    
+    def update_user_input(self, input_id: str, user_value: str) -> dict[str, Any]:
+        """Update a user input entry."""
+        row_idx = self._find_row_by_value("mark_user_input", "input_id", input_id)
+        if not row_idx:
+            raise ValueError("USER_INPUT_NOT_FOUND")
+        
+        now = _utc_iso()
+        self._update_cells("mark_user_input", row_idx, {
+            "user_value": user_value,
+            "submitted_at": now
+        })
+        
+        # Clear cache
+        self._user_input_cache.clear()
+        
+        header = HEADERS["mark_user_input"]
+        vals = self.ws["mark_user_input"].row_values(row_idx)
+        return {header[i]: (vals[i] if i < len(vals) else "") for i in range(len(header))}
+    
+    def delete_user_input(self, input_id: str) -> None:
+        """Delete a user input entry."""
+        all_inputs = self._get_all_dicts("mark_user_input")
+        found = any(inp.get("input_id") == input_id for inp in all_inputs)
+        if not found:
+            raise ValueError("USER_INPUT_NOT_FOUND")
+        
+        header = self.ws["mark_user_input"].row_values(1)
+        filtered = [header] + [
+            [inp[k] for k in header]
+            for inp in all_inputs
+            if inp.get("input_id") != input_id
+        ]
+        self.ws["mark_user_input"].clear()
+        self.ws["mark_user_input"].update('A1', filtered)
+        self._user_input_cache.clear()
