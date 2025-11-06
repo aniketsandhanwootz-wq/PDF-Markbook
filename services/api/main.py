@@ -1156,6 +1156,8 @@ app.include_router(mark_sets_router.router)
 from routers import mark_sets_master as mark_sets_master_router
 app.include_router(mark_sets_master_router.router)
 
+from routers import viewer as viewer_router
+app.include_router(viewer_router.router)
 
 # ========== End of Submissions ==========
 

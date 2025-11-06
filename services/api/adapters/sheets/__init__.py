@@ -202,6 +202,15 @@ class SheetsAdapter(StorageAdapter):
     def list_documents(self) -> list[dict[str, Any]]:
         """Return all documents as dicts (used by admin/clean-urls)."""
         return self._get_all_dicts("documents")
+    
+    def _append_dict_row(self, tab: str, data: dict[str, Any]) -> None:
+        """Append one row using the SHEET'S CURRENT HEADER order."""
+        header = self.ws[tab].row_values(1)
+        if not header:
+            header = HEADERS[tab][:]
+            self.ws[tab].update("A1", [header])
+        row = [data.get(col, "") for col in header]
+        self._append_rows(tab, [row])
 
     def create_document(
         self,
@@ -213,30 +222,29 @@ class SheetsAdapter(StorageAdapter):
     ) -> str:
         doc_id = _uuid()
         now = _utc_iso()
-        pnumb = (part_number or "").strip()
-        proj = (project_name or "").strip()
-        eid = (external_id or "").strip()
-        cby = (created_by or "").strip()
-        purl = (pdf_url or "").strip()
 
-        self._append_rows("documents", [[
-            doc_id, purl, "", 0,
-            pnumb, eid, proj,
-            cby, now, now
-        ]])
-        self._doc_cache[doc_id] = {
+        # normalize once
+        data = {
             "doc_id": doc_id,
-            "pdf_url": purl,
+            "pdf_url": (pdf_url or "").strip(),
             "hash": "",
-            "page_count": "0",
-            "part_number": pnumb,
-            "external_id": eid,
-            "project_name": proj,
-            "created_by": cby,
+            "page_count": 0,
+            "part_number": (part_number or "").strip(),
+            "external_id": (external_id or "").strip(),
+            "project_name": (project_name or "").strip(),
+            "created_by": (created_by or "").strip(),
             "created_at": now,
             "updated_at": now,
         }
+
+        # append by HEADER NAME (not by index)
+        self._append_dict_row("documents", data)
+
+        # cache uses strings like _get_all_dicts does
+        self._doc_cache[doc_id] = {k: (str(v) if isinstance(v, (int, float)) else v) for k, v in data.items()}
+        self._doc_cache[doc_id]["page_count"] = str(self._doc_cache[doc_id]["page_count"])
         return doc_id
+
 
     def get_document(self, doc_id: str) -> dict[str, Any] | None:
         if doc_id in self._doc_cache:
@@ -287,43 +295,58 @@ class SheetsAdapter(StorageAdapter):
         if not self.get_document(doc_id):
             raise ValueError("DOCUMENT_NOT_FOUND")
 
-        pages = self._pages_for_doc(doc_id)
-        idx_to_page_id = {p["idx"]: p["page_id"] for p in pages}
+        # ensure pages cache exists (ok if empty)
+        _ = self._pages_for_doc(doc_id)
 
         mark_set_id = _uuid()
         now = _utc_iso()
-        self._append_rows("mark_sets", [[
-            mark_set_id, doc_id, (label or "v1"), "FALSE",
-            ("TRUE" if is_master else "FALSE"),
-            (created_by or ""), now, "[]", (created_by or "")
-        ]])
 
-        seen = set()
-        for m in marks:
-            oi = int(m["order_index"])
-            if oi in seen:
-                raise ValueError("DUPLICATE_ORDER_INDEX")
-            seen.add(oi)
+        # write mark_sets row by header name
+        self._append_dict_row("mark_sets", {
+            "mark_set_id": mark_set_id,
+            "doc_id": doc_id,
+            "label": (label or "v1"),
+            "is_active": "FALSE",
+            "is_master": "TRUE" if is_master else "FALSE",
+            "created_by": (created_by or ""),
+            "created_at": now,
+            "updation_log": "[]",
+            "updated_by": (created_by or ""),
+        })
 
-        mrows = []
-        for m in marks:
-            page_index = int(m["page_index"])
-            page_id = idx_to_page_id.get(page_index)
-            if not page_id:
-                raise ValueError(f"PAGE_INDEX_NOT_FOUND:{page_index}")
-            mrows.append([
-                _uuid(),
-                mark_set_id,
-                page_id,
-                int(m["order_index"]),
-                m.get("name", ""),
-                m.get("label", ""),
-                float(m["nx"]), float(m["ny"]), float(m["nw"]), float(m["nh"]),
-                ("" if m.get("zoom_hint") is None else float(m["zoom_hint"])),
-                float(m.get("padding_pct", 0.1)),
-                m.get("anchor", "auto"),
-            ])
-        self._append_rows("marks", mrows)
+        # if initial marks passed, map page_index -> page_id (create_mark_set
+        # is usually called with marks=[], we leave as-is)
+        if marks:
+            pages = self._pages_for_doc(doc_id)
+            idx_to_page_id = {p["idx"]: p["page_id"] for p in pages}
+
+            seen = set()
+            mrows = []
+            for m in marks:
+                oi = int(m["order_index"])
+                if oi in seen:
+                    raise ValueError("DUPLICATE_ORDER_INDEX")
+                seen.add(oi)
+
+                page_index = int(m["page_index"])
+                page_id = idx_to_page_id.get(page_index)
+                if not page_id:
+                    raise ValueError(f"PAGE_INDEX_NOT_FOUND:{page_index}")
+
+                mrows.append([
+                    _uuid(),
+                    mark_set_id,
+                    page_id,
+                    int(m["order_index"]),
+                    m.get("name", ""),
+                    m.get("label", ""),
+                    float(m["nx"]), float(m["ny"]), float(m["nw"]), float(m["nh"]),
+                    ("" if m.get("zoom_hint") is None else float(m["zoom_hint"])),
+                    float(m.get("padding_pct", 0.1)),
+                    m.get("anchor", "auto"),
+                ])
+            self._append_rows("marks", mrows)
+
         return mark_set_id
 
 
