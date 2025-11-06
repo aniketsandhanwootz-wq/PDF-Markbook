@@ -15,7 +15,43 @@ import { applyLabels, indexToLabel } from '../lib/labels';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
-
+// Clean nested Cloudinary URLs
+// Clean nested Cloudinary URLs - DEBUG VERSION
+function cleanPdfUrl(url: string): string {
+  console.log('🔍 [cleanPdfUrl] INPUT:', url);
+  
+  if (!url) {
+    console.log('❌ [cleanPdfUrl] Empty URL');
+    return url;
+  }
+  
+  // Decode URL-encoded string to find nested URLs
+  let decoded = url;
+  try {
+    let prev = '';
+    let iterations = 0;
+    while (decoded !== prev && iterations < 5) {
+      prev = decoded;
+      decoded = decodeURIComponent(decoded);
+      iterations++;
+      console.log(`🔄 [cleanPdfUrl] Decode iteration ${iterations}:`, decoded.substring(0, 100) + '...');
+    }
+  } catch (e) {
+    console.warn('⚠️ [cleanPdfUrl] Decode failed, using original');
+    decoded = url;
+  }
+  
+  // Extract Google Storage URL
+  const match = decoded.match(/https:\/\/storage\.googleapis\.com\/[^\s"'<>)]+\.pdf/i);
+  if (match) {
+    const cleaned = match[0].replace(/ /g, '%20');
+    console.log('✅ [cleanPdfUrl] OUTPUT:', cleaned);
+    return cleaned;
+  }
+  
+  console.log('⚠️ [cleanPdfUrl] No Google Storage URL found, returning original');
+  return url;
+}
 type Mark = {
   mark_id?: string;
   page_index: number;
@@ -97,7 +133,8 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetName: strin
       setError('Please enter a name for this mark set');
       return;
     }
-
+    // Clean the URL
+    const cleanedUrl = cleanPdfUrl(pdfUrl.trim());
     setIsCreating(true);
     setError('');
 
@@ -107,7 +144,7 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetName: strin
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          pdf_url: pdfUrl.trim(),
+          pdf_url: cleanedUrl,
           name: markSetName.trim()
         })
       });
@@ -117,7 +154,7 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetName: strin
       }
 
       const data = await response.json();
-      onStart(pdfUrl.trim(), data.id);
+      onStart(cleanedUrl, data.id);
     } catch (err) {
       console.error('Error creating mark set:', err);
       setError('Failed to create mark set. Is the backend running?');
@@ -339,8 +376,10 @@ useEffect(() => {
     }
   }, [isDemo, pdfUrlParam, urlMarkSetId]);
 
-  const handleSetupComplete = (url: string, setId: string) => {
-    const newUrl = `${window.location.pathname}?pdf_url=${encodeURIComponent(url)}&mark_set_id=${setId}`;
+const handleSetupComplete = (url: string, setId: string) => {
+    // Clean URL one more time before adding to query params
+    const finalUrl = cleanPdfUrl(url);
+    const newUrl = `${window.location.pathname}?pdf_url=${encodeURIComponent(finalUrl)}&mark_set_id=${setId}`;
     window.location.href = newUrl;
   };
 
@@ -389,7 +428,7 @@ useEffect(() => {
           setLoading(false);
         });
 } else {
-  const targetPdfUrl = pdfUrlParam;
+  const targetPdfUrl = cleanPdfUrl(pdfUrlParam);  // ✅ Clean before proxying
   const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
   const proxiedUrl = `${apiBase}/proxy-pdf?url=${encodeURIComponent(targetPdfUrl)}`;
   

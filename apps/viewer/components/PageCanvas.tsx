@@ -8,9 +8,7 @@ type PageCanvasProps = {
   pageNumber: number;
   zoom: number;
   onReady?: (pageHeightPx: number) => void;
-  // temporary red flash
   flashRect?: { x: number; y: number; w: number; h: number } | null;
-  // persistent yellow outline
   selectedRect?: { x: number; y: number; w: number; h: number } | null;
 };
 

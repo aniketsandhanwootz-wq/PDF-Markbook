@@ -56,7 +56,28 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-
+import re
+import urllib.parse
+def clean_pdf_url(url: str) -> str:
+    """Extract Google Storage URL from nested Cloudinary URLs"""
+    if not url or 'cloudinary.com' not in url:
+        return url
+    
+    decoded = url
+    try:
+        for _ in range(5):
+            prev = decoded
+            decoded = urllib.parse.unquote(decoded)
+            if decoded == prev:
+                break
+    except:
+        decoded = url
+    
+    match = re.search(r'https://storage\.googleapis\.com/[^\s"\'<>)]+\.pdf', decoded, re.IGNORECASE)
+    if match:
+        return match.group(0).replace(' ', '%20')
+    
+    return url
 # ============================================================================
 # BACKEND CONFIGURATION
 # ============================================================================
@@ -74,6 +95,9 @@ logger.info(f"🔧 Storage Backend: {STORAGE_BACKEND.upper()}")
 # ============================================================================
 
 storage_adapter = None
+# ---- DI helper (used by routers/*) ----
+def get_storage_adapter(_=None):
+    return storage_adapter
 
 if STORAGE_BACKEND == "sheets":
     try:
@@ -254,16 +278,21 @@ def storage_create_mark_set(pdf_url: str, name: str) -> str:
     """Create a mark set in the configured storage backend."""
     new_id = str(uuid.uuid4())
     
+    # ✅ Clean URL before saving
+    cleaned_url = clean_pdf_url(pdf_url)
+    logger.info(f"Original URL: {pdf_url[:100]}...")
+    logger.info(f"Cleaned URL: {cleaned_url}")
+    
     if STORAGE_BACKEND == "sqlite":
         with get_db() as db:
-            db_mark_set = MarkSetDB(id=new_id, pdf_url=pdf_url, name=name)
+            db_mark_set = MarkSetDB(id=new_id, pdf_url=cleaned_url, name=name)
             db.add(db_mark_set)
             db.flush()
     
     elif STORAGE_BACKEND == "sheets":
         # For sheets, we need to create document first, then mark_set
         # Simplified: Just create mark_set with embedded PDF URL
-        doc_id = storage_adapter.create_document(pdf_url=pdf_url, created_by=None)
+        doc_id = storage_adapter.create_document(pdf_url=cleaned_url, created_by=None)
         new_id = storage_adapter.create_mark_set(
             doc_id=doc_id,
             label=name,
@@ -919,9 +948,6 @@ async def root():
 
 # ========== NEW: PDF Proxy Endpoint ==========
 
-from fastapi.responses import StreamingResponse
-import httpx
-
 @app.get("/proxy-pdf")
 async def proxy_pdf(url: str):
     """
@@ -1068,87 +1094,6 @@ async def submit_and_build_report(mark_set_id: str, body: SubmissionReportReques
             "Cache-Control": "no-store",
         },
     )
-# ========== NEW: Document Management Endpoints ==========
-
-@app.post("/documents/init", response_model=dict, status_code=status.HTTP_201_CREATED)
-async def initialize_document(data: DocumentInit):
-    """
-    Initialize document from Glide app.
-    Checks if document exists, creates if not, returns doc_id and available marksets.
-    """
-    try:
-        if STORAGE_BACKEND != "sheets":
-            raise HTTPException(status_code=501, detail="Only supported with Google Sheets")
-        
-        # Check if document exists by identifier
-        existing_doc = storage_adapter.get_document_by_identifier(data.id)
-        
-        if existing_doc:
-            doc_id = existing_doc["doc_id"]
-            logger.info(f"Document exists: {doc_id}")
-        else:
-            # TODO: Convert JPEG to PDF (for now, just use the URL as-is)
-            pdf_url = data.assembly_drawing
-            
-            doc_id = storage_adapter.create_document(
-                pdf_url=pdf_url,
-                created_by=data.user_mail,
-                part_number=data.part_number,
-                project_name=data.project_name
-            )
-            logger.info(f"Created new document: {doc_id}")
-        
-        # Get available marksets
-        marksets = storage_adapter.list_mark_sets_by_document(doc_id)
-        
-        return {
-            "doc_id": doc_id,
-            "exists": existing_doc is not None,
-            "marksets": marksets,
-            "markset_count": len(marksets)
-        }
-    except Exception as e:
-        logger.error(f"Error initializing document: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/documents/by-identifier", response_model=dict)
-async def get_document_by_identifier(identifier: str):
-    """Get document by business identifier."""
-    try:
-        if STORAGE_BACKEND != "sheets":
-            raise HTTPException(status_code=501, detail="Only supported with Google Sheets")
-        
-        doc = storage_adapter.get_document_by_identifier(identifier)
-        if not doc:
-            raise HTTPException(status_code=404, detail="Document not found")
-        
-        marksets = storage_adapter.list_mark_sets_by_document(doc["doc_id"])
-        
-        return {
-            "document": doc,
-            "marksets": marksets
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error fetching document: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/documents/{doc_id}/mark-sets", response_model=List[dict])
-async def list_document_marksets(doc_id: str):
-    """List all mark sets for a document."""
-    try:
-        if STORAGE_BACKEND != "sheets":
-            raise HTTPException(status_code=501, detail="Only supported with Google Sheets")
-        
-        marksets = storage_adapter.list_mark_sets_by_document(doc_id)
-        return marksets
-    except Exception as e:
-        logger.error(f"Error listing marksets: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
 
 # ========== NEW: Mark Set Status Endpoint ==========
 
@@ -1195,10 +1140,23 @@ async def get_markset_status(mark_set_id: str):
         logger.error(f"Error fetching markset status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
 # Import and include user_input router
 from routers.user_input import router as user_input_router
 app.include_router(user_input_router)
+
+from routers import documents as documents_router
+app.include_router(documents_router.router)
+
+from routers import reports as reports_router
+app.include_router(reports_router.router)
+
+from routers import mark_sets as mark_sets_router
+app.include_router(mark_sets_router.router)
+
+from routers import mark_sets_master as mark_sets_master_router
+app.include_router(mark_sets_master_router.router)
+
+
 # ========== End of Submissions ==========
 
 startup_time = time.time()

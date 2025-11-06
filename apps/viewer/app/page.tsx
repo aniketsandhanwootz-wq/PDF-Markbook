@@ -20,6 +20,43 @@ import SlideSidebar from '../components/SlideSidebar';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
+/// Clean nested Cloudinary URLs
+// Clean nested Cloudinary URLs - DEBUG VERSION
+function cleanPdfUrl(url: string): string {
+  console.log('🔍 [cleanPdfUrl] INPUT:', url);
+  
+  if (!url) {
+    console.log('❌ [cleanPdfUrl] Empty URL');
+    return url;
+  }
+  
+  // Decode URL-encoded string to find nested URLs
+  let decoded = url;
+  try {
+    let prev = '';
+    let iterations = 0;
+    while (decoded !== prev && iterations < 5) {
+      prev = decoded;
+      decoded = decodeURIComponent(decoded);
+      iterations++;
+      console.log(`🔄 [cleanPdfUrl] Decode iteration ${iterations}:`, decoded.substring(0, 100) + '...');
+    }
+  } catch (e) {
+    console.warn('⚠️ [cleanPdfUrl] Decode failed, using original');
+    decoded = url;
+  }
+  
+  // Extract Google Storage URL
+  const match = decoded.match(/https:\/\/storage\.googleapis\.com\/[^\s"'<>)]+\.pdf/i);
+  if (match) {
+    const cleaned = match[0].replace(/ /g, '%20');
+    console.log('✅ [cleanPdfUrl] OUTPUT:', cleaned);
+    return cleaned;
+  }
+  
+  console.log('⚠️ [cleanPdfUrl] No Google Storage URL found, returning original');
+  return url;
+}
 // --- precise centering helpers ---
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -394,10 +431,11 @@ const smoothZoom = useCallback(
     window.location.href = newUrl;
   };
 
-  const rawPdfUrl = isDemo
-    ? 'https://mozilla.github.io/pdf.js/web/compressed.tracemonkey-pldi-09.pdf'
-    : pdfUrlParam || 'https://mozilla.github.io/pdf.js/web/compressed.tracemonkey-pldi-09.pdf';
-
+  const rawPdfUrl = cleanPdfUrl(
+    isDemo
+      ? 'https://mozilla.github.io/pdf.js/web/compressed.tracemonkey-pldi-09.pdf'
+      : pdfUrlParam || 'https://mozilla.github.io/pdf.js/web/compressed.tracemonkey-pldi-09.pdf'
+  );
   const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
   const pdfUrl = rawPdfUrl 
     ? `${apiBase}/proxy-pdf?url=${encodeURIComponent(rawPdfUrl)}`

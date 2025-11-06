@@ -13,18 +13,22 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 from ..base import StorageAdapter
 
 HEADERS = {
-    "documents": ["doc_id", "pdf_url", "hash", "page_count", "part_number", "project_name", "created_by", "created_at", "updated_at"],
+    "documents": [
+        "doc_id", "pdf_url", "hash", "page_count",
+        "part_number", "external_id", "project_name",   # 👈 added external_id (your “id”)
+        "created_by", "created_at", "updated_at"
+    ],
     "pages":     ["page_id", "doc_id", "idx", "width_pt", "height_pt", "rotation_deg"],
-    "mark_sets": ["mark_set_id", "doc_id", "label", "is_active", "created_by", "created_at", "updation_log", "updated_by"],
+    "mark_sets": ["mark_set_id", "doc_id", "label", "is_active", "is_master", "created_by", "created_at", "updation_log", "updated_by"],
     "marks":     [
         "mark_id", "mark_set_id", "page_id", "order_index", "name", "label",
         "nx", "ny", "nw", "nh", "zoom_hint", "padding_pct", "anchor"
     ],
     "mark_user_input": ["input_id", "mark_id", "mark_set_id", "user_value", "submitted_at", "submitted_by"],
+    "inspection_reports": ["report_id", "mark_set_id", "inspection_doc_url", "created_by", "created_at"],  # 👈 NEW
 }
 
-
-SHEET_TAB_ORDER = ["documents", "pages", "mark_sets", "marks", "mark_user_input"]
+SHEET_TAB_ORDER = ["documents", "pages", "mark_sets", "marks", "mark_user_input", "inspection_reports"]  # 👈 NEW at end
 
 def _safe_float(v, default=None):
     try:
@@ -124,6 +128,7 @@ class SheetsAdapter(StorageAdapter):
         self._pages_by_doc_cache: dict[str, list[dict[str, Any]]] = {}
         self._user_input_cache: dict[str, list[dict[str, Any]]] = {}
 
+    
     # ========== Worksheet helpers ==========
 
     def _ensure_worksheet(self, name: str) -> gspread.Worksheet:
@@ -164,7 +169,7 @@ class SheetsAdapter(StorageAdapter):
         for r in rows[1:]:
             out.append({header[i]: (r[i] if i < len(r) else "") for i in range(len(header))})
         return out
-
+    
     @retry_sheets_api
     def _append_rows(self, tab: str, rows: list[list[Any]]) -> None:
         """Append rows to tab. WITH RETRY."""
@@ -194,23 +199,40 @@ class SheetsAdapter(StorageAdapter):
 
     # ========== StorageAdapter API ==========
 
-    def create_document(self, pdf_url: str, created_by: str | None = None, 
-                       part_number: str | None = None, project_name: str | None = None) -> str:
+    def list_documents(self) -> list[dict[str, Any]]:
+        """Return all documents as dicts (used by admin/clean-urls)."""
+        return self._get_all_dicts("documents")
+
+    def create_document(
+        self,
+        pdf_url: str,
+        created_by: str | None = None,
+        part_number: str | None = None,
+        project_name: str | None = None,
+        external_id: str | None = None,
+    ) -> str:
         doc_id = _uuid()
         now = _utc_iso()
+        pnumb = (part_number or "").strip()
+        proj = (project_name or "").strip()
+        eid = (external_id or "").strip()
+        cby = (created_by or "").strip()
+        purl = (pdf_url or "").strip()
+
         self._append_rows("documents", [[
-            doc_id, pdf_url, "", 0, 
-            (part_number or ""), (project_name or ""), 
-            (created_by or ""), now, now
+            doc_id, purl, "", 0,
+            pnumb, eid, proj,
+            cby, now, now
         ]])
         self._doc_cache[doc_id] = {
             "doc_id": doc_id,
-            "pdf_url": pdf_url,
+            "pdf_url": purl,
             "hash": "",
             "page_count": "0",
-            "part_number": part_number or "",
-            "project_name": project_name or "",
-            "created_by": created_by or "",
+            "part_number": pnumb,
+            "external_id": eid,
+            "project_name": proj,
+            "created_by": cby,
             "created_at": now,
             "updated_at": now,
         }
@@ -227,6 +249,7 @@ class SheetsAdapter(StorageAdapter):
         obj = {header[i]: (vals[i] if i < len(vals) else "") for i in range(len(header))}
         self._doc_cache[doc_id] = obj
         return obj
+
 
     def bootstrap_pages(self, doc_id: str, page_count: int, dims: list[dict[str, Any]]) -> None:
         existing = self._get_all_dicts("pages")
@@ -260,7 +283,7 @@ class SheetsAdapter(StorageAdapter):
         self._pages_by_doc_cache[doc_id] = rows
         return rows
 
-    def create_mark_set(self, doc_id: str, label: str, created_by: str | None, marks: list[dict[str, Any]]) -> str:
+    def create_mark_set(self, doc_id: str, label: str, created_by: str | None, marks: list[dict[str, Any]], is_master: bool = False) -> str:
         if not self.get_document(doc_id):
             raise ValueError("DOCUMENT_NOT_FOUND")
 
@@ -270,7 +293,8 @@ class SheetsAdapter(StorageAdapter):
         mark_set_id = _uuid()
         now = _utc_iso()
         self._append_rows("mark_sets", [[
-            mark_set_id, doc_id, (label or "v1"), "FALSE", 
+            mark_set_id, doc_id, (label or "v1"), "FALSE",
+            ("TRUE" if is_master else "FALSE"),
             (created_by or ""), now, "[]", (created_by or "")
         ]])
 
@@ -301,6 +325,7 @@ class SheetsAdapter(StorageAdapter):
             ])
         self._append_rows("marks", mrows)
         return mark_set_id
+
 
     def list_marks(self, mark_set_id: str) -> list[dict[str, Any]]:
         """Get all marks for a mark set, ordered by order_index."""
@@ -394,20 +419,87 @@ class SheetsAdapter(StorageAdapter):
         if updates:
             self.ws["mark_sets"].batch_update(updates)
 
+    def set_master_mark_set(self, mark_set_id: str) -> None:
+        """Set exactly one master markset per document: this TRUE, others FALSE."""
+        r = self._find_row_by_value("mark_sets", "mark_set_id", mark_set_id)
+        if not r:
+            raise ValueError("MARK_SET_NOT_FOUND")
+
+        header = HEADERS["mark_sets"]
+        vals = self.ws["mark_sets"].row_values(r)
+        row = {header[i]: (vals[i] if i < len(vals) else "") for i in range(len(header))}
+        doc_id = row["doc_id"]
+
+        ms_rows = self._get_all_dicts("mark_sets")
+        updates = []
+        colmap = self.colmap["mark_sets"]
+
+        # ensure column exists even on older sheets
+        if "is_master" not in colmap:
+            # append header
+            ws = self.ws["mark_sets"]
+            hdr_vals = ws.row_values(1)
+            if "is_master" not in hdr_vals:
+                hdr_vals.append("is_master")
+                ws.update("1:1", [hdr_vals])
+            self.colmap["mark_sets"] = self._ensure_headers("mark_sets")
+            colmap = self.colmap["mark_sets"]
+
+        for i, ms in enumerate(ms_rows, start=2):
+            if ms["doc_id"] == doc_id:
+                a1 = gspread.utils.rowcol_to_a1(i, colmap["is_master"])
+                val = "TRUE" if ms["mark_set_id"] == mark_set_id else "FALSE"
+                updates.append({"range": a1, "values": [[val]]})
+
+        if updates:
+            self.ws["mark_sets"].batch_update(updates)
+
     # ========== NEW: Document Lookup Methods ==========
     
-    def get_document_by_identifier(self, identifier: str) -> dict[str, Any] | None:
-        """Get document by business identifier (project_name + part_name)."""
+    def get_document_by_business_key(
+        self,
+        *,
+        project_name: str,
+        external_id: str,
+        part_number: str,
+    ) -> dict[str, Any] | None:
+        """
+        Resolve a document by the 3-part business key:
+        (project_name, external_id, part_number), with whitespace trimmed.
+        """
+        pn = (project_name or "").strip()
+        eid = (external_id or "").strip()
+        pnumb = (part_number or "").strip()
+
         docs = self._get_all_dicts("documents")
-        # Search by doc_id first (for backward compatibility)
-        for doc in docs:
-            if doc.get("doc_id") == identifier:
-                return doc
-        # Search by composite identifier (could be stored in part_number or separate field)
-        for doc in docs:
-            if doc.get("part_number") == identifier:
-                return doc
+        for d in docs:
+            if ((d.get("project_name", "").strip() == pn)
+                and (d.get("external_id", "").strip() == eid)
+                and (d.get("part_number", "").strip() == pnumb)):
+                return d
         return None
+
+
+    # Back-compat helper (kept so older code doesn't crash)
+    def get_document_by_identifier(self, identifier: str) -> dict[str, Any] | None:
+        """
+        Legacy single-arg lookup:
+        1) doc_id exact match
+        2) external_id exact match
+        3) part_number exact match
+        """
+        docs = self._get_all_dicts("documents")
+        for d in docs:
+            if d.get("doc_id") == identifier:
+                return d
+        for d in docs:
+            if d.get("external_id") == identifier:
+                return d
+        for d in docs:
+            if d.get("part_number") == identifier:
+                return d
+        return None
+
     
     def list_mark_sets_by_document(self, doc_id: str) -> list[dict[str, Any]]:
         """List all mark sets for a document."""
@@ -454,7 +546,49 @@ class SheetsAdapter(StorageAdapter):
             updates["label"] = label
         
         self._update_cells("mark_sets", row_idx, updates)
-    
+
+    def clone_mark_set(self, mark_set_id: str, new_label: str, created_by: str | None) -> str:
+        """Deep clone a mark set + its marks into a new mark set on the same document."""
+        src_ms = None
+        for ms in self._get_all_dicts("mark_sets"):
+            if ms.get("mark_set_id") == mark_set_id:
+                src_ms = ms
+                break
+        if not src_ms:
+            raise ValueError("MARK_SET_NOT_FOUND")
+
+        doc_id = src_ms["doc_id"]
+        new_id = _uuid()
+        now = _utc_iso()
+
+        # Keep is_master FALSE on clone by default
+        self._append_rows("mark_sets", [[
+            new_id, doc_id,
+            (new_label or "copy"),
+            "FALSE",            # is_active
+            "FALSE",            # is_master  👈 added (fix column count)
+            (created_by or ""),
+            now,
+            src_ms.get("updation_log", "[]"),
+            (created_by or "")
+        ]])
+
+        src_marks = [m for m in self._get_all_dicts("marks") if m.get("mark_set_id") == mark_set_id]
+        rows = []
+        for m in src_marks:
+            rows.append([
+                _uuid(), new_id, m["page_id"], int(_safe_int(m["order_index"], 0)),
+                m.get("name",""), m.get("label",""),
+                float(_safe_float(m["nx"], 0.0)), float(_safe_float(m["ny"], 0.0)),
+                float(_safe_float(m["nw"], 0.0)), float(_safe_float(m["nh"], 0.0)),
+                ("" if m.get("zoom_hint") in ("", None) else float(_safe_float(m["zoom_hint"], 0.0))),
+                float(_safe_float(m.get("padding_pct", 0.1), 0.1)),
+                m.get("anchor","auto"),
+            ])
+        if rows:
+            self._append_rows("marks", rows)
+        return new_id
+
     # ========== NEW: User Input Methods ==========
     
     def create_user_input(self, mark_id: str, mark_set_id: str, user_value: str, submitted_by: str) -> str:
@@ -531,3 +665,15 @@ class SheetsAdapter(StorageAdapter):
         self.ws["mark_user_input"].clear()
         self.ws["mark_user_input"].update('A1', filtered)
         self._user_input_cache.clear()
+
+    # ========== Reports ==========
+    def create_report_record(self, mark_set_id: str, inspection_doc_url: str, created_by: str | None) -> str:
+        """Persist a generated report record."""
+        rid = _uuid()
+        now = _utc_iso()
+        self._append_rows("inspection_reports", [[rid, mark_set_id, inspection_doc_url, (created_by or ""), now]])
+        return rid
+
+    def list_reports(self, mark_set_id: str) -> list[dict[str, Any]]:
+        """List all reports for a mark set."""
+        return [r for r in self._get_all_dicts("inspection_reports") if r.get("mark_set_id") == mark_set_id]
