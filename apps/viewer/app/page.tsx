@@ -123,183 +123,228 @@ type MarkSetInfo = {
 };
 const SWIPE_TO_STEP_ENABLED = false;
 
-// Setup Screen Component
+// ------- New types for bootstrap + markset summary -------
+type BootstrapDoc = {
+  document: {
+    doc_id: string;
+    project_name: string;
+    id: string;            // external_id
+    part_number: string;
+    pdf_url: string;
+    page_count: number;
+  };
+  mark_sets: Array<{
+    mark_set_id: string;
+    label: string;
+    is_master: boolean;
+    is_active: boolean;
+    created_by: string;
+    created_at: string;
+    updated_by: string;
+    marks_count?: number;
+  }>;
+  master_mark_set_id?: string | null;
+  mark_set_count: number;
+  status?: string;
+};
+
+type CreateDocMarkSetBody = {
+  project_name: string;
+  id: string;
+  part_number: string;
+  label: string;
+  created_by?: string | null;
+  is_master?: boolean;
+};
+
+// ------- NEW Viewer Setup (doc bootstrap + markset picker) -------
 function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string) => void }) {
-  const [pdfUrl, setPdfUrl] = useState('');
-  const [markSetId, setMarkSetId] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [availableMarkSets, setAvailableMarkSets] = useState<MarkSetInfo[]>([]);
-  const [error, setError] = useState('');
-  const [loadingMarkSets, setLoadingMarkSets] = useState(true);
+  const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
+  const params = useSearchParams();
 
-  useEffect(() => {
-    const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
-    fetch(`${apiBase}/mark-sets`)
-      .then(res => res.json())
-      .then((data: MarkSetInfo[]) => {
-        setAvailableMarkSets(data);
-        setLoadingMarkSets(false);
-      })
-      .catch(err => {
-        console.error('Failed to load mark sets:', err);
-        setLoadingMarkSets(false);
-      });
-  }, []);
+  // Query inputs (same keys as editor)
+  const [projectName, setProjectName] = useState<string>(params?.get('project_name') || '');
+  const [extId, setExtId] = useState<string>(params?.get('id') || '');
+  const [partNumber, setPartNumber] = useState<string>(params?.get('part_number') || '');
+  const [userMail, setUserMail] = useState<string>(params?.get('user_mail') || '');
+  const [assemblyDrawing, setAssemblyDrawing] = useState<string>(params?.get('assembly_drawing') || '');
 
-  const handleStart = () => {
-    if (!pdfUrl.trim()) {
-      setError('Please enter a PDF URL or select a mark set');
+  // Bootstrap state
+  const [boot, setBoot] = useState<BootstrapDoc | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string>('');
+
+  // New markset fields
+  const [newLabel, setNewLabel] = useState('');
+  const [isMaster, setIsMaster] = useState(false);
+  const [creating, setCreating] = useState(false);
+
+  const runBootstrap = async () => {
+    setErr('');
+    if (!projectName || !extId || !partNumber) {
+      setErr('Please fill Project, ID and Part Number.');
       return;
     }
-
-    setIsLoading(true);
-    setError('');
-
-    onStart(pdfUrl.trim(), markSetId.trim());
+    if (!assemblyDrawing) {
+      setErr('Please paste the PDF/assembly_drawing URL (Cloudinary/Glide link is okay).');
+      return;
+    }
+    try {
+      setLoading(true);
+      const res = await fetch(`${apiBase}/documents/init`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_name: projectName,
+          id: extId,
+          part_number: partNumber,
+          user_mail: userMail || undefined,
+          pdf_url: undefined,
+          assembly_drawing: assemblyDrawing,
+        }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const data: BootstrapDoc = await res.json();
+      setBoot(data);
+    } catch (e: any) {
+      console.error(e);
+      setErr('Failed to initialize document.');
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleSelectMarkSet = (markSet: MarkSetInfo) => {
-    setPdfUrl(markSet.pdf_url);
-    setMarkSetId(markSet.id);
+  const handleOpenMarkset = (markSetId: string) => {
+    if (!boot?.document?.pdf_url) {
+      setErr('No PDF URL on document.');
+      return;
+    }
+    onStart(boot.document.pdf_url, markSetId);
+  };
+
+  const handleCreateMarkset = async () => {
+    if (!boot?.document?.doc_id) {
+      setErr('Document not initialized yet.');
+      return;
+    }
+    if (!newLabel.trim()) {
+      setErr('Enter a label for the new mark set.');
+      return;
+    }
+    try {
+      setCreating(true);
+      const body: CreateDocMarkSetBody = {
+        project_name: projectName,
+        id: extId,
+        part_number: partNumber,
+        label: newLabel.trim(),
+        created_by: userMail || undefined,
+        is_master: isMaster,
+      };
+      const res = await fetch(`${apiBase}/documents/mark-sets`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const out = await res.json();
+      handleOpenMarkset(out.mark_set_id);
+    } catch (e: any) {
+      console.error(e);
+      setErr('Failed to create mark set.');
+    } finally {
+      setCreating(false);
+    }
   };
 
   return (
-    <div style={{
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      minHeight: '100vh',
-      background: '#f5f5f5',
-      padding: '20px'
-    }}>
-      <div style={{
-        background: 'white',
-        borderRadius: '8px',
-        boxShadow: '0 2px 12px rgba(0,0,0,0.1)',
-        padding: '40px',
-        maxWidth: '600px',
-        width: '100%'
-      }}>
-        <h1 style={{ fontSize: '24px', fontWeight: '600', marginBottom: '8px' }}>
-          PDF Mark Viewer
-        </h1>
-        <p style={{ color: '#666', marginBottom: '32px' }}>
-          View and navigate marks on PDF documents
-        </p>
+    <div style={{ minHeight: '100vh', background: '#f5f5f5', padding: 20, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ background: '#fff', width: '100%', maxWidth: 860, borderRadius: 8, boxShadow: '0 2px 12px rgba(0,0,0,0.1)', padding: 24 }}>
+        <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 6 }}>PDF Mark Viewer — Markbook</h1>
+        <p style={{ color: '#666', marginBottom: 18 }}>Enter keys → Bootstrap the document → Pick or create a mark set to start reviewing.</p>
 
-        {availableMarkSets.length > 0 && (
-          <div style={{ marginBottom: '32px' }}>
-            <label style={{ display: 'block', fontWeight: '500', marginBottom: '12px' }}>
-              📋 Available Mark Sets
-            </label>
-            <div style={{
-              border: '1px solid #ddd',
-              borderRadius: '4px',
-              maxHeight: '200px',
-              overflowY: 'auto'
-            }}>
-              {availableMarkSets.map((markSet) => (
-                <div
-                  key={markSet.id}
-                  onClick={() => handleSelectMarkSet(markSet)}
-                  style={{
-                    padding: '12px',
-                    borderBottom: '1px solid #f0f0f0',
-                    cursor: 'pointer',
-                    background: markSetId === markSet.id ? '#e3f2fd' : 'white',
-                    transition: 'background 0.2s'
-                  }}
-                >
-                  <div style={{ fontWeight: '500', marginBottom: '4px' }}>
-                    {markSet.name}
-                  </div>
-                  <div style={{ fontSize: '12px', color: '#666', wordBreak: 'break-all' }}>
-                    {markSet.pdf_url.substring(0, 60)}...
-                  </div>
+        {/* Keys row */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 12, marginBottom: 12 }}>
+          <input placeholder="Project Name" value={projectName} onChange={e => setProjectName(e.target.value)} style={inp} />
+          <input placeholder="ID (Business ID)" value={extId} onChange={e => setExtId(e.target.value)} style={inp} />
+          <input placeholder="Part Number" value={partNumber} onChange={e => setPartNumber(e.target.value)} style={inp} />
+          <input placeholder="Your Email (optional)" value={userMail} onChange={e => setUserMail(e.target.value)} style={inp} />
+        </div>
+
+        <input
+          placeholder="assembly_drawing / PDF URL (Cloudinary/Glide fine)"
+          value={assemblyDrawing}
+          onChange={e => setAssemblyDrawing(e.target.value)}
+          style={{ ...inp, width: '100%', marginBottom: 12 }}
+        />
+
+        {err && <div style={{ background:'#ffebee', color:'#c62828', padding:10, borderRadius:4, marginBottom:12 }}>{err}</div>}
+
+        {!boot ? (
+          <button onClick={runBootstrap} disabled={loading} style={btnPrimary}>
+            {loading ? 'Bootstrapping…' : 'Bootstrap Document'}
+          </button>
+        ) : (
+          <>
+            {/* Document summary */}
+            <div style={{ background:'#f9f9f9', border:'1px solid #eee', borderRadius:6, padding:12, marginTop:12 }}>
+              <div style={{ fontWeight:600, marginBottom:6 }}>Document</div>
+              <div style={{ fontSize:13, color:'#333' }}>
+                <div><b>PDF:</b> {boot.document.pdf_url}</div>
+                <div style={{ marginTop:6 }}>
+                  <b>Mark Sets:</b> {boot.mark_sets.length}{' '}
+                  {boot.mark_sets.length > 0 && `· Master: ${boot.mark_sets.find(m => m.is_master)?.label || '—'}`}
                 </div>
-              ))}
+              </div>
             </div>
-          </div>
+
+            {/* Markset picker */}
+            <div style={{ marginTop:16 }}>
+              <div style={{ fontWeight:600, marginBottom:6 }}>Available Mark Sets</div>
+              <div style={{ display:'grid', gap:8 }}>
+                {boot.mark_sets.map(ms => (
+                  <div key={ms.mark_set_id} style={{ border:'1px solid #ddd', borderRadius:6, padding:10, background:'#fff', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+                    <div>
+                      <div style={{ fontWeight:600 }}>{ms.label}{ms.is_master ? '  ⭐' : ''}</div>
+                      <div style={{ color:'#666', fontSize:12 }}>{(ms.marks_count ?? 0)} marks</div>
+                    </div>
+                    <button onClick={() => handleOpenMarkset(ms.mark_set_id)} style={btn}>
+                      Open
+                    </button>
+                  </div>
+                ))}
+                {boot.mark_sets.length === 0 && (
+                  <div style={{ color:'#666', fontSize:13, padding:'6px 2px' }}>No mark sets yet.</div>
+                )}
+              </div>
+            </div>
+
+            {/* Create new markset */}
+            <div style={{ marginTop:16, borderTop:'1px dashed #ddd', paddingTop:12 }}>
+              <div style={{ fontWeight:600, marginBottom:6 }}>Create New Mark Set</div>
+              <div style={{ display:'grid', gridTemplateColumns:'1fr auto', gap:8 }}>
+                <input placeholder="Label (e.g., QC – Dimensions)" value={newLabel} onChange={e => setNewLabel(e.target.value)} style={inp} />
+                <label style={{ display:'flex', alignItems:'center', gap:6, fontSize:13 }}>
+                  <input type="checkbox" checked={isMaster} onChange={e => setIsMaster(e.target.checked)} />
+                  Set as Master
+                </label>
+              </div>
+              <button onClick={handleCreateMarkset} disabled={creating} style={{ ...btnPrimary, marginTop:10 }}>
+                {creating ? 'Creating…' : 'Create & Open'}
+              </button>
+            </div>
+          </>
         )}
-
-        {loadingMarkSets && (
-          <div style={{ textAlign: 'center', padding: '20px', color: '#666', marginBottom: '24px' }}>
-            Loading mark sets...
-          </div>
-        )}
-
-        <div style={{ borderTop: '2px solid #f0f0f0', paddingTop: '24px' }}>
-          <label style={{ display: 'block', fontWeight: '500', marginBottom: '8px' }}>
-            🔗 Or Enter PDF URL
-          </label>
-          <input
-            type="text"
-            value={pdfUrl}
-            onChange={(e) => setPdfUrl(e.target.value)}
-            placeholder="https://example.com/document.pdf"
-            style={{
-              width: '100%',
-              padding: '12px',
-              border: '1px solid #ddd',
-              borderRadius: '4px',
-              fontSize: '14px'
-            }}
-          />
-        </div>
-
-        <div style={{ marginTop: '24px', marginBottom: '24px' }}>
-          <label style={{ display: 'block', fontWeight: '500', marginBottom: '8px' }}>
-            🏷️ Mark Set ID (Optional)
-          </label>
-          <input
-            type="text"
-            value={markSetId}
-            onChange={(e) => setMarkSetId(e.target.value)}
-            placeholder="Leave empty to view PDF without marks"
-            style={{
-              width: '100%',
-              padding: '12px',
-              border: '1px solid #ddd',
-              borderRadius: '4px',
-              fontSize: '14px'
-            }}
-          />
-        </div>
-
-        {error && (
-          <div style={{
-            padding: '12px',
-            background: '#ffebee',
-            color: '#c62828',
-            borderRadius: '4px',
-            marginBottom: '24px',
-            fontSize: '14px'
-          }}>
-            {error}
-          </div>
-        )}
-
-        <button
-          onClick={handleStart}
-          disabled={isLoading}
-          style={{
-            width: '100%',
-            padding: '14px',
-            background: isLoading ? '#ccc' : '#1976d2',
-            color: 'white',
-            border: 'none',
-            borderRadius: '4px',
-            fontSize: '16px',
-            fontWeight: '600',
-            cursor: isLoading ? 'not-allowed' : 'pointer'
-          }}
-        >
-          {isLoading ? 'Loading...' : 'Open PDF'}
-        </button>
       </div>
     </div>
   );
 }
+
+// small styles for setup
+const inp: React.CSSProperties = { padding:'10px 12px', border:'1px solid #ddd', borderRadius:4, fontSize:14, outline:'none' };
+const btn: React.CSSProperties = { padding:'8px 14px', border:'1px solid #ccc', borderRadius:6, background:'#fff', cursor:'pointer' };
+const btnPrimary: React.CSSProperties = { ...btn, borderColor:'#1976d2', color:'#1976d2', fontWeight:700 };
+
 
 // Main Viewer Component
 function ViewerContent() {
