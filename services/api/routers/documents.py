@@ -125,9 +125,12 @@ async def get_by_identifier(
                     "created_by": ms.get("created_by", ""),
                     "created_at": ms.get("created_at", ""),
                     "updated_by": ms.get("updated_by", ""),
+                    # NEW: number of marks in this set
+                    "marks_count": len(storage.list_marks(ms.get("mark_set_id"))) if hasattr(storage, "list_marks") else 0,
                 }
                 for ms in mark_sets
             ],
+
             "master_mark_set_id": master_id,
             "mark_set_count": len(mark_sets),
         }

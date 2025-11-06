@@ -17,10 +17,15 @@ router = APIRouter(prefix="/reports", tags=["reports"])
 
 class ReportGenerateBody(BaseModel):
     mark_set_id: str = Field(..., min_length=8)
-    user_email: Optional[str] = None      # if provided: report for that user’s inputs
+    # NEW: allow Viewer to send values directly (fresh run, no prefill)
+    entries: Dict[str, str] = {}          # mark_id -> value
+    # Optional helpers
+    pdf_url: Optional[str] = None
+    user_email: Optional[str] = None      # who is submitting (for audit)
     padding_pct: float = 0.25
     title: str = "Inspection Report"
     author: str = "PDF Viewer"
+
 
 @router.get("/{mark_set_id}")
 async def list_reports(mark_set_id: str, storage = Depends(get_storage)):
@@ -33,39 +38,60 @@ async def list_reports(mark_set_id: str, storage = Depends(get_storage)):
 @router.post("/generate")
 async def generate_report(body: ReportGenerateBody, storage = Depends(get_storage)):
     """
-    Build a PDF report on the server, using saved user inputs.
-    Returns the PDF bytes as a StreamingResponse and persists a history record.
+    Alias of: /mark-sets/{mark_set_id}/submissions/report
+
+    Behaviour:
+    - If 'entries' is provided: save them to mark_user_input (Sheets) and render report.
+    - If 'entries' is empty: render using latest saved inputs (your existing behaviour).
+    - pdf_url can be provided; otherwise it is resolved from the mark_set -> document.
     """
-    # 1) Resolve doc/pdf_url for this mark_set
+    # 1) Resolve mark set + document/pdf_url
     ms_all = storage._get_all_dicts("mark_sets")
     ms = next((x for x in ms_all if x.get("mark_set_id") == body.mark_set_id), None)
     if not ms:
         raise HTTPException(status_code=404, detail="MARK_SET_NOT_FOUND")
 
     doc = storage.get_document(ms["doc_id"])
-    if not doc or not doc.get("pdf_url"):
-        raise HTTPException(status_code=400, detail="Document or pdf_url not found for this mark set")
+    if not doc:
+        raise HTTPException(status_code=400, detail="DOCUMENT_NOT_FOUND")
 
-    pdf_url = doc["pdf_url"]
+    pdf_url = body.pdf_url or doc.get("pdf_url")
+    if not pdf_url:
+        raise HTTPException(status_code=400, detail="pdf_url not found or resolvable")
 
     # 2) Fetch marks
-    marks = storage.list_marks(body.mark_set_id)  # raw dicts are fine for generator
+    marks = storage.list_marks(body.mark_set_id)  # raw dicts OK for generator
 
-    # 3) Fetch inputs (for a user or all)
-    rows = storage.get_user_inputs(body.mark_set_id, submitted_by=body.user_email)
-    # choose latest value per mark_id by submitted_at (ISO)
-    latest: Dict[str, Dict] = {}
-    for r in rows:
-        mid = r.get("mark_id")
-        ts = r.get("submitted_at") or ""
-        if not mid:
-            continue
-        prev = latest.get(mid)
-        if not prev or (ts > prev.get("submitted_at", "")):
-            latest[mid] = r
-    entries = {mid: r.get("user_value", "") for mid, r in latest.items()}
+    # 3) Decide which entries to render with
+    entries: Dict[str, str]
+    if body.entries:
+        # Viewer is sending fresh values → (a) persist them (Sheets) then (b) use them
+        try:
+            if hasattr(storage, "create_user_inputs_batch"):
+                storage.create_user_inputs_batch(
+                    mark_set_id=body.mark_set_id,
+                    entries=body.entries,
+                    submitted_by=(body.user_email or "viewer_user"),
+                )
+        except Exception:
+            # do not fail report just because audit write failed
+            pass
+        entries = body.entries
+    else:
+        # No entries sent → fall back to latest saved inputs (your previous behaviour)
+        rows = storage.get_user_inputs(body.mark_set_id, submitted_by=body.user_email)
+        latest: Dict[str, Dict] = {}
+        for r in rows:
+            mid = r.get("mark_id")
+            ts = r.get("submitted_at") or ""
+            if not mid:
+                continue
+            prev = latest.get(mid)
+            if not prev or (ts > prev.get("submitted_at", "")):
+                latest[mid] = r
+        entries = {mid: r.get("user_value", "") for mid, r in latest.items()}
 
-    # 4) Generate PDF
+    # 4) Generate report PDF
     try:
         pdf_bytes = await generate_report_pdf(
             pdf_url=pdf_url,
@@ -79,16 +105,14 @@ async def generate_report(body: ReportGenerateBody, storage = Depends(get_storag
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Report generation failed: {e}")
 
-    # 5) Persist a history row (URL can be filled later if you upload to storage)
+    # 5) (Optional) persist a history record (URL placeholder for now)
     try:
-        # If you later upload pdf_bytes to GCS/S3, replace "" with the file URL.
         storage.create_report_record(
             mark_set_id=body.mark_set_id,
-            inspection_doc_url="",   # TODO: fill with uploaded URL if you store it
+            inspection_doc_url="",   # replace with uploaded URL if you later store the PDF
             created_by=body.user_email or body.author or "",
         )
     except Exception:
-        # do not fail the request if history write fails
         pass
 
     from fastapi.responses import StreamingResponse

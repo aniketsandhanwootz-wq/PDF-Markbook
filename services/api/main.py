@@ -1159,6 +1159,10 @@ app.include_router(mark_sets_master_router.router)
 from routers import viewer as viewer_router
 app.include_router(viewer_router.router)
 
+from routers import reports as reports_router
+app.include_router(reports_router.router)
+
+
 # ========== End of Submissions ==========
 
 startup_time = time.time()
