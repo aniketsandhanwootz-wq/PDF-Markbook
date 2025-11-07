@@ -157,7 +157,6 @@ type CreateDocMarkSetBody = {
   is_master?: boolean;
 };
 
-// ------- NEW Viewer Setup (doc bootstrap + markset picker) -------
 function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string) => void }) {
   const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
   const params = useSearchParams();
@@ -174,21 +173,12 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string>('');
 
-  // New markset fields
-  const [newLabel, setNewLabel] = useState('');
-  const [isMaster, setIsMaster] = useState(false);
-  const [creating, setCreating] = useState(false);
+  // If link already has all keys, we’ll hide inputs & auto-bootstrap
+  const hasBootstrapKeys =
+    projectName.trim() && extId.trim() && partNumber.trim() && assemblyDrawing.trim();
 
   const runBootstrap = async () => {
     setErr('');
-    if (!projectName || !extId || !partNumber) {
-      setErr('Please fill Project, ID and Part Number.');
-      return;
-    }
-    if (!assemblyDrawing) {
-      setErr('Please paste the PDF/assembly_drawing URL (Cloudinary/Glide link is okay).');
-      return;
-    }
     try {
       setLoading(true);
       const res = await fetch(`${apiBase}/documents/init`, {
@@ -214,6 +204,14 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
     }
   };
 
+  // Auto-bootstrap whenever keys are present
+  useEffect(() => {
+    if (!boot && hasBootstrapKeys && !loading) {
+      runBootstrap();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasBootstrapKeys]);
+
   const handleOpenMarkset = (markSetId: string) => {
     if (!boot?.document?.pdf_url) {
       setErr('No PDF URL on document.');
@@ -222,72 +220,50 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
     onStart(boot.document.pdf_url, markSetId);
   };
 
-  const handleCreateMarkset = async () => {
-    if (!boot?.document?.doc_id) {
-      setErr('Document not initialized yet.');
-      return;
-    }
-    if (!newLabel.trim()) {
-      setErr('Enter a label for the new mark set.');
-      return;
-    }
-    try {
-      setCreating(true);
-      const body: CreateDocMarkSetBody = {
-        project_name: projectName,
-        id: extId,
-        part_number: partNumber,
-        label: newLabel.trim(),
-        created_by: userMail || undefined,
-        is_master: isMaster,
-      };
-      const res = await fetch(`${apiBase}/documents/mark-sets`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      const out = await res.json();
-      handleOpenMarkset(out.mark_set_id);
-    } catch (e: any) {
-      console.error(e);
-      setErr('Failed to create mark set.');
-    } finally {
-      setCreating(false);
-    }
-  };
-
   return (
     <div style={{ minHeight: '100vh', background: '#f5f5f5', padding: 20, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <div style={{ background: '#fff', width: '100%', maxWidth: 860, borderRadius: 8, boxShadow: '0 2px 12px rgba(0,0,0,0.1)', padding: 24 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 6 }}>PDF Mark Viewer — Markbook</h1>
-        <p style={{ color: '#666', marginBottom: 18 }}>Enter keys → Bootstrap the document → Pick or create a mark set to start reviewing.</p>
+        <p style={{ color: '#666', marginBottom: 18 }}>Pick a mark set to start reviewing.</p>
 
-        {/* Keys row */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 12, marginBottom: 12 }}>
-          <input placeholder="Project Name" value={projectName} onChange={e => setProjectName(e.target.value)} style={inp} />
-          <input placeholder="ID (Business ID)" value={extId} onChange={e => setExtId(e.target.value)} style={inp} />
-          <input placeholder="Part Number" value={partNumber} onChange={e => setPartNumber(e.target.value)} style={inp} />
-          <input placeholder="Your Email (optional)" value={userMail} onChange={e => setUserMail(e.target.value)} style={inp} />
-        </div>
-
-        <input
-          placeholder="assembly_drawing / PDF URL (Cloudinary/Glide fine)"
-          value={assemblyDrawing}
-          onChange={e => setAssemblyDrawing(e.target.value)}
-          style={{ ...inp, width: '100%', marginBottom: 12 }}
-        />
-
-        {err && <div style={{ background:'#ffebee', color:'#c62828', padding:10, borderRadius:4, marginBottom:12 }}>{err}</div>}
-
-        {!boot ? (
-          <button onClick={runBootstrap} disabled={loading} style={btnPrimary}>
-            {loading ? 'Bootstrapping…' : 'Bootstrap Document'}
-          </button>
-        ) : (
+        {/* When link already includes keys, hide inputs completely */}
+        {!hasBootstrapKeys && (
           <>
-            {/* Document summary */}
-            <div style={{ background:'#f9f9f9', border:'1px solid #eee', borderRadius:6, padding:12, marginTop:12 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 12, marginBottom: 12 }}>
+              <input placeholder="Project Name" value={projectName} onChange={e => setProjectName(e.target.value)} style={inp} />
+              <input placeholder="ID (Business ID)" value={extId} onChange={e => setExtId(e.target.value)} style={inp} />
+              <input placeholder="Part Number" value={partNumber} onChange={e => setPartNumber(e.target.value)} style={inp} />
+              <input placeholder="Your Email (optional)" value={userMail} onChange={e => setUserMail(e.target.value)} style={inp} />
+            </div>
+
+            <input
+              placeholder="assembly_drawing / PDF URL"
+              value={assemblyDrawing}
+              onChange={e => setAssemblyDrawing(e.target.value)}
+              style={{ ...inp, width: '100%', marginBottom: 12 }}
+            />
+
+            {err && <div style={{ background:'#ffebee', color:'#c62828', padding:10, borderRadius:4, marginBottom:12 }}>{err}</div>}
+
+            {!boot ? (
+              <button onClick={runBootstrap} disabled={loading} style={btnPrimary}>
+                {loading ? 'Bootstrapping…' : 'Bootstrap Document'}
+              </button>
+            ) : null}
+          </>
+        )}
+
+        {/* If keys are present but boot not finished, show a tiny loader instead of inputs */}
+        {hasBootstrapKeys && !boot && (
+          <div style={{ padding: 12, borderRadius: 6, background: '#f9f9f9', border: '1px solid #eee' }}>
+            Initializing document… please wait.
+          </div>
+        )}
+
+        {/* Once bootstrapped, show summary + scrollable marksets */}
+        {boot && (
+          <>
+            <div style={{ background:'#f9f9f9', border:'1px solid #eee', borderRadius:6, padding:12, marginTop:12, maxHeight: 140, overflow:'auto' }}>
               <div style={{ fontWeight:600, marginBottom:6 }}>Document</div>
               <div style={{ fontSize:13, color:'#333' }}>
                 <div><b>PDF:</b> {boot.document.pdf_url}</div>
@@ -298,10 +274,9 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
               </div>
             </div>
 
-            {/* Markset picker */}
             <div style={{ marginTop:16 }}>
               <div style={{ fontWeight:600, marginBottom:6 }}>Available Mark Sets</div>
-              <div style={{ display:'grid', gap:8 }}>
+              <div style={{ display:'grid', gap:8, maxHeight: 380, overflowY: 'auto' }}>
                 {boot.mark_sets.map(ms => (
                   <div key={ms.mark_set_id} style={{ border:'1px solid #ddd', borderRadius:6, padding:10, background:'#fff', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
                     <div>
@@ -317,21 +292,6 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
                   <div style={{ color:'#666', fontSize:13, padding:'6px 2px' }}>No mark sets yet.</div>
                 )}
               </div>
-            </div>
-
-            {/* Create new markset */}
-            <div style={{ marginTop:16, borderTop:'1px dashed #ddd', paddingTop:12 }}>
-              <div style={{ fontWeight:600, marginBottom:6 }}>Create New Mark Set</div>
-              <div style={{ display:'grid', gridTemplateColumns:'1fr auto', gap:8 }}>
-                <input placeholder="Label (e.g., QC – Dimensions)" value={newLabel} onChange={e => setNewLabel(e.target.value)} style={inp} />
-                <label style={{ display:'flex', alignItems:'center', gap:6, fontSize:13 }}>
-                  <input type="checkbox" checked={isMaster} onChange={e => setIsMaster(e.target.checked)} />
-                  Set as Master
-                </label>
-              </div>
-              <button onClick={handleCreateMarkset} disabled={creating} style={{ ...btnPrimary, marginTop:10 }}>
-                {creating ? 'Creating…' : 'Create & Open'}
-              </button>
             </div>
           </>
         )}
@@ -458,23 +418,38 @@ const smoothZoom = useCallback(
 
 
   const isDemo = searchParams?.get('demo') === '1';
+  const qProject = searchParams?.get('project_name') || '';
+  const qExtId = searchParams?.get('id') || '';
+  const qPartNumber = searchParams?.get('part_number') || '';
+  const qUser = searchParams?.get('user_mail') || '';
+  const qAssembly = searchParams?.get('assembly_drawing') || '';
+  const hasBootstrapKeys = !!(qProject && qExtId && qPartNumber && qAssembly);
   const pdfUrlParam = searchParams?.get('pdf_url') || '';
   const markSetIdParam = searchParams?.get('mark_set_id') || '';
+  // Show viewer if pdf_url is present; otherwise, if link has keys, show compact markset list
   useEffect(() => {
-    if (isDemo || pdfUrlParam) {
+    if (pdfUrlParam) {
       setShowSetup(false);
+    } else if (hasBootstrapKeys) {
+      setShowSetup(true);
+    } else {
+      setShowSetup(true);
     }
-  }, [isDemo, pdfUrlParam]);
+  }, [pdfUrlParam, hasBootstrapKeys]);
 
-  const handleSetupComplete = (url: string, setId: string) => {
-    const params = new URLSearchParams();
-    params.set('pdf_url', url);
-    if (setId) {
-      params.set('mark_set_id', setId);
-    }
-    const newUrl = `${window.location.pathname}?${params.toString()}`;
-    window.location.href = newUrl;
-  };
+
+const handleSetupComplete = (url: string, setId: string) => {
+  // save the current setup query so we can return to the mark-set list later
+  sessionStorage.setItem('viewerLastSetupParams', window.location.search.slice(1)); // drop '?'
+
+  const params = new URLSearchParams();
+  params.set('pdf_url', url);
+  if (setId) params.set('mark_set_id', setId);
+
+  const newUrl = `${window.location.pathname}?${params.toString()}`;
+  window.location.href = newUrl;
+};
+
 
   const rawPdfUrl = cleanPdfUrl(
     isDemo
@@ -902,10 +877,22 @@ const handleSubmit = useCallback(async () => {
     a.remove();
     URL.revokeObjectURL(url);
 
-    toast.success('✓ Report generated!');
-    setTimeout(() => {
-      window.location.href = '/';
-    }, 1500);
+toast.success('✓ Report generated!');
+setTimeout(() => {
+  // Go back to the mark-set list we started from
+  const qs = sessionStorage.getItem('viewerLastSetupParams');
+  if (qs) {
+    // add autoboot=1 so the list loads automatically
+    const sp = new URLSearchParams(qs);
+    sp.set('autoboot', '1');
+    window.location.href = `${window.location.pathname}?${sp.toString()}`;
+  } else {
+    // fallback: just open setup (user can bootstrap manually)
+    window.location.href = window.location.pathname;
+  }
+}, 1200);
+
+
   } catch (error) {
     console.error('Submit error:', error);
     toast.error('Failed to generate report');
@@ -1026,9 +1013,12 @@ const zoomOut = useCallback(() => {
     jumpToPage(pageNumber);
   }, [jumpToPage]);
 
-  if (showSetup) {
-    return <ViewerSetupScreen onStart={handleSetupComplete} />;
-  }
+if (showSetup) {
+  return <ViewerSetupScreen onStart={handleSetupComplete} />;
+}
+
+
+
 
   if (loading) {
     return (

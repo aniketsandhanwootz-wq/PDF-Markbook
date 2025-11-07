@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 
 type Mark = {
   mark_id?: string;
@@ -23,30 +23,37 @@ type MarkListProps = {
 
 export default function MarkList({ marks, currentIndex, onSelect }: MarkListProps) {
   const [searchQuery, setSearchQuery] = useState('');
+  const listRef = useRef<HTMLDivElement>(null);
 
   // Filter marks based on search query
   const filteredMarks = useMemo(() => {
     if (!searchQuery.trim()) return marks;
-    
     const query = searchQuery.toLowerCase();
     return marks.filter(mark =>
-  mark.name.toLowerCase().includes(query) ||
-  (mark.label?.toLowerCase() ?? '').includes(query) ||
-  `page ${mark.page_index + 1}`.includes(query)
-);
+      mark.name.toLowerCase().includes(query) ||
+      (mark.label?.toLowerCase() ?? '').includes(query) ||
+      `page ${mark.page_index + 1}`.includes(query)
+    );
   }, [marks, searchQuery]);
 
-  const handleClearSearch = () => {
-    setSearchQuery('');
-  };
+  // 🔽 Auto-scroll to the active item whenever selection changes (Task-3)
+  useEffect(() => {
+    const el = listRef.current?.querySelector('.mark-item.active') as HTMLElement | null;
+    if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }, [currentIndex, filteredMarks.length]);
+
+  const handleClearSearch = () => setSearchQuery('');
 
   return (
-    <div className="mark-list">
-      {/* Search Input */}
-      <div style={{ 
-        padding: '12px', 
+    <div className="mark-list" ref={listRef}>
+      {/* Sticky search header */}
+      <div style={{
+        position: 'sticky',
+        top: 0,
+        zIndex: 2,
+        padding: '12px',
         borderBottom: '1px solid #eee',
-        background: '#fafafa' 
+        background: '#fafafa'
       }}>
         <div style={{ position: 'relative' }}>
           <input
@@ -62,12 +69,8 @@ export default function MarkList({ marks, currentIndex, onSelect }: MarkListProp
               fontSize: '14px',
               outline: 'none'
             }}
-            onFocus={(e) => {
-              e.target.style.borderColor = '#1976d2';
-            }}
-            onBlur={(e) => {
-              e.target.style.borderColor = '#ddd';
-            }}
+            onFocus={(e) => { e.target.style.borderColor = '#1976d2'; }}
+            onBlur={(e) => { e.target.style.borderColor = '#ddd'; }}
           />
           {searchQuery && (
             <button
@@ -115,57 +118,55 @@ export default function MarkList({ marks, currentIndex, onSelect }: MarkListProp
       {/* Mark List */}
       <div className="mark-list-items">
         {filteredMarks.map((mark) => {
-  const originalIndex = marks.findIndex(m => m.mark_id === mark.mark_id);
-  const isActive = originalIndex === currentIndex; // ✅ add this
-  return (
-    <button
-  key={mark.mark_id || originalIndex}
-  className={`mark-item ${originalIndex === currentIndex ? 'active' : ''}`}
-  onClick={() => onSelect(originalIndex)}
->
-  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-    {/* ✅ Label badge from DB */}
-    <div
-  style={{
-    minWidth: 22,
-    height: 22,
-    borderRadius: '50%',
-    border: `2px solid ${isActive ? '#ffffff' : '#dddddd'}`, // ✅ white ring on blue
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontSize: 12,
-    fontWeight: 700,
-    background: '#ffffff',          // ✅ keep white pill
-    color: '#1976d2',               // ✅ force blue text so it shows on active row
-    lineHeight: 1
-  }}
-  title="Label"
->
-  {mark.label ?? '–'}
-</div>
+          const originalIndex = marks.findIndex(m => m.mark_id === mark.mark_id);
+          const isActive = originalIndex === currentIndex;
 
+          return (
+            <button
+              key={mark.mark_id || originalIndex}
+              className={`mark-item ${isActive ? 'active' : ''}`}
+              onClick={() => onSelect(originalIndex)}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div
+                  style={{
+                    minWidth: 22,
+                    height: 22,
+                    borderRadius: '50%',
+                    border: `2px solid ${isActive ? '#ffffff' : '#dddddd'}`,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: 12,
+                    fontWeight: 700,
+                    background: '#ffffff',
+                    color: '#1976d2',
+                    lineHeight: 1
+                  }}
+                  title="Label"
+                >
+                  {mark.label ?? '–'}
+                </div>
 
-    <div style={{ flex: 1, minWidth: 0 }}>
-      <div
-  className="mark-name"
-  style={{
-    whiteSpace: 'normal',
-    wordBreak: 'break-word',
-    overflowWrap: 'anywhere',
-    lineHeight: 1.25
-  }}
->
-  {mark.name}
-</div>
-
-      <div className="mark-page">Page {mark.page_index + 1}</div>
-    </div>
-  </div>
-</button>
-
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div
+                    className="mark-name"
+                    style={{
+                      whiteSpace: 'normal',
+                      wordBreak: 'break-word',
+                      overflowWrap: 'anywhere',
+                      lineHeight: 1.25
+                    }}
+                  >
+                    {mark.name}
+                  </div>
+                  <div className="mark-page">Page {mark.page_index + 1}</div>
+                </div>
+              </div>
+            </button>
           );
         })}
+
         {filteredMarks.length === 0 && (
           <div style={{
             padding: '32px 20px',

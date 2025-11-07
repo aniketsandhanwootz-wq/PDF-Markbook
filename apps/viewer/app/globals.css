@@ -582,3 +582,12 @@ body {
 /* If any sidebar container elsewhere caused horizontal scroll, force-hide it */
 .sidebar,
 .slide-sidebar__body { overflow-x: hidden; }
+
+/* Make sure mark list can always scroll and header sticks */
+.mark-list {
+  overflow-y: auto;
+  max-height: 100%;
+}
+.mark-list-items {
+  padding-bottom: 8px; /* breathing room under last item */
+}
