@@ -105,6 +105,7 @@ async def get_by_identifier(
 
         mark_sets = storage.list_mark_sets_by_document(doc["doc_id"])
         master_id = _master_mark_set_id(mark_sets)
+        counts = storage.count_marks_by_mark_set(doc["doc_id"]) if hasattr(storage, "count_marks_by_mark_set") else {}
 
         # minimal, viewer-friendly payload
         return {
@@ -125,8 +126,7 @@ async def get_by_identifier(
                     "created_by": ms.get("created_by", ""),
                     "created_at": ms.get("created_at", ""),
                     "updated_by": ms.get("updated_by", ""),
-                    # NEW: number of marks in this set
-                    "marks_count": len(storage.list_marks(ms.get("mark_set_id"))) if hasattr(storage, "list_marks") else 0,
+                    "marks_count": counts.get(ms.get("mark_set_id"), 0),
                 }
                 for ms in mark_sets
             ],
@@ -186,6 +186,7 @@ async def init_document(
       # 4) Return doc + its marksets
       mark_sets = storage.list_mark_sets_by_document(doc["doc_id"])
       master_id = _master_mark_set_id(mark_sets)
+      counts = storage.count_marks_by_mark_set(doc["doc_id"]) if hasattr(storage, "count_marks_by_mark_set") else {}
 
       return {
           "document": {
@@ -205,6 +206,7 @@ async def init_document(
                   "created_by": ms.get("created_by", ""),
                   "created_at": ms.get("created_at", ""),
                   "updated_by": ms.get("updated_by", ""),
+                  "marks_count": counts.get(ms.get("mark_set_id"), 0),
               }
               for ms in mark_sets
           ],
@@ -212,7 +214,6 @@ async def init_document(
           "mark_set_count": len(mark_sets),
           "status": "existing" if master_id or mark_sets else "new_or_empty"
       }
-
     except HTTPException:
       raise
     except Exception as e:

@@ -571,3 +571,71 @@ body {
   background: #e3f2fd;
   border-color: #1565c0;
 }
+/* Setup screen: scrollable mark-set list */
+.setup-marksets {
+  display: grid;
+  gap: 8px;
+  max-height: 340px;  /* adjust if you want more/less */
+  overflow: auto;
+  padding-right: 4px; /* keeps scrollbar from overlapping */
+}
+/* --- PDF Marker: sidebar sticky + scrolling (non-breaking overrides) --- */
+
+/* The whole sidebar should not scroll as one block; only the list items do */
+.sidebar{
+  overflow: hidden;            /* override any auto scrolling */
+}
+
+/* Keep the "Marks" row frozen */
+.sidebar-header{
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: #fafafa;         /* matches your existing header bg */
+  border-bottom: 1px solid #eee;
+}
+
+/* Make the list a column with a sticky head and a scrollable body */
+.mark-list{
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;            /* search + footer fixed; items will scroll */
+  padding: 8px;                /* preserves your spacing */
+}
+
+/* This is the search block at the top of the list */
+.mark-list-head{
+  position: sticky;
+  top: 0;                      /* sticks under .sidebar-header */
+  z-index: 4;
+  background: #fafafa;
+  border-bottom: 1px solid #eee;
+}
+
+/* The actual scrollable region containing the rows */
+.mark-list-items{
+  flex: 1;
+  min-height: 0;               /* critical for flex children to shrink */
+  overflow: auto;              /* only this area scrolls */
+  display: flex;
+  flex-direction: column;
+  gap: 8px;                    /* keeps your existing spacing */
+}
+
+/* Keep the Save button row visible */
+.sidebar-footer{
+  position: sticky;
+  bottom: 0;
+  z-index: 4;
+  background: #fafafa;
+  border-top: 1px solid #eee;
+}
+/* Ensure scrolling a mark item doesn't hide under the sticky header/search */
+.mark-list {
+  scroll-behavior: smooth;        /* smooth list scrolling */
+}
+
+.mark-item {
+  scroll-margin-top: 72px;        /* adjust if your sticky header is taller/shorter */
+  scroll-margin-bottom: 16px;
+}

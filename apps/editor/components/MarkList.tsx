@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 
 type Mark = {
   mark_id?: string;
@@ -38,20 +38,19 @@ export default function MarkList({
   const [editName, setEditName] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
 
+  // ✅ The real scroll container is .mark-list-items
+  const itemsRef = useRef<HTMLDivElement>(null);
+
   // Filter marks based on search query
   const filteredMarks = useMemo(() => {
     if (!searchQuery.trim()) return marks;
-    
-    const query = searchQuery.toLowerCase();
-    return marks.filter(mark => 
-      mark.name.toLowerCase().includes(query) ||
-      `page ${mark.page_index + 1}`.includes(query)
+    const q = searchQuery.toLowerCase();
+    return marks.filter(m =>
+      m.name.toLowerCase().includes(q) || `page ${m.page_index + 1}`.includes(q)
     );
   }, [marks, searchQuery]);
 
-  const handleClearSearch = () => {
-    setSearchQuery('');
-  };
+  const handleClearSearch = () => setSearchQuery('');
 
   const handleEditStart = (mark: Mark) => {
     setEditingId(mark.mark_id || null);
@@ -59,9 +58,7 @@ export default function MarkList({
   };
 
   const handleEditSave = (markId: string) => {
-    if (editName.trim()) {
-      onUpdate(markId, { name: editName.trim() });
-    }
+    if (editName.trim()) onUpdate(markId, { name: editName.trim() });
     setEditingId(null);
   };
 
@@ -70,14 +67,31 @@ export default function MarkList({
     setEditName('');
   };
 
+  // ✅ Auto-scroll the selected mark inside the items scroller
+  useEffect(() => {
+    if (!selectedMarkId) return;
+    const container = itemsRef.current;
+    if (!container) return;
+
+    // Wait for DOM paint after list changes (search/filter/selection)
+    const raf = requestAnimationFrame(() => {
+      const el = container.querySelector<HTMLElement>(`[data-mark-id="${selectedMarkId}"]`);
+      if (!el) return;
+
+      // With CSS: .mark-item { scroll-margin-top: 72px; } this avoids clipping under sticky head
+      el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
+
+    return () => cancelAnimationFrame(raf);
+  }, [selectedMarkId, filteredMarks.length, searchQuery]);
+
   return (
     <div className="mark-list">
-      {/* Search Input */}
-      <div style={{ 
-        padding: '12px', 
-        borderBottom: '1px solid #eee',
-        background: '#fafafa' 
-      }}>
+      {/* Search (sticky) */}
+      <div
+        className="mark-list-head"
+        style={{ padding: '12px', borderBottom: '1px solid #eee', background: '#fafafa' }}
+      >
         <div style={{ position: 'relative' }}>
           <input
             type="text"
@@ -92,12 +106,8 @@ export default function MarkList({
               fontSize: '14px',
               outline: 'none'
             }}
-            onFocus={(e) => {
-              e.target.style.borderColor = '#1976d2';
-            }}
-            onBlur={(e) => {
-              e.target.style.borderColor = '#ddd';
-            }}
+            onFocus={(e) => { e.currentTarget.style.borderColor = '#1976d2'; }}
+            onBlur={(e) => { e.currentTarget.style.borderColor = '#ddd'; }}
           />
           {searchQuery && (
             <button
@@ -126,12 +136,7 @@ export default function MarkList({
             </button>
           )}
         </div>
-        <div style={{
-          fontSize: '12px',
-          color: '#666',
-          marginTop: '8px',
-          fontWeight: '500'
-        }}>
+        <div style={{ fontSize: '12px', color: '#666', marginTop: '8px', fontWeight: 500 }}>
           {searchQuery ? (
             <>
               <span style={{ color: '#1976d2' }}>{filteredMarks.length}</span> of {marks.length} marks
@@ -142,8 +147,8 @@ export default function MarkList({
         </div>
       </div>
 
-      {/* Mark List */}
-      <div className="mark-list-items">
+      {/* Items (the ONLY scrollable area) */}
+      <div className="mark-list-items" ref={itemsRef}>
         {filteredMarks.map((mark) => {
           const originalIndex = marks.findIndex(m => m.mark_id === mark.mark_id);
           const isEditing = editingId === mark.mark_id;
@@ -153,16 +158,14 @@ export default function MarkList({
             <div
               key={mark.mark_id || originalIndex}
               className={`mark-item ${isSelected ? 'selected' : ''}`}
+              data-mark-id={mark.mark_id || `idx-${originalIndex}`}
             >
               {isEditing ? (
                 <div className="mark-edit">
                   <div style={{ marginBottom: '8px' }}>
-                    <label style={{ 
-                      fontSize: '11px', 
-                      color: '#666', 
-                      display: 'block',
-                      marginBottom: '4px' 
-                    }}>
+                    <label
+                      style={{ fontSize: '11px', color: '#666', display: 'block', marginBottom: '4px' }}
+                    >
                       Name
                     </label>
                     <input
@@ -178,50 +181,50 @@ export default function MarkList({
                     />
                   </div>
                   <div className="mark-edit-actions">
-                    <button onClick={() => handleEditSave(mark.mark_id!)} className="btn-sm">
-                      ✓
-                    </button>
-                    <button onClick={handleEditCancel} className="btn-sm">
-                      ✕
-                    </button>
+                    <button onClick={() => handleEditSave(mark.mark_id!)} className="btn-sm">✓</button>
+                    <button onClick={handleEditCancel} className="btn-sm">✕</button>
                   </div>
                 </div>
               ) : (
                 <>
                   <div className="mark-info" onClick={() => onSelect(mark)}>
-  <div className="mark-name">
-<span className="label-chip">{mark.label ?? ''}</span>
-<span className="mark-name-text">{mark.name}</span>
-  </div>
-  <div className="mark-page">
-    Page {mark.page_index + 1}
-    {mark.zoom_hint ? (
-      <span style={{
-        marginLeft: '8px',
-        fontSize: '11px',
-        background: '#e3f2fd',
-        color: '#1976d2',
-        padding: '2px 6px',
-        borderRadius: '3px',
-        fontWeight: '500'
-      }}>
-        🔍 {Math.round(mark.zoom_hint * 100)}%
-      </span>
-    ) : (
-      <span style={{
-        marginLeft: '8px',
-        fontSize: '11px',
-        background: '#f5f5f5',
-        color: '#666',
-        padding: '2px 6px',
-        borderRadius: '3px',
-        fontWeight: '500'
-      }}>
-        🔍 Auto
-      </span>
-    )}
-  </div>
-</div>
+                    <div className="mark-name">
+                      <span className="label-chip">{mark.label ?? ''}</span>
+                      <span className="mark-name-text">{mark.name}</span>
+                    </div>
+                    <div className="mark-page">
+                      Page {mark.page_index + 1}
+                      {mark.zoom_hint ? (
+                        <span
+                          style={{
+                            marginLeft: '8px',
+                            fontSize: '11px',
+                            background: '#e3f2fd',
+                            color: '#1976d2',
+                            padding: '2px 6px',
+                            borderRadius: '3px',
+                            fontWeight: 500
+                          }}
+                        >
+                          🔍 {Math.round(mark.zoom_hint * 100)}%
+                        </span>
+                      ) : (
+                        <span
+                          style={{
+                            marginLeft: '8px',
+                            fontSize: '11px',
+                            background: '#f5f5f5',
+                            color: '#666',
+                            padding: '2px 6px',
+                            borderRadius: '3px',
+                            fontWeight: 500
+                          }}
+                        >
+                          🔍 Auto
+                        </span>
+                      )}
+                    </div>
+                  </div>
 
                   <div className="mark-actions">
                     <button
@@ -229,58 +232,37 @@ export default function MarkList({
                       disabled={originalIndex === 0}
                       className="btn-icon"
                       title="Move up"
-                    >
-                      ▲
-                    </button>
+                    >▲</button>
                     <button
                       onClick={() => onReorder(mark.mark_id!, 'down')}
                       disabled={originalIndex === marks.length - 1}
                       className="btn-icon"
                       title="Move down"
-                    >
-                      ▼
-                    </button>
-                    <button
-                      onClick={() => handleEditStart(mark)}
-                      className="btn-icon"
-                      title="Edit"
-                    >
-                      ✎
-                    </button>
-                    <button
-                      onClick={() => onDuplicate(mark.mark_id!)}
-                      className="btn-icon"
-                      title="Duplicate"
-                    >
-                      ⎘
-                    </button>
-                    <button
-                      onClick={() => onDelete(mark.mark_id!)}
-                      className="btn-icon btn-danger"
-                      title="Delete"
-                    >
-                      🗑
-                    </button>
+                    >▼</button>
+                    <button onClick={() => handleEditStart(mark)} className="btn-icon" title="Edit">✎</button>
+                    <button onClick={() => onDuplicate(mark.mark_id!)} className="btn-icon" title="Duplicate">⎘</button>
+                    <button onClick={() => onDelete(mark.mark_id!)} className="btn-icon btn-danger" title="Delete">🗑</button>
                   </div>
                 </>
               )}
             </div>
           );
         })}
+
         {filteredMarks.length === 0 && (
-          <div style={{
-            padding: '32px 20px',
-            textAlign: 'center',
-            color: '#999',
-            fontSize: '14px'
-          }}>
+          <div
+            style={{
+              padding: '32px 20px',
+              textAlign: 'center',
+              color: '#999',
+              fontSize: '14px'
+            }}
+          >
             {searchQuery ? (
               <>
                 <div style={{ fontSize: '32px', marginBottom: '8px' }}>🔍</div>
                 <div>No marks found</div>
-                <div style={{ fontSize: '12px', marginTop: '4px' }}>
-                  Try a different search term
-                </div>
+                <div style={{ fontSize: '12px', marginTop: '4px' }}>Try a different search term</div>
               </>
             ) : (
               <>

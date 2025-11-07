@@ -528,7 +528,26 @@ class SheetsAdapter(StorageAdapter):
         """List all mark sets for a document."""
         mark_sets = self._get_all_dicts("mark_sets")
         return [ms for ms in mark_sets if ms.get("doc_id") == doc_id]
-    
+
+     # ---------- Fast mark counts (single pass over sheets) ----------
+    def count_marks_by_mark_set(self, doc_id: str) -> dict[str, int]:
+        """
+        Return {mark_set_id: count} for all mark sets belonging to doc_id.
+        Only two reads overall: mark_sets and marks.
+        """
+        # Collect mark_set_ids for this document
+        all_ms = self._get_all_dicts("mark_sets")
+        ms_ids = {ms["mark_set_id"] for ms in all_ms if ms.get("doc_id") == doc_id}
+
+        # Count marks by mark_set_id
+        counts: dict[str, int] = {ms_id: 0 for ms_id in ms_ids}
+        all_marks = self._get_all_dicts("marks")
+        for m in all_marks:
+            ms_id = m.get("mark_set_id")
+            if ms_id in counts:
+                counts[ms_id] += 1
+        return counts
+   
     def update_document(self, doc_id: str, updates: dict[str, Any]) -> None:
         """Update document fields."""
         row_idx = self._find_row_by_value("documents", "doc_id", doc_id)

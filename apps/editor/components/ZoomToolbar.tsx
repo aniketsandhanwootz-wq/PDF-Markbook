@@ -15,7 +15,10 @@ type ZoomToolbarProps = {
   currentPage?: number;
   totalPages?: number;
   onPageJump?: (page: number) => void;
-  onFinalize?: () => void; // Finalize & Download
+
+  // 🔁 was onFinalize; keep the prop name but clarify its purpose at call-site
+  onFinalize?: () => void;        // Download PDF
+  onSaveSubmit?: () => void;      // Save to backend, go back, show notice
 };
 
 export default function ZoomToolbar({
@@ -31,33 +34,25 @@ export default function ZoomToolbar({
   currentPage,
   totalPages,
   onPageJump,
-  onFinalize, // ✅ NEW
+  onFinalize,
+  onSaveSubmit,
 }: ZoomToolbarProps) {
   const [pageInput, setPageInput] = useState('');
 
   useEffect(() => {
-    if (currentPage) {
-      setPageInput(currentPage.toString());
-    }
+    if (currentPage) setPageInput(String(currentPage));
   }, [currentPage]);
 
   const handlePageInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value;
-    if (/^\d*$/.test(value)) {
-      setPageInput(value);
-    }
+    const v = e.target.value;
+    if (/^\d*$/.test(v)) setPageInput(v);
   };
 
   const handlePageJump = () => {
     if (!onPageJump || !totalPages) return;
-    
     const page = parseInt(pageInput);
-    if (!isNaN(page) && page >= 1 && page <= totalPages) {
-      onPageJump(page);
-    } else {
-      // Reset to current page if invalid
-      setPageInput(currentPage?.toString() || '1');
-    }
+    if (!isNaN(page) && page >= 1 && page <= totalPages) onPageJump(page);
+    else setPageInput(currentPage?.toString() || '1');
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -74,15 +69,13 @@ export default function ZoomToolbar({
 
   return (
     <div className="zoom-toolbar">
-      {/* Page Navigation Input */}
+      {/* Page Jump */}
       {onPageJump && totalPages && (
-        <div className="page-nav" style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px',
-          padding: '0 12px'
-        }}>
-          <span style={{ fontSize: '14px', color: '#666', fontWeight: '500' }}>Page</span>
+        <div
+          className="page-nav"
+          style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 12px' }}
+        >
+          <span style={{ fontSize: 14, color: '#666', fontWeight: 500 }}>Page</span>
           <input
             type="text"
             value={pageInput}
@@ -91,35 +84,59 @@ export default function ZoomToolbar({
             onBlur={handlePageJump}
             placeholder={currentPage?.toString() || '1'}
             style={{
-              width: '50px',
+              width: 50,
               padding: '6px 8px',
               border: '1px solid #ccc',
-              borderRadius: '4px',
+              borderRadius: 4,
               textAlign: 'center',
-              fontSize: '14px',
-              fontWeight: '500'
+              fontSize: 14,
+              fontWeight: 500,
             }}
             title="Jump to page (press Enter)"
           />
-          <span style={{ fontSize: '14px', color: '#666', fontWeight: '500' }}>/ {totalPages}</span>
+          <span style={{ fontSize: 14, color: '#666', fontWeight: 500 }}>/ {totalPages}</span>
         </div>
       )}
 
-      {/* Zoom Controls */}
+      {/* Zoom + Actions */}
       <div className="zoom-controls">
-  <button onClick={onZoomOut} className="toolbar-btn" title="Zoom out">−</button>
-  <span className="zoom-label">{Math.round(zoom * 100)}%</span>
-  <button onClick={onZoomIn} className="toolbar-btn" title="Zoom in">+</button>
-  <button onClick={onReset} className="toolbar-btn" title="Reset zoom (100%)">Reset</button>
-  <button onClick={onFit} className="toolbar-btn" title="Fit to width">Fit</button>
+        <button onClick={onZoomOut} className="toolbar-btn" title="Zoom out">
+          −
+        </button>
+        <span className="zoom-label">{Math.round(zoom * 100)}%</span>
+        <button onClick={onZoomIn} className="toolbar-btn" title="Zoom in">
+          +
+        </button>
+        <button onClick={onReset} className="toolbar-btn" title="Reset zoom (100%)">
+          Reset
+        </button>
+        <button onClick={onFit} className="toolbar-btn" title="Fit to width">
+          Fit
+        </button>
 
-  {onFinalize && (
-  <button onClick={onFinalize} className="toolbar-btn toolbar-primary" title="Final Submit">
-    Final Submit
-  </button>
-)}
-</div>
+        {/* Primary actions on the RIGHT */}
+        {onFinalize && (
+          <button
+            onClick={onFinalize}
+            className="toolbar-btn toolbar-primary"
+            title="Download PDF"
+            style={{ marginLeft: 8 }}
+          >
+            Download PDF
+          </button>
+        )}
 
+        {onSaveSubmit && (
+          <button
+            onClick={onSaveSubmit}
+            className="toolbar-btn"
+            title="Save marks, submit and go back"
+            style={{ marginLeft: 8, borderColor: '#2e7d32', color: '#2e7d32', fontWeight: 700 }}
+          >
+            Save &amp; Submit
+          </button>
+        )}
+      </div>
     </div>
   );
 }

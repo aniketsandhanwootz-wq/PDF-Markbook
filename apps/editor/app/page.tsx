@@ -156,10 +156,26 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string)
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string>('');
 
+  // Inline rename state
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState<string>('');
+
   // New markset modal-ish fields
   const [newLabel, setNewLabel] = useState('');
   const [isMaster, setIsMaster] = useState(false);
   const [creating, setCreating] = useState(false);
+
+  // one-time notice after Save & Submit
+  const [notice, setNotice] = useState<string>('');
+  useEffect(() => {
+    try {
+      const msg = localStorage.getItem('markset_notice');
+      if (msg) {
+        setNotice(msg);
+        localStorage.removeItem('markset_notice');
+      }
+    } catch {}
+  }, []);
 
   const runBootstrap = async () => {
     setErr('');
@@ -241,29 +257,128 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string)
     }
   };
 
+  const handleDuplicateMarkset = async (srcId: string, srcLabel: string) => {
+    try {
+      const tempLabel = `${srcLabel} (copy)`;
+      const res = await fetch(`${apiBase}/mark-sets/${srcId}/clone`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          new_label: tempLabel,
+          created_by: userMail || 'system',
+        }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const out = await res.json(); // { mark_set_id, label? }
+
+      // ⬇️ Inject new mark set locally (no re-bootstrap)
+      setBoot(prev => {
+        if (!prev) return prev;
+        const newMs = {
+          mark_set_id: out.mark_set_id,
+          label: tempLabel,
+          is_master: false,
+          is_active: false,
+          created_by: userMail || '',
+          created_at: new Date().toISOString(),
+          updated_by: userMail || '',
+          marks_count: 0, // safe default; true count appears on next real refresh
+        };
+        return { ...prev, mark_sets: [newMs, ...prev.mark_sets] };
+      });
+
+      // Inline rename the freshly added copy
+      setEditingId(out.mark_set_id);
+      setEditingName(tempLabel);
+    } catch (e) {
+      console.error(e);
+      setErr('Failed to duplicate mark set.');
+    }
+  };
+
+
+  const handleRenameMarkset = async (markSetId: string, currentLabel: string) => {
+    setEditingId(markSetId);
+    setEditingName(currentLabel);
+  };
+
+  const saveInlineRename = async () => {
+    if (!editingId) return;
+    const newLabel = editingName.trim();
+    if (!newLabel) return;
+
+    try {
+      const res = await fetch(`${apiBase}/mark-sets/${editingId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          label: newLabel,
+          updated_by: userMail || 'system',
+        }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+
+      await runBootstrap();
+      setEditingId(null);
+      setEditingName('');
+    } catch (e) {
+      console.error(e);
+      setErr('Failed to rename mark set.');
+    }
+  };
+
+  // 🔁 Auto-bootstrap on first load if URL already has keys + assembly_drawing
+  useEffect(() => {
+    const hasKeys = projectName && extId && partNumber;
+    const hasUrl  = !!assemblyDrawing; // backend will clean it
+    if (!boot && !loading && hasKeys && hasUrl) {
+      runBootstrap();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectName, extId, partNumber, assemblyDrawing]);
+
   // UI
   return (
     <div style={{ minHeight: '100vh', background: '#f5f5f5', padding: 20, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <div style={{ background: '#fff', width: '100%', maxWidth: 860, borderRadius: 8, boxShadow: '0 2px 12px rgba(0,0,0,0.1)', padding: 24 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 6 }}>PDF Mark Editor — Map Creation</h1>
         <p style={{ color: '#666', marginBottom: 18 }}>Enter keys → Bootstrap the document → Pick or create a mark set.</p>
+        {notice && (
+          <div
+            style={{
+              background: '#e8f5e9',
+              color: '#2e7d32',
+              padding: 10,
+              borderRadius: 6,
+              margin: '8px 0 12px',
+              border: '1px solid #c8e6c9'
+            }}
+          >
+            {notice}
+          </div>
+        )}
 
-        {/* Keys row */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 12, marginBottom: 12 }}>
-          <input placeholder="Project Name" value={projectName} onChange={e => setProjectName(e.target.value)} style={inp} />
-          <input placeholder="ID (Business ID)" value={extId} onChange={e => setExtId(e.target.value)} style={inp} />
-          <input placeholder="Part Number" value={partNumber} onChange={e => setPartNumber(e.target.value)} style={inp} />
-          <input placeholder="Your Email (optional)" value={userMail} onChange={e => setUserMail(e.target.value)} style={inp} />
-        </div>
+          {/* Keys + URL + errors are ONLY visible before bootstrap */}
+        {!boot && (
+          <>
+            {/* Keys row */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 12, marginBottom: 12 }}>
+              <input placeholder="Project Name" value={projectName} onChange={e => setProjectName(e.target.value)} style={inp} />
+              <input placeholder="ID (Business ID)" value={extId} onChange={e => setExtId(e.target.value)} style={inp} />
+              <input placeholder="Part Number" value={partNumber} onChange={e => setPartNumber(e.target.value)} style={inp} />
+              <input placeholder="Your Email (optional)" value={userMail} onChange={e => setUserMail(e.target.value)} style={inp} />
+            </div>
 
-        <input
-          placeholder="assembly_drawing / PDF URL (Cloudinary/Glide fine)"
-          value={assemblyDrawing}
-          onChange={e => setAssemblyDrawing(e.target.value)}
-          style={{ ...inp, width: '100%', marginBottom: 12 }}
-        />
+            <input
+              placeholder="assembly_drawing / PDF URL (Cloudinary/Glide fine)"
+              value={assemblyDrawing}
+              onChange={e => setAssemblyDrawing(e.target.value)}
+              style={{ ...inp, width: '100%', marginBottom: 12 }}
+            />
 
-        {err && <div style={{ background:'#ffebee', color:'#c62828', padding:10, borderRadius:4, marginBottom:12 }}>{err}</div>}
+            {err && <div style={{ background:'#ffebee', color:'#c62828', padding:10, borderRadius:4, marginBottom:12 }}>{err}</div>}
+          </>
+        )}
 
         {!boot ? (
           <button onClick={runBootstrap} disabled={loading} style={btnPrimary}>
@@ -286,18 +401,68 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string)
             {/* Markset picker */}
             <div style={{ marginTop:16 }}>
               <div style={{ fontWeight:600, marginBottom:6 }}>Available Mark Sets</div>
-              <div style={{ display:'grid', gap:8 }}>
-                {boot.mark_sets.map(ms => (
-                  <div key={ms.mark_set_id} style={{ border:'1px solid #ddd', borderRadius:6, padding:10, background:'#fff', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
-                    <div>
-                      <div style={{ fontWeight:600 }}>{ms.label}{ms.is_master ? '  ⭐' : ''}</div>
-                      <div style={{ color:'#666', fontSize:12 }}>{(ms.marks_count ?? 0)} marks</div>
-                    </div>
-                    <button onClick={() => handleOpenMarkset(ms.mark_set_id)} style={btn}>
-                      Open
-                    </button>
-                  </div>
-                ))}
+
+              {/* Scrollable list */}
+              <div style={{ display:'grid', gap:8, maxHeight: 340, overflow: 'auto', paddingRight: 4 }}>
+                {boot.mark_sets.map(ms => {
+  const isEditing = editingId === ms.mark_set_id;
+  return (
+    <div
+      key={ms.mark_set_id}
+      style={{
+        border:'1px solid #ddd',
+        borderRadius:6,
+        padding:10,
+        background:'#fff',
+        display:'flex',
+        alignItems:'center',
+        justifyContent:'space-between',
+        gap:8
+      }}
+    >
+      <div>
+        {isEditing ? (
+          <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+            <input
+              value={editingName}
+              onChange={e => setEditingName(e.target.value)}
+              style={{ ...inp, padding:'6px 8px', fontSize:13 }}
+              autoFocus
+            />
+            <button style={btn} onClick={saveInlineRename}>Save</button>
+            <button
+              style={btn}
+              onClick={() => { setEditingId(null); setEditingName(''); }}
+            >
+              Cancel
+            </button>
+          </div>
+        ) : (
+          <div style={{ fontWeight:600 }}>
+            {ms.label}{ms.is_master ? ' ⭐' : ''}
+          </div>
+        )}
+        <div style={{ color:'#666', fontSize:12 }}>{(ms.marks_count ?? 0)} marks</div>
+      </div>
+
+      {!isEditing && (
+        <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+          <button onClick={() => handleOpenMarkset(ms.mark_set_id)} style={btn}>
+            Open
+          </button>
+          <button onClick={() => handleDuplicateMarkset(ms.mark_set_id, ms.label)} style={btn}>
+            Duplicate
+          </button>
+          <button onClick={() => handleRenameMarkset(ms.mark_set_id, ms.label)} style={btn}>
+            Rename
+          </button>
+        </div>
+      )}
+    </div>
+  );
+})}
+
+
                 {boot.mark_sets.length === 0 && (
                   <div style={{ color:'#666', fontSize:13, padding:'6px 2px' }}>No mark sets yet.</div>
                 )}
@@ -651,39 +816,32 @@ const navigateToMark = useCallback((mark: Mark) => {
   }, [marks, isDemo, addToast]);
 
   // ✅ NEW: Check for duplicate names and overlapping areas (client-side only - NO API calls)
-  const checkDuplicates = useCallback((name: string, pageIndex: number, nx: number, ny: number, nw: number, nh: number): string | null => {
-    // Check for duplicate names
-    const duplicateName = marks.find(m => m.name.toLowerCase() === name.toLowerCase());
-    if (duplicateName) {
-      return `⚠️ A mark named "${name}" already exists. Continue anyway?`;
-    }
+// Allow duplicate names; only warn (optionally) on heavy overlap
+const checkDuplicates = useCallback(
+  (name: string, pageIndex: number, nx: number, ny: number, nw: number, nh: number): string | null => {
+    // ✅ No duplicate-name check anymore
 
-    // Check for overlapping marks on the same page
+    // (Optional) keep overlap warning; return null if you want zero popups ever
     const marksOnSamePage = marks.filter(m => m.page_index === pageIndex);
-    
-    for (const existingMark of marksOnSamePage) {
-      // Calculate overlap
-      const x1 = Math.max(nx, existingMark.nx);
-      const y1 = Math.max(ny, existingMark.ny);
-      const x2 = Math.min(nx + nw, existingMark.nx + existingMark.nw);
-      const y2 = Math.min(ny + nh, existingMark.ny + existingMark.nh);
 
-      // Check if there's overlap
+    for (const existing of marksOnSamePage) {
+      const x1 = Math.max(nx, existing.nx);
+      const y1 = Math.max(ny, existing.ny);
+      const x2 = Math.min(nx + nw, existing.nx + existing.nw);
+      const y2 = Math.min(ny + nh, existing.ny + existing.nh);
       if (x1 < x2 && y1 < y2) {
         const overlapArea = (x2 - x1) * (y2 - y1);
-        const mark1Area = nw * nh;
-        const mark2Area = existingMark.nw * existingMark.nh;
-        const overlapPercentage = (overlapArea / Math.min(mark1Area, mark2Area)) * 100;
-
-        // If more than 30% overlap, warn user
-        if (overlapPercentage > 30) {
-          return `⚠️ This mark overlaps ${Math.round(overlapPercentage)}% with "${existingMark.name}". Continue anyway?`;
+        const overlapPct = (overlapArea / Math.min(nw * nh, existing.nw * existing.nh)) * 100;
+        if (overlapPct > 30) {
+          return `⚠️ This mark overlaps ${Math.round(overlapPct)}% with "${existing.name}". Continue anyway?`;
         }
       }
     }
-
-    return null; // No duplicates found
-  }, [marks]);
+    return null; // no warning -> no confirm
+  },
+  [marks]
+);
+// If you want no popups at all (even for overlap) const checkDuplicates = useCallback(() => null, []);
 
 const createMark = useCallback((name: string) => {
   if (!pendingMark || !pdf) return;
@@ -1177,16 +1335,28 @@ const handleSearchResult = useCallback((pageNumber: number, highlights: any[]) =
 
       <div className="main-content">
         <ZoomToolbar
-  zoom={zoom}
-  onZoomIn={zoomIn}
-  onZoomOut={zoomOut}
-  onReset={resetZoom}
-  onFit={fitToWidthZoom}
-  currentPage={currentPage}
-  totalPages={numPages}
-  onPageJump={jumpToPage}
-  onFinalize={finalizeAndDownload}
-/>
+      zoom={zoom}
+      onZoomIn={zoomIn}
+      onZoomOut={zoomOut}
+      onReset={resetZoom}
+      onFit={fitToWidthZoom}
+      currentPage={currentPage}
+      totalPages={numPages}
+      onPageJump={jumpToPage}
+      // ⬇️ rename intent: this still uses the same prop name from toolbar
+      onFinalize={finalizeAndDownload}
+      onSaveSubmit={async () => {
+        // 1) save marks
+        await saveMarks();
+        // 2) stash a notice for the setup screen and navigate back
+        try {
+          localStorage.setItem('markset_notice', '✅ Mark set created.');
+        } catch {}
+        // 3) go back to previous screen
+        window.history.back();
+      }}
+    />
+
 
 
         <div className="pdf-surface-wrap" ref={containerRef} style={{ touchAction: 'pan-y pan-x' }}>
