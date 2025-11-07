@@ -11,4 +11,4 @@ services:
     envVars:
       - key: PORT
         value: "8000"
-      # Add your own env vars here (SHEETS spreadsheet id, etc.)
+

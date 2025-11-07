@@ -36,6 +36,7 @@ from fastapi.responses import StreamingResponse
 from typing import Dict
 from core.report_pdf import generate_report_pdf  # NEW
 import io
+from adapters.sheets import HEADERS as SHEETS_HEADERS
 
 # ========== NEW: Request Context for Tracing ==========
 request_id_var = contextvars.ContextVar('request_id', default=None)
@@ -420,35 +421,17 @@ def storage_replace_marks(mark_set_id: str, marks: List[Mark]) -> int:
                 "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
             })
 
-        # Get all existing marks
-        all_marks = storage_adapter._get_all_dicts("marks")
-        existing_marks_for_set = [m for m in all_marks if m.get("mark_set_id") == mark_set_id]
-        deleted_count = len(existing_marks_for_set)
+        # ---- Always use the canonical columns for 'marks' (drop legacy user columns) ----
+        canonical_header = SHEETS_HEADERS["marks"][:]  # from adapters.sheets.HEADERS
 
-        # ---- Preserve REAL header & submission columns ----
-        current_header = storage_adapter.ws["marks"].row_values(1)
-        if not current_header:
-            # fall back to the adapter's canonical header (already includes submission cols)
-            current_header = storage_adapter.ws["marks"].get_values("1:1")[0] if storage_adapter.ws["marks"].get_values("1:1") else [
-                "mark_id","mark_set_id","page_id","order_index","name","label",
-                "nx","ny","nw","nh","zoom_hint","padding_pct","anchor",
-                "user_value","submitted_at","submitted_by"
-            ]
-
-        # Make sure the 3 extra columns exist
-        for extra in ["user_value","submitted_at","submitted_by"]:
-            if extra not in current_header:
-                current_header.append(extra)
-
-        # Keep marks from other mark_sets (preserve ALL columns)
-        filtered_rows = [current_header]
+        # Keep rows for other mark_sets but only with canonical columns
+        filtered_rows = [canonical_header]
         for m in all_marks:
             if m.get("mark_set_id") == mark_set_id:
                 continue
-            row = [m.get(col, "") for col in current_header]
-            filtered_rows.append(row)
+            filtered_rows.append([m.get(col, "") for col in canonical_header])
 
-        # Add new marks for this mark_set (submission columns blank)
+        # Add new marks for this mark_set (canonical columns only)
         for mark in marks:
             mark_id = mark.mark_id if (mark.mark_id and not mark.mark_id.startswith('temp-')) else str(uuid.uuid4())
             page_id = page_index_to_id.get(mark.page_index)
@@ -467,16 +450,14 @@ def storage_replace_marks(mark_set_id: str, marks: List[Mark]) -> int:
                 "zoom_hint": (mark.zoom_hint if mark.zoom_hint is not None else ""),
                 "padding_pct": 0.1,
                 "anchor": "auto",
-                "user_value": "",
-                "submitted_at": "",
-                "submitted_by": "",
             }
-            filtered_rows.append([base.get(col, "") for col in current_header])
+            filtered_rows.append([base.get(col, "") for col in canonical_header])
             logger.info(f"Added mark '{mark.name}' with ID {mark_id} on page {mark.page_index}")
 
-        # Write everything back to the marks sheet
+        # Overwrite the sheet with canonical header + rows
         storage_adapter.ws["marks"].clear()
         storage_adapter.ws["marks"].update('A1', filtered_rows)
+
 
         # Clear caches
         storage_adapter._doc_cache.pop(doc_id, None)
@@ -1158,9 +1139,6 @@ app.include_router(mark_sets_master_router.router)
 
 from routers import viewer as viewer_router
 app.include_router(viewer_router.router)
-
-from routers import reports as reports_router
-app.include_router(reports_router.router)
 
 
 # ========== End of Submissions ==========
