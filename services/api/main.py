@@ -420,6 +420,7 @@ def storage_replace_marks(mark_set_id: str, marks: List[Mark]) -> int:
                 "page_count": computed_page_count,
                 "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
             })
+        all_marks = storage_adapter._get_all_dicts("marks")
 
         # ---- Always use the canonical columns for 'marks' (drop legacy user columns) ----
         canonical_header = SHEETS_HEADERS["marks"][:]  # from adapters.sheets.HEADERS
