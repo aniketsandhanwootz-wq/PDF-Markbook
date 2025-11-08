@@ -19,9 +19,11 @@ type MarkListProps = {
   marks: Mark[];
   currentIndex: number;
   onSelect: (index: number) => void;
+  entries: Record<string, string>;   // ✅ NEW — for filled/unfilled coloring
 };
 
-export default function MarkList({ marks, currentIndex, onSelect }: MarkListProps) {
+
+export default function MarkList({ marks, currentIndex, onSelect, entries }: MarkListProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -121,50 +123,75 @@ export default function MarkList({ marks, currentIndex, onSelect }: MarkListProp
           const originalIndex = marks.findIndex(m => m.mark_id === mark.mark_id);
           const isActive = originalIndex === currentIndex;
 
-          return (
-            <button
-              key={mark.mark_id || originalIndex}
-              className={`mark-item ${isActive ? 'active' : ''}`}
-              onClick={() => onSelect(originalIndex)}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <div
-                  style={{
-                    minWidth: 22,
-                    height: 22,
-                    borderRadius: '50%',
-                    border: `2px solid ${isActive ? '#ffffff' : '#dddddd'}`,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontSize: 12,
-                    fontWeight: 700,
-                    background: '#ffffff',
-                    color: '#1976d2',
-                    lineHeight: 1
-                  }}
-                  title="Label"
-                >
-                  {mark.label ?? '–'}
-                </div>
+ return (
+  <button
+    key={mark.mark_id || originalIndex}
+    className={`mark-item ${isActive ? 'active' : ''}`}
+    onClick={() => onSelect(originalIndex)}
+    style={{
+      display: 'block',
+      width: '100%',
+      textAlign: 'left',
+      padding: '10px 12px',
+      marginBottom: 6,
+      borderRadius: 8,
+      background: entries[mark.mark_id || '']?.trim()
+        ? '#f1f8e9'  // ✅ green (filled)
+        : '#ffebee', // ❌ red (missing)
+      border: entries[mark.mark_id || '']?.trim()
+        ? '2px solid #c5e1a5'
+        : '2px solid #ffcdd2',
+      boxShadow: isActive ? 'inset 0 0 0 2px #1976d2' : 'none', // keep active blue
+      cursor: 'pointer',
+      transition: 'transform 100ms ease, box-shadow 100ms ease',
+    }}
+    onMouseDown={(e) => { (e.currentTarget.style.transform = 'scale(0.99)'); }}
+    onMouseUp={(e) => { (e.currentTarget.style.transform = 'scale(1)'); }}
+    onMouseLeave={(e) => { (e.currentTarget.style.transform = 'scale(1)'); }}
+  >
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+      <div
+        style={{
+          minWidth: 24,
+          height: 24,
+          borderRadius: '50%',
+          border: '2px solid #1976d2',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: 12,
+          fontWeight: 700,
+          background: '#fff',
+          color: '#1976d2',
+          flexShrink: 0,
+        }}
+        title="Label"
+      >
+        {mark.label ?? '–'}
+      </div>
 
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div
-                    className="mark-name"
-                    style={{
-                      whiteSpace: 'normal',
-                      wordBreak: 'break-word',
-                      overflowWrap: 'anywhere',
-                      lineHeight: 1.25
-                    }}
-                  >
-                    {mark.name}
-                  </div>
-                  <div className="mark-page">Page {mark.page_index + 1}</div>
-                </div>
-              </div>
-            </button>
-          );
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div
+          style={{
+            fontSize: 14,
+            fontWeight: 600,
+            color: '#333',
+            marginBottom: 4,
+            whiteSpace: 'normal',
+            wordBreak: 'break-word',
+            overflowWrap: 'anywhere',
+            lineHeight: 1.25,
+          }}
+        >
+          {mark.name}
+        </div>
+        <div style={{ fontSize: 12, color: '#666' }}>
+          Page {mark.page_index + 1}
+        </div>
+      </div>
+    </div>
+  </button>
+);
         })}
 
         {filteredMarks.length === 0 && (

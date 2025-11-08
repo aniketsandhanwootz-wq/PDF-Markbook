@@ -37,6 +37,7 @@ from typing import Dict
 from core.report_pdf import generate_report_pdf  # NEW
 import io
 from adapters.sheets import HEADERS as SHEETS_HEADERS
+from routers import reports, reports_excel
 
 # ========== NEW: Request Context for Tracing ==========
 request_id_var = contextvars.ContextVar('request_id', default=None)
@@ -1141,6 +1142,8 @@ app.include_router(mark_sets_master_router.router)
 from routers import viewer as viewer_router
 app.include_router(viewer_router.router)
 
+from routers.reports_excel import router as reports_excel_router
+app.include_router(reports_excel_router)
 
 # ========== End of Submissions ==========
 

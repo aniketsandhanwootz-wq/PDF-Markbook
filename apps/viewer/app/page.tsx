@@ -848,8 +848,8 @@ const handleSubmit = useCallback(async () => {
   setIsSubmitting(true);
 
   try {
-    // Call backend to save entries (Sheets) + build the PDF report
-    const response = await fetch(`${apiBase}/mark-sets/${markSetId}/submissions/report`, {
+    // 1️⃣ Call backend to save entries (Sheets) + build the PDF report
+    const pdfResponse = await fetch(`${apiBase}/mark-sets/${markSetId}/submissions/report`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -861,46 +861,72 @@ const handleSubmit = useCallback(async () => {
       }),
     });
 
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`Report API failed: ${response.status} ${text}`);
+    if (!pdfResponse.ok) {
+      const text = await pdfResponse.text();
+      throw new Error(`Report API failed: ${pdfResponse.status} ${text}`);
     }
 
     // Download the returned PDF
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `submission_${new Date().toISOString().replace(/[:.]/g, '-')}.pdf`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    const pdfBlob = await pdfResponse.blob();
+    const pdfUrlObj = URL.createObjectURL(pdfBlob);
+    const pdfLink = document.createElement('a');
+    pdfLink.href = pdfUrlObj;
+    pdfLink.download = `submission_${new Date().toISOString().replace(/[:.]/g, '-')}.pdf`;
+    document.body.appendChild(pdfLink);
+    pdfLink.click();
+    pdfLink.remove();
+    URL.revokeObjectURL(pdfUrlObj);
 
-toast.success('✓ Report generated!');
-setTimeout(() => {
-  // Go back to the mark-set list we started from
-  const qs = sessionStorage.getItem('viewerLastSetupParams');
-  if (qs) {
-    // add autoboot=1 so the list loads automatically
-    const sp = new URLSearchParams(qs);
-    sp.set('autoboot', '1');
-    window.location.href = `${window.location.pathname}?${sp.toString()}`;
-  } else {
-    // fallback: just open setup (user can bootstrap manually)
-    window.location.href = window.location.pathname;
-  }
-}, 1200);
+    // 2️⃣ Call new Excel report endpoint right after PDF
+    const excelResponse = await fetch(`${apiBase}/reports-excel/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        mark_set_id: markSetId,
+        entries,
+        pdf_url: rawPdfUrl,
+        user_email: 'viewer_user',
+        padding_pct: 0.25,
+      }),
+    });
 
+    if (excelResponse.ok) {
+      const excelBlob = await excelResponse.blob();
+      const excelUrl = URL.createObjectURL(excelBlob);
+      const excelLink = document.createElement('a');
+      excelLink.href = excelUrl;
+      excelLink.download = `submission_${new Date().toISOString().replace(/[:.]/g, '-')}.xlsx`;
+      document.body.appendChild(excelLink);
+      excelLink.click();
+      excelLink.remove();
+      URL.revokeObjectURL(excelUrl);
+      toast.success('✓ Excel downloaded!');
+    } else {
+      console.warn('Excel generation failed (skipped).');
+    }
+
+    // ✅ success toast
+    toast.success('✓ Reports generated!');
+
+    // 3️⃣ Return to markset list
+    setTimeout(() => {
+      const qs = sessionStorage.getItem('viewerLastSetupParams');
+      if (qs) {
+        const sp = new URLSearchParams(qs);
+        sp.set('autoboot', '1');
+        window.location.href = `${window.location.pathname}?${sp.toString()}`;
+      } else {
+        window.location.href = window.location.pathname;
+      }
+    }, 1500);
 
   } catch (error) {
     console.error('Submit error:', error);
-    toast.error('Failed to generate report');
+    toast.error('Failed to generate reports');
   } finally {
     setIsSubmitting(false);
   }
 }, [markSetId, entries, apiBase, rawPdfUrl]);
-
 
   const swipeHandlers = useSwipeable({
   onSwipedLeft: () => {
@@ -1091,15 +1117,16 @@ if (showReview) {
   title="Marks"
 >
   <MarkList
-    marks={marks}
-    currentIndex={currentMarkIndex}
-    onSelect={(index) => {
-      setCurrentMarkIndex(index);
-      setSidebarOpen(false);
-      // allow layout to settle before centering
-      setTimeout(() => selectFromList(index), 80);
-    }}
-  />
+  marks={marks}
+  currentIndex={currentMarkIndex}
+  entries={entries}                // ✅ ADD THIS LINE
+  onSelect={(index) => {
+    setCurrentMarkIndex(index);
+    setSidebarOpen(false);
+    setTimeout(() => selectFromList(index), 80);
+  }}
+/>
+
 </SlideSidebar>
 
 
@@ -1200,15 +1227,16 @@ return (
         onClose={() => setSidebarOpen(false)}
         title="Marks"
       >
-        <MarkList
-          marks={marks}
-          currentIndex={currentMarkIndex}
-          onSelect={(index) => {
-            setCurrentMarkIndex(index);
-            setSidebarOpen(false);
-            setTimeout(() => selectFromList(index), 0);
-          }}
-        />
+ <MarkList
+  marks={marks}
+  currentIndex={currentMarkIndex}
+  entries={entries}                // ✅ ADD THIS LINE
+  onSelect={(index) => {
+    setCurrentMarkIndex(index);
+    setSidebarOpen(false);
+    setTimeout(() => selectFromList(index), 80);
+  }}
+/>
       </SlideSidebar>
     )}
 
