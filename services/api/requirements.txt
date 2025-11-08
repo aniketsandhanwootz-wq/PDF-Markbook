@@ -13,3 +13,4 @@ pypdfium2>=4.27,<5
 Pillow>=9.2
 fpdf2>=2.7.8
 openpyxl
+xlsxwriter

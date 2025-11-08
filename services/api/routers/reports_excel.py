@@ -1,6 +1,5 @@
 # services/api/routers/reports_excel.py
 from __future__ import annotations
-
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from typing import Dict, Optional
@@ -9,14 +8,11 @@ import io
 
 from core.report_excel import generate_report_excel
 
-
 def get_storage():
     from main import get_storage_adapter, get_settings
     return get_storage_adapter(get_settings())
 
-
 router = APIRouter(prefix="/reports-excel", tags=["reports-excel"])
-
 
 class ExcelReportBody(BaseModel):
     mark_set_id: str = Field(..., min_length=8)
@@ -24,10 +20,10 @@ class ExcelReportBody(BaseModel):
     pdf_url: Optional[str] = None
     user_email: Optional[str] = None
     padding_pct: float = 0.25
-
+    logo_url: Optional[str] = None  # allow override if needed
 
 @router.post("/generate")
-async def generate_excel_report(body: ExcelReportBody, storage=Depends(get_storage)):
+async def generate_excel_report(body: ExcelReportBody, storage = Depends(get_storage)):
     # Resolve mark set and document
     ms_all = storage._get_all_dicts("mark_sets")
     ms = next((x for x in ms_all if x.get("mark_set_id") == body.mark_set_id), None)
@@ -45,21 +41,24 @@ async def generate_excel_report(body: ExcelReportBody, storage=Depends(get_stora
     marks = storage.list_marks(body.mark_set_id)
     entries = body.entries or {}
 
-    # Generate .xlsm (macro-enabled)
-    excel_bytes = await generate_report_excel(
-        pdf_url=pdf_url,
-        marks=marks,
-        entries=entries,
-        user_email=body.user_email,
-        mark_set_id=body.mark_set_id,
-        mark_set_label=ms.get("label", ""),
-        part_number=doc.get("part_number", ""),
-        padding_pct=body.padding_pct,
-    )
+    try:
+        excel_bytes = await generate_report_excel(
+            pdf_url=pdf_url,
+            marks=marks,
+            entries=entries,
+            user_email=body.user_email,
+            mark_set_id=body.mark_set_id,
+            mark_set_label=ms.get("label", ""),
+            part_number=doc.get("part_number", ""),
+            padding_pct=body.padding_pct,
+            logo_url=body.logo_url or "https://res.cloudinary.com/dbwg6zz3l/image/upload/v1753101276/Black_Blue_ctiycp.png",
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"EXCEL_BUILD_FAILED: {e}")
 
-    fname = f"inspection_{body.mark_set_id}.xlsm"
+    fname = f"submission_{body.mark_set_id}.xlsx"
     return StreamingResponse(
         io.BytesIO(excel_bytes),
-        media_type="application/vnd.ms-excel.sheet.macroEnabled.12",
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{fname}"'}
     )
