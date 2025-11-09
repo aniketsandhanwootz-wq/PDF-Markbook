@@ -439,17 +439,19 @@ const smoothZoom = useCallback(
 
 
 const handleSetupComplete = (url: string, setId: string) => {
-  // save the current setup query so we can return to the mark-set list later
-  sessionStorage.setItem('viewerLastSetupParams', window.location.search.slice(1)); // drop '?'
+  const prevQs = sessionStorage.getItem('viewerLastSetupParams')
+    || window.location.search.slice(1); // drop '?'
+  const params = new URLSearchParams(prevQs);
 
-  const params = new URLSearchParams();
+  // keep existing bootstrap params (project_name, id, part_number, user_mail, assembly_drawing)
   params.set('pdf_url', url);
   if (setId) params.set('mark_set_id', setId);
 
+  // persist and navigate
+  sessionStorage.setItem('viewerLastSetupParams', params.toString());
   const newUrl = `${window.location.pathname}?${params.toString()}`;
   window.location.href = newUrl;
 };
-
 
   const rawPdfUrl = cleanPdfUrl(
     isDemo
@@ -848,85 +850,86 @@ const handleSubmit = useCallback(async () => {
   setIsSubmitting(true);
 
   try {
-    // 1️⃣ Call backend to save entries (Sheets) + build the PDF report
-    const pdfResponse = await fetch(`${apiBase}/mark-sets/${markSetId}/submissions/report`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        entries,
-        pdf_url: rawPdfUrl,        // send original URL so backend can fetch
-        padding_pct: 0.25,
-        title: 'Markbook Submission',
-        author: 'PDF Viewer',
-      }),
-    });
-
-    if (!pdfResponse.ok) {
-      const text = await pdfResponse.text();
-      throw new Error(`Report API failed: ${pdfResponse.status} ${text}`);
+    // ✅ FIX: Get actual email from query params (user_mail)
+    const userEmail = searchParams?.get('user_mail') || qUser || null;
+    
+    // Validate email format if provided
+    if (userEmail && !userEmail.includes('@')) {
+      console.warn('Invalid email format, skipping email send');
     }
 
-    // Download the returned PDF
-    const pdfBlob = await pdfResponse.blob();
-    const pdfUrlObj = URL.createObjectURL(pdfBlob);
-    const pdfLink = document.createElement('a');
-    pdfLink.href = pdfUrlObj;
-    pdfLink.download = `submission_${new Date().toISOString().replace(/[:.]/g, '-')}.pdf`;
-    document.body.appendChild(pdfLink);
-    pdfLink.click();
-    pdfLink.remove();
-    URL.revokeObjectURL(pdfUrlObj);
+    console.log('📧 Submitting with email:', userEmail);
 
-    // 2️⃣ Call new Excel report endpoint right after PDF
-    const excelResponse = await fetch(`${apiBase}/reports-excel/generate`, {
+    // Call bundle endpoint (generates PDF + Excel + ZIP)
+    const response = await fetch(`${apiBase}/reports/generate-bundle`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         mark_set_id: markSetId,
         entries,
         pdf_url: rawPdfUrl,
-        user_email: 'viewer_user',
+        user_email: userEmail,  // ✅ Now sends actual email or null
         padding_pct: 0.25,
+        office_variant: 'o365',
       }),
     });
 
-    if (excelResponse.ok) {
-      const excelBlob = await excelResponse.blob();
-      const excelUrl = URL.createObjectURL(excelBlob);
-      const excelLink = document.createElement('a');
-      excelLink.href = excelUrl;
-      excelLink.download = `submission_${new Date().toISOString().replace(/[:.]/g, '-')}.xlsx`;
-      document.body.appendChild(excelLink);
-      excelLink.click();
-      excelLink.remove();
-      URL.revokeObjectURL(excelUrl);
-      toast.success('✓ Excel downloaded!');
-    } else {
-      console.warn('Excel generation failed (skipped).');
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Bundle generation failed: ${response.status} ${text}`);
     }
 
-    // ✅ success toast
-    toast.success('✓ Reports generated!');
+    // Check email status from header
+    const emailStatus = response.headers.get('X-Email-Status');
+    
+    // Download ZIP
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `submission_${markSetId}.zip`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
 
-    // 3️⃣ Return to markset list
-    setTimeout(() => {
-      const qs = sessionStorage.getItem('viewerLastSetupParams');
-      if (qs) {
-        const sp = new URLSearchParams(qs);
-        sp.set('autoboot', '1');
-        window.location.href = `${window.location.pathname}?${sp.toString()}`;
-      } else {
-        window.location.href = window.location.pathname;
-      }
-    }, 1500);
+    // Success message based on email status
+    if (emailStatus === 'queued' && userEmail) {
+      toast.success(`✓ Report downloaded! Email sent to ${userEmail}`, {
+        duration: 4000,
+      });
+    } else if (!userEmail) {
+      toast.success('✓ Report downloaded as ZIP!', {
+        duration: 3000,
+      });
+    } else {
+      toast.success('✓ Report downloaded! (Email may have failed - check logs)', {
+        duration: 3000,
+      });
+    }
+
+// Return to markset list after delay (always navigate back)
+setTimeout(() => {
+  // Prefer the last setup params so we land on the mark-set chooser with autoboot
+  const qs = sessionStorage.getItem('viewerLastSetupParams')
+    || window.location.search.slice(1);
+  const sp = new URLSearchParams(qs);
+  sp.set('autoboot', '1');
+  // optional: clear viewer-only params so it re-opens the chooser cleanly
+  sp.delete('pdf_url');
+  sp.delete('mark_set_id');
+
+  window.location.href = `${window.location.pathname}?${sp.toString()}`;
+}, 1200);
+
 
   } catch (error) {
     console.error('Submit error:', error);
-    toast.error('Failed to generate reports');
+    toast.error('Failed to generate reports. Please try again.');
   } finally {
     setIsSubmitting(false);
   }
-}, [markSetId, entries, apiBase, rawPdfUrl]);
+}, [markSetId, entries, apiBase, rawPdfUrl, searchParams, qUser]);
 
   const swipeHandlers = useSwipeable({
   onSwipedLeft: () => {

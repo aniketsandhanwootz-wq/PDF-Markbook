@@ -1145,6 +1145,8 @@ app.include_router(viewer_router.router)
 from routers.reports_excel import router as reports_excel_router
 app.include_router(reports_excel_router)
 
+from routers import reports_bundle
+app.include_router(reports_bundle.router)
 # ========== End of Submissions ==========
 
 startup_time = time.time()

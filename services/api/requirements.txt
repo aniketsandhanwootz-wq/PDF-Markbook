@@ -13,4 +13,10 @@ pypdfium2>=4.27,<5
 Pillow>=9.2
 fpdf2>=2.7.8
 openpyxl
+# NEW: Email dependencies
+aiosmtplib
+certifi
+email-validator
+python-multipart
+# NEW: Excel generation
 xlsxwriter

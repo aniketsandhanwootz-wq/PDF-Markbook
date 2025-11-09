@@ -1,61 +1,64 @@
-"""
-Application settings with environment variable support.
-Supports SQLite, Google Sheets, JSON, and Postgres backends.
-"""
-
-from __future__ import annotations
-
-import base64
-from functools import lru_cache
-from typing import List, Optional
-
-from pydantic import Field
+# services/api/settings.py
 from pydantic_settings import BaseSettings
-
+from pydantic import ConfigDict
+import os
+import base64
+from typing import List
 
 class Settings(BaseSettings):
-    # Backend selection
-    storage_backend: str = Field(default="sqlite", alias="STORAGE_BACKEND")
-
-    # SQLite / generic
-    db_url: str = Field(default="sqlite:///data/markbook.db", alias="DB_URL")
-
-    # Google Sheets
-    google_sa_json: Optional[str] = Field(default=None, alias="GOOGLE_SA_JSON")          # path or inline JSON
-    google_sa_json_b64: Optional[str] = Field(default=None, alias="GOOGLE_SA_JSON_B64")  # base64 (optional)
-    sheets_spreadsheet_id: Optional[str] = Field(default=None, alias="SHEETS_SPREADSHEET_ID")
-
-    # Postgres (future)
-    postgres_url: Optional[str] = Field(default=None, alias="POSTGRES_URL")
-
-    # CORS
-    allowed_origins: str = Field(
-        default="http://localhost:3001,http://localhost:3002",
-        alias="ALLOWED_ORIGINS",
+    # Storage settings
+    storage_backend: str = "sqlite"
+    google_sa_json: str = ""
+    google_sa_json_base64: str = ""
+    sheets_spreadsheet_id: str = ""
+    db_url: str = "sqlite:///data/markbook.db"
+    
+    # CORS settings
+    allowed_origins: str = "http://localhost:3001,http://localhost:3002,http://localhost:8000,http://localhost:3000"
+    
+    # Email settings
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from_email: str = "aniket.sandhan@wootz.work"
+    smtp_from_name: str = "Wootz Markbook System"
+    
+    model_config = ConfigDict(
+        env_file=".env",
+        extra='ignore'  # Changed from 'forbid' to 'ignore'
     )
-
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = False
-
-    def get_origins_list(self) -> List[str]:
-        return [o.strip() for o in self.allowed_origins.split(",") if o.strip()]
-
-    def resolved_google_sa_json(self) -> Optional[str]:
+    
+    def resolved_google_sa_json(self) -> str:
         """
-        Prefer base64 (single line). If provided, return decoded JSON text.
-        Otherwise return GOOGLE_SA_JSON as-is (path or inline JSON).
+        Return the path to the service account JSON.
+        If GOOGLE_SA_JSON_BASE64 is set, decode it to a temp file.
+        Otherwise return GOOGLE_SA_JSON path.
         """
-        if self.google_sa_json_b64:
-            try:
-                return base64.b64decode(self.google_sa_json_b64).decode("utf-8")
-            except Exception:
-                # If decoding fails, fall back to raw
-                pass
+        if self.google_sa_json_base64:
+            import tempfile
+            import json
+            
+            decoded = base64.b64decode(self.google_sa_json_base64)
+            temp_file = tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json')
+            temp_file.write(decoded.decode('utf-8'))
+            temp_file.close()
+            return temp_file.name
+        
         return self.google_sa_json
+    
+    def get_origins_list(self) -> List[str]:
+        """Parse comma-separated origins into a list."""
+        if not self.allowed_origins:
+            return ["*"]
+        return [origin.strip() for origin in self.allowed_origins.split(",") if origin.strip()]
 
 
-@lru_cache()
+_settings_instance = None
+
 def get_settings() -> Settings:
-    return Settings()
+    """Singleton pattern for settings."""
+    global _settings_instance
+    if _settings_instance is None:
+        _settings_instance = Settings()
+    return _settings_instance
