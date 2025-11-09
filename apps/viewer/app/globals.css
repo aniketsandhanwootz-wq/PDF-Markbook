@@ -591,3 +591,9 @@ body {
 .mark-list-items {
   padding-bottom: 8px; /* breathing room under last item */
 }
+
+.mark-item.active {
+  background: #E3F2FD;     /* soft bluish */
+  color: inherit;          /* keep normal text color */
+  border: 2px solid #1976d2;
+}
