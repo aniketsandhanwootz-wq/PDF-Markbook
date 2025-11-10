@@ -12,7 +12,7 @@ from core.report_pdf import _require_pdfium, _render_crop, _fetch_pdf_bytes
 
 
 def _bytes_to_tempfile(data: bytes, suffix: str = ".png") -> str:
-    """Write bytes to temp file for xlsxwriter.embed_image()"""
+    """Write bytes to temp file for xlsxwriter"""
     f = NamedTemporaryFile(delete=False, suffix=suffix)
     try:
         f.write(data)
@@ -36,8 +36,8 @@ async def generate_report_excel(
     logo_url: str = "https://res.cloudinary.com/dbwg6zz3l/image/upload/v1753101276/Black_Blue_ctiycp.png",
 ) -> bytes:
     """
-    Build Excel with embedded images using xlsxwriter.
-    Images are TRUE cell content (not floating shapes).
+    Build Excel with FLOATING images (compatible with all Excel versions).
+    Images are positioned over cells with proper sizing.
     """
     
     # Fetch PDF
@@ -64,21 +64,26 @@ async def generate_report_excel(
         fmt_cell = wb.add_format({'border': 1, 'valign': 'vcenter', 'text_wrap': True})
         fmt_center = wb.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter'})
         
-        # Column widths
+        # Column widths (in Excel units: 1 unit ≈ 7 pixels)
         ws.set_column('A:A', 12)   # Label
-        ws.set_column('B:B', 25)   # Image
+        ws.set_column('B:B', 25)   # Image column (~175px)
         ws.set_column('C:D', 10)   # Tolerance
         ws.set_column('E:E', 18)   # Observed
         ws.set_column('F:G', 14)   # Status/Comment
         
-        # Row 1: Logo
-        ws.set_row(0, 100)
+        # Row 1: Logo (floating)
+        ws.set_row(0, 75)  # 75 points ≈ 100px
         if logo_url:
             try:
                 logo_bytes = await _fetch_pdf_bytes(logo_url)
                 logo_path = _bytes_to_tempfile(logo_bytes, suffix=".png")
                 _tempfiles.append(logo_path)
-                ws.embed_image('C1', logo_path)
+                # Insert as floating image at C1
+                ws.insert_image('C1', logo_path, {
+                    'x_scale': 0.5,
+                    'y_scale': 0.5,
+                    'object_position': 2  # Move with cells
+                })
             except Exception as e:
                 print(f"Logo fetch failed: {e}")
         
@@ -110,7 +115,7 @@ async def generate_report_excel(
         ws.write(5, 5, "Status", fmt_header)
         ws.write(5, 6, "Comment", fmt_header)
         
-        # Data rows start at index 7
+        # Data rows start at index 7 (row 8 in Excel)
         start_row = 7
         marks_sorted = sorted(marks, key=lambda m: (int(m.get("order_index", 0)), str(m.get("name", ""))))
         
@@ -119,7 +124,6 @@ async def generate_report_excel(
         
         for idx, m in enumerate(marks_sorted, start=1):
             r = start_row + (idx - 1)
-            ws.set_row(r, 100)
             
             page_index = int(m["page_index"])
             mark_id = m.get("mark_id", "")
@@ -127,15 +131,11 @@ async def generate_report_excel(
             label = (m.get("label") or f"Mark {idx}").strip()
             observed = (entries.get(mark_id, "") or "").strip()
             
-            # Write text cells
-            ws.write(r, 0, label, fmt_center)
-            ws.write_blank(r, 2, None, fmt_cell)
-            ws.write_blank(r, 3, None, fmt_cell)
-            ws.write(r, 4, observed, fmt_cell)
-            ws.write_blank(r, 5, None, fmt_cell)
-            ws.write_blank(r, 6, None, fmt_cell)
+            # Render crop first to get actual image dimensions
+            crop_img = None
+            img_width_px = 0
+            img_height_px = 0
             
-            # Render and embed image
             try:
                 crop_img = _render_crop(
                     doc=doc,
@@ -144,17 +144,60 @@ async def generate_report_excel(
                     render_zoom=render_zoom,
                     padding_pct=padding_pct,
                 )
-                bio = io.BytesIO()
-                crop_img.save(bio, format="PNG")
-                crop_png = bio.getvalue()
-                
-                img_path = _bytes_to_tempfile(crop_png, suffix=".png")
-                _tempfiles.append(img_path)
-                
-                ws.embed_image(r, 1, img_path)
+                img_width_px, img_height_px = crop_img.size
             except Exception as e:
                 print(f"Image render failed for mark {idx}: {e}")
-                ws.write_blank(r, 1, None, fmt_cell)
+            
+            # Calculate row height based on image
+            # Excel row height is in points (1 point = 1/72 inch)
+            # Typical Excel DPI = 96, so: height_points = (height_px / 96) * 72
+            if img_height_px > 0:
+                row_height_points = max(75, min(200, (img_height_px / 96) * 72))
+            else:
+                row_height_points = 75
+            
+            ws.set_row(r, row_height_points)
+            
+            # Write text cells with borders
+            ws.write(r, 0, label, fmt_center)
+            ws.write_blank(r, 1, None, fmt_cell)  # Empty cell B (image will float over it)
+            ws.write_blank(r, 2, None, fmt_cell)
+            ws.write_blank(r, 3, None, fmt_cell)
+            ws.write(r, 4, observed, fmt_cell)
+            ws.write_blank(r, 5, None, fmt_cell)
+            ws.write_blank(r, 6, None, fmt_cell)
+            
+            # Insert image as floating object over cell B
+            if crop_img:
+                try:
+                    bio = io.BytesIO()
+                    crop_img.save(bio, format="PNG")
+                    crop_png = bio.getvalue()
+                    
+                    img_path = _bytes_to_tempfile(crop_png, suffix=".png")
+                    _tempfiles.append(img_path)
+                    
+                    # Calculate scale to fit in cell B
+                    # Column B width = 25 units ≈ 175px
+                    cell_width_px = 175
+                    cell_height_px = row_height_points * 96 / 72
+                    
+                    scale_x = min(1.0, cell_width_px / img_width_px) if img_width_px > 0 else 1.0
+                    scale_y = min(1.0, cell_height_px / img_height_px) if img_height_px > 0 else 1.0
+                    scale = min(scale_x, scale_y) * 0.95  # 95% to add small padding
+                    
+                    # Insert image at cell B (column index 1)
+                    cell_address = f'B{r + 1}'  # +1 because Excel is 1-indexed
+                    ws.insert_image(cell_address, img_path, {
+                        'x_scale': scale,
+                        'y_scale': scale,
+                        'x_offset': 5,  # 5px padding from left
+                        'y_offset': 5,  # 5px padding from top
+                        'object_position': 2  # Move and size with cells
+                    })
+                    
+                except Exception as e:
+                    print(f"Image insert failed for mark {idx}: {e}")
         
         # Close workbook
         wb.close()
