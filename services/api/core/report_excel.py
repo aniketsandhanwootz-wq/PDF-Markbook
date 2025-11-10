@@ -6,13 +6,15 @@ from typing import Dict, List, Any, Optional
 from datetime import datetime
 from tempfile import NamedTemporaryFile
 
-import xlsxwriter
+from openpyxl import load_workbook
+from openpyxl.drawing.image import Image as OpenpyxlImage
+from openpyxl.cell.cell import MergedCell
+from openpyxl.worksheet.worksheet import Worksheet
 
 from core.report_pdf import _require_pdfium, _render_crop, _fetch_pdf_bytes
 
 
 def _bytes_to_tempfile(data: bytes, suffix: str = ".png") -> str:
-    """Write bytes to temp file for xlsxwriter"""
     f = NamedTemporaryFile(delete=False, suffix=suffix)
     try:
         f.write(data)
@@ -20,6 +22,25 @@ def _bytes_to_tempfile(data: bytes, suffix: str = ".png") -> str:
         return f.name
     finally:
         f.close()
+
+
+def _write_merged(ws: Worksheet, coord: str, value) -> None:
+    """
+    Write `value` to `coord`. If `coord` lies inside a merged range,
+    write to that range's top-left cell (required by openpyxl).
+    """
+    cell = ws[coord]
+    if isinstance(cell, MergedCell):
+        # Find the merged range that contains this coordinate
+        for rng in ws.merged_cells.ranges:
+            if coord in rng:
+                top_left = ws.cell(row=rng.min_row, column=rng.min_col)
+                top_left.value = value
+                return
+        # If we somehow didn't find the range, fail loudly (shouldn't happen)
+        raise RuntimeError(f"Cell {coord} is merged but its range wasn't found.")
+    else:
+        cell.value = value
 
 
 async def generate_report_excel(
@@ -35,107 +56,69 @@ async def generate_report_excel(
     render_zoom: float = 2.2,
     logo_url: str = "https://res.cloudinary.com/dbwg6zz3l/image/upload/v1753101276/Black_Blue_ctiycp.png",
 ) -> bytes:
-    """
-    Build Excel with FLOATING images (compatible with all Excel versions).
-    Images are positioned over cells with proper sizing.
-    """
-    
-    # Fetch PDF
+    """Build Excel from template with floating images."""
     _require_pdfium()
     pdf_bytes = await _fetch_pdf_bytes(pdf_url)
-    
-    # Prepare workbook
-    out = io.BytesIO()
-    wb = xlsxwriter.Workbook(out, {'in_memory': True})
-    ws = wb.add_worksheet("Inspection Report")
-    
+
+    template_path = os.path.join(os.path.dirname(__file__), "../templates/report_template.xlsm")
+    if not os.path.exists(template_path):
+        raise FileNotFoundError(f"Template not found: {template_path}")
+
+    wb = load_workbook(template_path, keep_vba=True)
+    ws = wb.active
+
     _tempfiles: List[str] = []
-    
+
     try:
-        # Formats
-        fmt_header = wb.add_format({
-            'bold': True, 'align': 'center', 'valign': 'vcenter',
-            'border': 1, 'bg_color': '#a7d4f0', 'text_wrap': True
-        })
-        fmt_subheader = wb.add_format({
-            'align': 'center', 'valign': 'vcenter',
-            'border': 1, 'bg_color': '#dff3ea'
-        })
-        fmt_cell = wb.add_format({'border': 1, 'valign': 'vcenter', 'text_wrap': True})
-        fmt_center = wb.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter'})
-        
-        # Column widths (in Excel units: 1 unit ≈ 7 pixels)
-        ws.set_column('A:A', 12)   # Label
-        ws.set_column('B:B', 25)   # Image column (~175px)
-        ws.set_column('C:D', 10)   # Tolerance
-        ws.set_column('E:E', 18)   # Observed
-        ws.set_column('F:G', 14)   # Status/Comment
-        
-        # Row 1: Logo (floating)
-        ws.set_row(0, 75)  # 75 points ≈ 100px
+        # ==== Header (safe for merged cells) ====
+        _write_merged(ws, "B2", mark_set_id)
+        _write_merged(ws, "A4", part_number or "")
+        _write_merged(
+            ws,
+            "E4",
+            f"{user_email or 'viewer_user'} | {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}",
+        )
+
+        # ==== Logo ====
         if logo_url:
             try:
                 logo_bytes = await _fetch_pdf_bytes(logo_url)
                 logo_path = _bytes_to_tempfile(logo_bytes, suffix=".png")
                 _tempfiles.append(logo_path)
-                # Insert as floating image at C1
-                ws.insert_image('C1', logo_path, {
-                    'x_scale': 0.5,
-                    'y_scale': 0.5,
-                    'object_position': 2  # Move with cells
-                })
+                img = OpenpyxlImage(logo_path)
+                img.width = 150
+                img.height = 60
+                ws.add_image(img, "C1")
             except Exception as e:
-                print(f"Logo fetch failed: {e}")
-        
-        # Row 2: Mark Set ID
-        ws.set_row(1, 20)
-        ws.merge_range(1, 1, 1, 5, mark_set_id, fmt_subheader)
-        
-        # Row 3: Part Number & Metadata
-        ws.set_row(2, 20)
-        ws.merge_range(2, 0, 2, 2, part_number or "", fmt_cell)
-        ws.merge_range(2, 4, 2, 5, 
-                      f"{user_email or 'viewer_user'} | {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}",
-                      fmt_cell)
-        
-        # Row 4: Optional label row
-        ws.set_row(3, 18)
-        ws.write(3, 0, "PN-001", fmt_cell)
-        ws.merge_range(3, 1, 3, 6, "", fmt_cell)
-        
-        # Row 5: Spacer
-        ws.set_row(4, 6)
-        
-        # Row 6: Table Header
-        ws.set_row(5, 28)
-        ws.write(5, 0, "Label", fmt_header)
-        ws.write(5, 1, "Required Value", fmt_header)
-        ws.merge_range(5, 2, 5, 3, "Tolerance\nMin / Max", fmt_header)
-        ws.write(5, 4, "Observed\nValue", fmt_header)
-        ws.write(5, 5, "Status", fmt_header)
-        ws.write(5, 6, "Comment", fmt_header)
-        
-        # Data rows start at index 7 (row 8 in Excel)
-        start_row = 7
-        marks_sorted = sorted(marks, key=lambda m: (int(m.get("order_index", 0)), str(m.get("name", ""))))
-        
+                print(f"Logo failed: {e}")
+
+        # ==== Rows ====
+        start_row = 8
+        marks_sorted = sorted(
+            marks,
+            key=lambda m: (int(m.get("order_index", 0)), str(m.get("name", ""))),
+        )
+
         import pypdfium2 as pdfium
         doc = pdfium.PdfDocument(pdf_bytes)
-        
+
         for idx, m in enumerate(marks_sorted, start=1):
             r = start_row + (idx - 1)
-            
+
             page_index = int(m["page_index"])
             mark_id = m.get("mark_id", "")
             nx, ny, nw, nh = float(m["nx"]), float(m["ny"]), float(m["nw"]), float(m["nh"])
             label = (m.get("label") or f"Mark {idx}").strip()
             observed = (entries.get(mark_id, "") or "").strip()
-            
-            # Render crop first to get actual image dimensions
-            crop_img = None
-            img_width_px = 0
-            img_height_px = 0
-            
+
+            # Text cells
+            ws.cell(row=r, column=1).value = label   # Column A
+            ws.cell(row=r, column=5).value = observed  # Column E
+
+            # Row height (~100 px)
+            ws.row_dimensions[r].height = 75
+
+            # Image thumbnail into column B
             try:
                 crop_img = _render_crop(
                     doc=doc,
@@ -144,66 +127,34 @@ async def generate_report_excel(
                     render_zoom=render_zoom,
                     padding_pct=padding_pct,
                 )
-                img_width_px, img_height_px = crop_img.size
+
+                bio = io.BytesIO()
+                crop_img.save(bio, format="PNG")
+                crop_png = bio.getvalue()
+
+                img_path = _bytes_to_tempfile(crop_png, suffix=".png")
+                _tempfiles.append(img_path)
+
+                img = OpenpyxlImage(img_path)
+                img_w_px, img_h_px = crop_img.size
+
+                # Fit into B cell (approx 175x100 px)
+                cell_w_px = 175
+                cell_h_px = 100
+                scale = min(cell_w_px / img_w_px, cell_h_px / img_h_px) * 0.9
+                img.width = int(img_w_px * scale)
+                img.height = int(img_h_px * scale)
+
+                ws.add_image(img, f"B{r}")
             except Exception as e:
-                print(f"Image render failed for mark {idx}: {e}")
-            
-            # Calculate row height based on image
-            # Excel row height is in points (1 point = 1/72 inch)
-            # Typical Excel DPI = 96, so: height_points = (height_px / 96) * 72
-            if img_height_px > 0:
-                row_height_points = max(75, min(200, (img_height_px / 96) * 72))
-            else:
-                row_height_points = 75
-            
-            ws.set_row(r, row_height_points)
-            
-            # Write text cells with borders
-            ws.write(r, 0, label, fmt_center)
-            ws.write_blank(r, 1, None, fmt_cell)  # Empty cell B (image will float over it)
-            ws.write_blank(r, 2, None, fmt_cell)
-            ws.write_blank(r, 3, None, fmt_cell)
-            ws.write(r, 4, observed, fmt_cell)
-            ws.write_blank(r, 5, None, fmt_cell)
-            ws.write_blank(r, 6, None, fmt_cell)
-            
-            # Insert image as floating object over cell B
-            if crop_img:
-                try:
-                    bio = io.BytesIO()
-                    crop_img.save(bio, format="PNG")
-                    crop_png = bio.getvalue()
-                    
-                    img_path = _bytes_to_tempfile(crop_png, suffix=".png")
-                    _tempfiles.append(img_path)
-                    
-                    # Calculate scale to fit in cell B
-                    # Column B width = 25 units ≈ 175px
-                    cell_width_px = 175
-                    cell_height_px = row_height_points * 96 / 72
-                    
-                    scale_x = min(1.0, cell_width_px / img_width_px) if img_width_px > 0 else 1.0
-                    scale_y = min(1.0, cell_height_px / img_height_px) if img_height_px > 0 else 1.0
-                    scale = min(scale_x, scale_y) * 0.95  # 95% to add small padding
-                    
-                    # Insert image at cell B (column index 1)
-                    cell_address = f'B{r + 1}'  # +1 because Excel is 1-indexed
-                    ws.insert_image(cell_address, img_path, {
-                        'x_scale': scale,
-                        'y_scale': scale,
-                        'x_offset': 5,  # 5px padding from left
-                        'y_offset': 5,  # 5px padding from top
-                        'object_position': 2  # Move and size with cells
-                    })
-                    
-                except Exception as e:
-                    print(f"Image insert failed for mark {idx}: {e}")
-        
-        # Close workbook
-        wb.close()
+                print(f"Image failed for mark {idx}: {e}")
+
+        # ==== Save ====
+        out = io.BytesIO()
+        wb.save(out)
         out.seek(0)
         return out.read()
-        
+
     finally:
         # Cleanup temp files
         for p in _tempfiles:
