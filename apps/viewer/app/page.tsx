@@ -311,15 +311,13 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
 
             {/* Master Mark Set (Pinned) */}
             {masterMarkset && (
-              <div style={{ marginTop:16 }}>
-                <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8 }}>
-                  <div style={{ fontWeight:600 }}>⭐ Master Mark Set</div>
-                  <button onClick={() => setShowCreateModal(true)} style={{...btn, borderColor:'#4caf50', color:'#4caf50', fontWeight:600}}>
-                    + Create New
-                  </button>
-                </div>
-                <div style={{ border:'2px solid #ffc107', borderRadius:6, padding:12, background:'#fffde7' }}>
-                  <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+  <div style={{ marginTop:16 }}>
+    <div style={{ display:'flex', alignItems:'center', justifyContent:'flex-start', marginBottom:8 }}>
+      <div style={{ fontWeight:600 }}>⭐ Master Mark Set</div>
+    </div>
+    <div style={{ border:'2px solid #ffc107', borderRadius:6, padding:12, background:'#fffde7' }}>
+      {/* ...rest stays same... */}
+ <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
                     <div>
                       <div style={{ fontWeight:700, fontSize:16, color:'#333' }}>{masterMarkset.label}</div>
                       <div style={{ color:'#666', fontSize:12 }}>{(masterMarkset.marks_count ?? 0)} marks</div>
