@@ -388,7 +388,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 <div align="center">
 
-**⭐ Star this repo if you find it useful! ⭐**
+**⭐ Star this repo if you find it useful!and also  ⭐**
 
 Made with ❤️ by [Wootz.work](https:wootz.work)
 
