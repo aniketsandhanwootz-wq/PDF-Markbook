@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
+// @ts-ignore - web worker import via bundler URL
+const makeWorker = () => new Worker(new URL('../lib/search.worker.ts', import.meta.url), { type: 'module' });
 
 type SearchResult = {
   pageNumber: number;
@@ -24,6 +26,8 @@ type PDFSearchProps = {
 
 export default function PDFSearch({ pdf, isOpen, onClose, onResultFound }: PDFSearchProps) {
   const [searchQuery, setSearchQuery] = useState('');
+  const workerRef = useRef<Worker | null>(null);
+  const [indexedPages, setIndexedPages] = useState<Set<number>>(new Set());
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [currentResultIndex, setCurrentResultIndex] = useState(-1);
   const [isSearching, setIsSearching] = useState(false);
@@ -36,143 +40,138 @@ export default function PDFSearch({ pdf, isOpen, onClose, onResultFound }: PDFSe
     }
   }, [isOpen]);
 
-  // Perform search with exact position calculation
+  // Build lightweight text index (per page) when opened
+useEffect(() => {
+  if (!isOpen || !pdf) return;
+
+  if (!workerRef.current) {
+    workerRef.current = makeWorker();
+  }
+
+  const w = workerRef.current;
+  const onMsg = (e: MessageEvent) => {
+    const data = e.data;
+    if (data?.type === 'built') {
+      setIndexedPages(prev => new Set(prev).add(data.page));
+    }
+  };
+  w.addEventListener('message', onMsg);
+
+  (async () => {
+    const n = pdf.numPages;
+    for (let p = 1; p <= n; p++) {
+      if (indexedPages.has(p)) continue;
+      const page = await pdf.getPage(p);
+      const tc = await page.getTextContent();
+      // Join strings only (no glyph geometry here)
+      const text = tc.items.map((it: any) => ('str' in it ? it.str : '')).join(' ');
+      w.postMessage({ type: 'build', page: p, text });
+      // small yield
+      await new Promise(r => setTimeout(r, 0));
+    }
+  })();
+
+  return () => { w.removeEventListener('message', onMsg); };
+}, [isOpen, pdf]);
+
   const performSearch = useCallback(async () => {
-    if (!pdf || !searchQuery.trim()) {
-      setSearchResults([]);
-      setCurrentResultIndex(-1);
-      if (onResultFound) {
-        onResultFound(1, []);
+  if (!pdf || !searchQuery.trim()) {
+    setSearchResults([]);
+    setCurrentResultIndex(-1);
+    onResultFound?.(1, []);
+    return;
+  }
+
+  setIsSearching(true);
+  const w = workerRef.current ?? makeWorker();
+  workerRef.current = w;
+
+  const candidatePages: number[] = await new Promise((resolve) => {
+    const handler = (e: MessageEvent) => {
+      if (e.data?.type === 'result') {
+        w.removeEventListener('message', handler);
+        resolve(e.data.pages as number[]);
       }
-      return;
+    };
+    w.addEventListener('message', handler);
+    w.postMessage({ type: 'query', q: searchQuery });
+  });
+
+  // Fallback to full scan if index not built yet
+  const pagesToSearch = candidatePages.length ? candidatePages.sort((a,b)=>a-b) : [...Array(pdf.numPages)].map((_,i)=>i+1);
+
+  const results: SearchResult[] = [];
+  const q = searchQuery.toLowerCase();
+
+  for (const pageNum of pagesToSearch) {
+    const page = await pdf.getPage(pageNum);
+    const textContent = await page.getTextContent();
+    const viewport = page.getViewport({ scale: 1.0 });
+
+    let fullText = '';
+    const charPositions: Array<{ char: string; x: number; y: number; width: number; height: number; }> = [];
+
+    for (const item of textContent.items) {
+      if ('str' in item) {
+        const t = item.transform;
+        const fontSize = Math.sqrt(t[2] * t[2] + t[3] * t[3]);
+        const x0 = t[4];
+        const y0 = viewport.height - t[5];
+        const widthPerChar = item.width / Math.max(1, item.str.length);
+
+        for (let i = 0; i < item.str.length; i++) {
+          const cx = x0 + i * widthPerChar;
+          charPositions.push({ char: item.str[i], x: cx, y: y0 - fontSize, width: widthPerChar, height: fontSize });
+          fullText += item.str[i];
+        }
+        fullText += ' ';
+        charPositions.push({ char: ' ', x: x0 + item.width, y: y0 - fontSize, width: 5, height: fontSize });
+      }
     }
 
-    setIsSearching(true);
-    const results: SearchResult[] = [];
-    const query = searchQuery.toLowerCase();
+    const lowerText = fullText.toLowerCase();
+    let startIndex = 0;
+    while (true) {
+      const idx = lowerText.indexOf(q, startIndex);
+      if (idx === -1) break;
 
-    try {
-      const numPages = pdf.numPages;
-
-      for (let pageNum = 1; pageNum <= numPages; pageNum++) {
-        const page = await pdf.getPage(pageNum);
-        const textContent = await page.getTextContent();
-        const viewport = page.getViewport({ scale: 1.0 });
-
-        // Build complete text string with positions
-        let fullText = '';
-        const charPositions: Array<{
-          char: string;
-          x: number;
-          y: number;
-          width: number;
-          height: number;
-        }> = [];
-
-        for (const item of textContent.items) {
-          if ('str' in item) {
-            const transform = item.transform;
-            const fontSize = Math.sqrt(transform[2] * transform[2] + transform[3] * transform[3]);
-            const x = transform[4];
-            const y = viewport.height - transform[5]; // Flip Y coordinate
-
-            for (let i = 0; i < item.str.length; i++) {
-              const char = item.str[i];
-              const charWidth = (item.width / item.str.length);
-              
-              charPositions.push({
-                char,
-                x: x + (i * charWidth),
-                y: y - fontSize,
-                width: charWidth,
-                height: fontSize,
-              });
-
-              fullText += char;
-            }
-
-            // Add space between items
-            fullText += ' ';
-            charPositions.push({
-              char: ' ',
-              x: x + item.width,
-              y: y - fontSize,
-              width: 5,
-              height: fontSize,
-            });
+      const match = charPositions.slice(idx, idx + q.length);
+      const rects: SearchResult['items'] = [];
+      if (match.length > 0) {
+        let cur = { x: match[0].x, y: match[0].y, width: match[0].width, height: match[0].height };
+        for (let i = 1; i < match.length; i++) {
+          const ch = match[i], prev = match[i - 1];
+          if (Math.abs(ch.y - prev.y) < 2 && ch.x - (prev.x + prev.width) < 10) {
+            cur.width = (ch.x + ch.width) - cur.x;
+          } else {
+            rects.push({ ...cur });
+            cur = { x: ch.x, y: ch.y, width: ch.width, height: ch.height };
           }
         }
-
-        // Find all occurrences in this page
-        const lowerText = fullText.toLowerCase();
-        let startIndex = 0;
-
-        while (true) {
-          const index = lowerText.indexOf(query, startIndex);
-          if (index === -1) break;
-
-          // Get bounding boxes for this match
-          const matchChars = charPositions.slice(index, index + query.length);
-          
-          // Group adjacent characters into rectangles
-          const rects: SearchResult['items'] = [];
-          
-          if (matchChars.length > 0) {
-            let currentRect = {
-              x: matchChars[0].x,
-              y: matchChars[0].y,
-              width: matchChars[0].width,
-              height: matchChars[0].height,
-            };
-
-            for (let i = 1; i < matchChars.length; i++) {
-              const char = matchChars[i];
-              const prevChar = matchChars[i - 1];
-
-              // Check if this character is on the same line and adjacent
-              if (Math.abs(char.y - prevChar.y) < 2 && 
-                  char.x - (prevChar.x + prevChar.width) < 10) {
-                // Extend current rectangle
-                currentRect.width = (char.x + char.width) - currentRect.x;
-              } else {
-                // Start new rectangle
-                rects.push({ ...currentRect });
-                currentRect = {
-                  x: char.x,
-                  y: char.y,
-                  width: char.width,
-                  height: char.height,
-                };
-              }
-            }
-
-            rects.push(currentRect);
-          }
-
-          results.push({
-            pageNumber: pageNum,
-            index,
-            text: fullText.substring(Math.max(0, index - 20), index + query.length + 20),
-            items: rects,
-          });
-
-          startIndex = index + 1;
-        }
+        rects.push(cur);
       }
 
-      setSearchResults(results);
-      setCurrentResultIndex(results.length > 0 ? 0 : -1);
+      results.push({
+        pageNumber: pageNum,
+        index: idx,
+        text: fullText.substring(Math.max(0, idx - 20), idx + q.length + 20),
+        items: rects,
+      });
 
-      // Navigate to first result with highlights
-      if (results.length > 0 && onResultFound) {
-        onResultFound(results[0].pageNumber, results[0].items);
-      }
-    } catch (error) {
-      console.error('Search error:', error);
-    } finally {
-      setIsSearching(false);
+      startIndex = idx + 1;
     }
-  }, [pdf, searchQuery, onResultFound]);
+  }
+
+  setSearchResults(results);
+  setCurrentResultIndex(results.length ? 0 : -1);
+  if (results.length > 0) {
+    onResultFound?.(results[0].pageNumber, results[0].items);
+  } else {
+    onResultFound?.(1, []);
+  }
+  setIsSearching(false);
+}, [pdf, searchQuery, onResultFound]);
+
 
   // Navigate results
   const goToNextResult = useCallback(() => {

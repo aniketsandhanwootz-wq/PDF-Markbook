@@ -1,5 +1,6 @@
 'use client';
 
+import type { MutableRefObject, CSSProperties } from 'react';
 import { useEffect, useState, useRef, useCallback, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useSwipeable } from 'react-swipeable';
@@ -418,10 +419,9 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
   );
 }
 // small styles for setup
-const inp: React.CSSProperties = { padding: '10px 12px', border: '1px solid #ddd', borderRadius: 4, fontSize: 14, outline: 'none' };
-const btn: React.CSSProperties = { padding: '8px 14px', border: '1px solid #ccc', borderRadius: 6, background: '#fff', cursor: 'pointer' };
-const btnPrimary: React.CSSProperties = { ...btn, borderColor: '#1976d2', color: '#1976d2', fontWeight: 700 };
-
+const inp: CSSProperties = { padding: '10px 12px', border: '1px solid #ddd', borderRadius: 4, fontSize: 14, outline: 'none' };
+const btn: CSSProperties = { padding: '8px 14px', border: '1px solid #ccc', borderRadius: 6, background: '#fff', cursor: 'pointer' };
+const btnPrimary: CSSProperties = { ...btn, borderColor: '#1976d2', color: '#1976d2', fontWeight: 700 };
 
 // Main Viewer Component
 function ViewerContent() {
@@ -434,14 +434,15 @@ function ViewerContent() {
   const [zoom, setZoom] = useState(1.0);
     // Quantized zoom setter (must live at component top-level)
   const setZoomQ = useCallback(
-    (z: number, ref?: React.MutableRefObject<number>) => {
-      const q = quantize(z);   // uses the top-level quantize()
-      setZoom(q);              // update state
-      if (ref) ref.current = q; // keep ref in sync for math during gestures
-      return q;
-    },
-    []
-  );
+  (z: number, ref?: MutableRefObject<number>) => {
+    const q = quantize(z);
+    setZoom(q);
+    if (ref) ref.current = q;
+    return q;
+  },
+  []
+);
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false); // Start closed on mobile
@@ -471,6 +472,122 @@ function ViewerContent() {
   // smooth zoom animation bookkeeping
   const animRafRef = useRef<number | null>(null);
   const isZoomAnimatingRef = useRef(false);
+  // ===== Windowing + prefix sums =====
+const GUTTER = 16; // vertical gap between pages
+const prefixHeightsRef = useRef<number[]>([]);   // top offsets of each page at current zoom
+const totalHeightRef = useRef<number>(0);
+const [visibleRange, setVisibleRange] = useState<[number, number]>([1, 3]); // 1-based inclusive
+
+function lowerBound(a: number[], x: number) { // first idx with a[idx] >= x
+  let l = 0, r = a.length; 
+  while (l < r) { const m = (l + r) >> 1; a[m] < x ? (l = m + 1) : (r = m); }
+  return l;
+}
+function upperBound(a: number[], x: number) { // first idx with a[idx] > x
+  let l = 0, r = a.length;
+  while (l < r) { const m = (l + r) >> 1; a[m] <= x ? (l = m + 1) : (r = m); }
+  return l;
+}
+
+/** Recompute prefix tops from *base* page sizes (scale=1) and the current zoom. */
+const recomputePrefix = useCallback(() => {
+  const base = basePageSizeRef.current; // [{w,h}] at scale=1, already filled elsewhere
+  if (!base || base.length === 0) return;
+  const n = base.length;
+  const pref = new Array(n);
+  let run = 0;
+  for (let i = 0; i < n; i++) {
+    pref[i] = run;
+    run += base[i].h * zoomRef.current + GUTTER;
+  }
+  prefixHeightsRef.current = pref;           // pref[i] = CSS top of page i (0-based)
+  totalHeightRef.current = run - GUTTER;     // overall scrollable height
+}, []);
+
+// ===== Windowing range calc (uses prefixHeights) =====
+const VBUF = 1; // render ±1 page buffer around viewport
+
+const updateVisibleRange = useCallback(() => {
+  const cont = containerRef.current;
+  const pref = prefixHeightsRef.current;
+  if (!cont || pref.length === 0) return;
+
+  const viewTop = cont.scrollTop;
+  const viewBot = viewTop + cont.clientHeight;
+
+  const lower = lowerBound(pref, viewTop);
+  const upper = Math.max(lower, upperBound(pref, viewBot));
+
+  const start = Math.max(1, lower + 1 - VBUF);                // 1-based
+  const end   = Math.min(numPages, upper + 1 + VBUF);
+  setVisibleRange([start, end]);
+
+  // Set current page near the viewport midpoint
+  const mid = viewTop + cont.clientHeight / 2;
+  const idx = Math.min(pref.length - 1, lowerBound(pref, mid));
+  setCurrentPage(idx + 1);
+}, [numPages]);
+
+// Bind scroll + rAF-throttled resize
+useEffect(() => {
+  const el = containerRef.current;
+  if (!el) return;
+
+  const onScroll = () => updateVisibleRange();
+
+  let raf: number | null = null;
+  const onResize = () => {
+    if (raf) cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(() => {
+      recomputePrefix();
+      updateVisibleRange();
+      raf = null;
+    });
+  };
+
+  el.addEventListener('scroll', onScroll, { passive: true });
+  window.addEventListener('resize', onResize, { passive: true });
+
+  // initial compute
+  updateVisibleRange();
+
+  return () => {
+    el.removeEventListener('scroll', onScroll);
+    window.removeEventListener('resize', onResize as any);
+    if (raf) cancelAnimationFrame(raf);
+  };
+}, [updateVisibleRange, recomputePrefix]);
+
+// ===== IntersectionObserver prefetch (tiny, gated) =====
+useEffect(() => {
+  const conn = (navigator as any).connection;
+  const ok = conn?.effectiveType ? (conn.effectiveType === '4g') : true; // default allow on desktops
+  if (!ok || !pdf) return;
+
+  const root = containerRef.current;
+  if (!root) return;
+
+  const io = new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      if (!e.isIntersecting) continue;
+      const page = Number((e.target as HTMLElement).dataset.page || '0');
+      // prefetch next/prev once
+      if (page + 1 <= numPages) pdf.getPage(page + 1).catch(()=>{});
+      if (page - 1 >= 1)        pdf.getPage(page - 1).catch(()=>{});
+    }
+  }, { root, rootMargin: '600px 0px' });
+
+  // Observe currently visible page nodes
+  const nodes = pageElsRef.current;
+  nodes.forEach((node, idx) => {
+    if (!node) return;
+    node.dataset.page = String(idx + 1);
+    io.observe(node);
+  });
+
+  return () => { io.disconnect(); };
+}, [pdf, numPages, visibleRange]);
+
 
   // Smooth animated zoom that keeps the same focal point centered
   // Smooth animated zoom that keeps the same focal point centered
@@ -756,33 +873,8 @@ const zoomAt = useCallback(
     return () => window.removeEventListener('resize', handleResize);
   }, [marks.length]);
 
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container || !pdf) return;
 
-    const handleScroll = () => {
-      let accumulatedHeight = 16;
-      let foundPage = 1;
-
-      for (let i = 0; i < numPages; i++) {
-        const pageHeight = pageHeightsRef.current[i] || 0;
-        if (container.scrollTop < accumulatedHeight + pageHeight / 2) {
-          foundPage = i + 1;
-          break;
-        }
-        accumulatedHeight += pageHeight + 16;
-      }
-
-      setCurrentPage(foundPage);
-    };
-
-    container.addEventListener('scroll', handleScroll);
-    handleScroll();
-
-    return () => container.removeEventListener('scroll', handleScroll);
-  }, [pdf, numPages]);
-
-  // PATCH[page.tsx] — precompute page sizes at scale=1 (used everywhere without getPage)
+ // ===== Precompute base page sizes (scale=1) and then prefix sums =====
 useEffect(() => {
   if (!pdf) return;
   let cancelled = false;
@@ -797,10 +889,20 @@ useEffect(() => {
       sizes[i - 1] = { w: vp.width, h: vp.height };
     }
     basePageSizeRef.current = sizes;
+    recomputePrefix();              // 👈 build prefix tops right away
+    // Initial visible range after sizes land
+    requestAnimationFrame(() => updateVisibleRange());
   })();
 
   return () => { cancelled = true; };
-}, [pdf]);
+}, [pdf, recomputePrefix]);
+
+// Recompute prefix on zoom change without re-measuring
+useEffect(() => {
+  recomputePrefix();
+  // keep visible range in sync
+  updateVisibleRange();
+}, [zoom, recomputePrefix]);
 
   const navigateToMark = useCallback(
     async (index: number) => {
@@ -1368,7 +1470,7 @@ useEffect(() => {
             <MarkList
               marks={marks}
               currentIndex={currentMarkIndex}
-              entries={entries}                // ✅ ADD THIS LINE
+              entries={entries}                
               onSelect={(index) => {
                 setCurrentMarkIndex(index);
                 setSidebarOpen(false);
@@ -1417,34 +1519,65 @@ useEffect(() => {
             >
 
 
-              <div className="pdf-surface">
-                {Array.from({ length: numPages }, (_, i) => i + 1).map((pageNum) => (
-                  <div
-                    key={pageNum}
-                    style={{ position: 'relative' }}
-                    ref={(el) => { pageElsRef.current[pageNum - 1] = el; }}
-                  >
-                    <PageCanvas
-                      pdf={pdf}
-                      pageNumber={pageNum}
-                      zoom={zoom}
-                      onReady={(height) => handlePageReady(pageNum, height)}
-                      flashRect={
-                        flashRect?.pageNumber === pageNum
-                          ? { x: flashRect.x, y: flashRect.y, w: flashRect.w, h: flashRect.h }
-                          : null
-                      }
-                      selectedRect={
-                        selectedRect?.pageNumber === pageNum
-                          ? { x: selectedRect.x, y: selectedRect.y, w: selectedRect.w, h: selectedRect.h }
-                          : null
-                      }
-                    />
+  <div className="pdf-surface" style={{ position: 'relative', height: totalHeightRef.current }}>
+  {Array.from({ length: visibleRange[1] - visibleRange[0] + 1 }, (_, i) => visibleRange[0] + i).map((pageNum) => {
+    const top = prefixHeightsRef.current[pageNum - 1] || 0;
+    return (
+      <div
+        key={pageNum}
+        style={{ position: 'absolute', top, left: 0, right: 0 }}
+        ref={(el) => { pageElsRef.current[pageNum - 1] = el; }}
+      >
+        <PageCanvas
+  pdf={pdf}
+  pageNumber={pageNum}
+  zoom={zoom}
+  flashRect={
+    flashRect?.pageNumber === pageNum
+      ? { x: flashRect.x, y: flashRect.y, w: flashRect.w, h: flashRect.h }
+      : null
+  }
+  selectedRect={
+    selectedRect?.pageNumber === pageNum
+      ? { x: selectedRect.x, y: selectedRect.y, w: selectedRect.w, h: selectedRect.h }
+      : null
+  }
+/>
 
 
-                  </div>
-                ))}
-              </div>
+        {/* Scaled single-layer search overlay */}
+        {highlightPageNumber === pageNum && (
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              transform: `scale(${zoom})`,
+              transformOrigin: 'top left',
+              pointerEvents: 'none',
+              zIndex: 100
+            }}
+          >
+            {searchHighlights.map((h, idx) => (
+              <div
+                key={`hl-${idx}`}
+                style={{
+                  position: 'absolute',
+                  left: h.x,
+                  top: h.y,
+                  width: h.width,
+                  height: h.height,
+                  background: 'rgba(255, 235, 59, 0.35)',
+                  border: '1px solid rgba(255, 193, 7, 0.85)'
+                }}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  })}
+</div>
+
 
             </div>
           </div>
@@ -1479,7 +1612,7 @@ useEffect(() => {
           <MarkList
             marks={marks}
             currentIndex={currentMarkIndex}
-            entries={entries}                // ✅ ADD THIS LINE
+            entries={entries}            
             onSelect={(index) => {
               setCurrentMarkIndex(index);
               setSidebarOpen(false);
@@ -1503,52 +1636,65 @@ useEffect(() => {
 
 
 
-        <div className="pdf-surface-wrap" ref={containerRef} style={{ touchAction: 'pan-x pan-y' }}>
-          <div className="pdf-surface">
-            {Array.from({ length: numPages }, (_, i) => i + 1).map((pageNum) => (
+ <div className="pdf-surface" style={{ position: 'relative', height: totalHeightRef.current }}>
+  {Array.from({ length: visibleRange[1] - visibleRange[0] + 1 }, (_, i) => visibleRange[0] + i).map((pageNum) => {
+    const top = prefixHeightsRef.current[pageNum - 1] || 0;
+    return (
+      <div
+        key={pageNum}
+        style={{ position: 'absolute', top, left: 0, right: 0 }}
+        ref={(el) => { pageElsRef.current[pageNum - 1] = el; }}
+      >
+    <PageCanvas
+  pdf={pdf}
+  pageNumber={pageNum}
+  zoom={zoom}
+  flashRect={
+    flashRect?.pageNumber === pageNum
+      ? { x: flashRect.x, y: flashRect.y, w: flashRect.w, h: flashRect.h }
+      : null
+  }
+  selectedRect={
+    selectedRect?.pageNumber === pageNum
+      ? { x: selectedRect.x, y: selectedRect.y, w: selectedRect.w, h: selectedRect.h }
+      : null
+  }
+/>
+
+
+        {/* Scaled single-layer search overlay */}
+        {highlightPageNumber === pageNum && (
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              transform: `scale(${zoom})`,
+              transformOrigin: 'top left',
+              pointerEvents: 'none',
+              zIndex: 100
+            }}
+          >
+            {searchHighlights.map((h, idx) => (
               <div
-                key={pageNum}
-                style={{ position: 'relative' }}
-                ref={(el) => { pageElsRef.current[pageNum - 1] = el; }}
-              >
-                <PageCanvas
-                  pdf={pdf}
-                  pageNumber={pageNum}
-                  zoom={zoom}
-                  onReady={(height) => handlePageReady(pageNum, height)}
-                  flashRect={
-                    flashRect?.pageNumber === pageNum
-                      ? { x: flashRect.x, y: flashRect.y, w: flashRect.w, h: flashRect.h }
-                      : null
-                  }
-                  selectedRect={
-                    selectedRect?.pageNumber === pageNum
-                      ? { x: selectedRect.x, y: selectedRect.y, w: selectedRect.w, h: selectedRect.h }
-                      : null
-                  }
-                />
-
-
-
-                {highlightPageNumber === pageNum && searchHighlights.map((h, idx) => (
-                  <div
-                    key={`highlight-${idx}`}
-                    style={{
-                      position: 'absolute',
-                      left: h.x * zoom,
-                      top: h.y * zoom,
-                      width: h.width * zoom,
-                      height: h.height * zoom,
-                      background: 'rgba(255, 235, 59, 0.4)',
-                      border: '1px solid rgba(255, 193, 7, 0.8)',
-                      pointerEvents: 'none',
-                      zIndex: 100
-                    }}
-                  />
-                ))}
-              </div>
+                key={`hl-${idx}`}
+                style={{
+                  position: 'absolute',
+                  left: h.x,
+                  top: h.y,
+                  width: h.width,
+                  height: h.height,
+                  background: 'rgba(255, 235, 59, 0.35)',
+                  border: '1px solid rgba(255, 193, 7, 0.85)'
+                }}
+              />
             ))}
           </div>
+        )}
+      </div>
+    );
+  })}
+</div>
+
 
         </div>
 
@@ -1575,7 +1721,6 @@ useEffect(() => {
           onResultFound={handleSearchResult}
         />
       </div>
-    </div>
   );
 
 }
