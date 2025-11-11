@@ -122,6 +122,8 @@ type MarkSetInfo = {
   name: string;
 };
 const SWIPE_TO_STEP_ENABLED = false;
+// === Touch gestures master switch (leave OFF to allow native scroll) ===
+const TOUCH_GESTURES_ENABLED = false;
 
 // ------- New types for bootstrap + markset summary -------
 type BootstrapDoc = {
@@ -1172,6 +1174,7 @@ useEffect(() => {
 
 // PATCH: touch pan (1 finger) + pinch-zoom (2 fingers) on the container
 useEffect(() => {
+  if (!TOUCH_GESTURES_ENABLED) return; // ➜ disable custom gestures; let native scrolling handle pan
   const el = containerRef.current;
   if (!el) return;
 
@@ -1431,7 +1434,7 @@ useEffect(() => {
                 overflow: 'auto',
                 background: '#525252',
                 WebkitOverflowScrolling: 'touch',
-                touchAction: 'none', // PATCH: allow pinch-zoom via pointer events
+                touchAction: 'pan-x pan-y', // PATCH: allow pinch-zoom via pointer events
               }}
               className="pdf-surface-wrap"
               ref={containerRef}
@@ -1524,7 +1527,7 @@ useEffect(() => {
 
 
 
-        <div className="pdf-surface-wrap" ref={containerRef} style={{ touchAction: 'none' }}>
+        <div className="pdf-surface-wrap" ref={containerRef} style={{ touchAction: 'pan-x pan-y' }}>
           <div className="pdf-surface">
             {Array.from({ length: numPages }, (_, i) => i + 1).map((pageNum) => (
               <div

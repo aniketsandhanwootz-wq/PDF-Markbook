@@ -197,10 +197,12 @@ body {
   flex: 1;
   overflow: auto;
   background: #525252;
-  touch-action: none;
+  /* Allow native scroll in both directions; pinch is disabled by meta & our code */
+  touch-action: pan-x pan-y;
   -webkit-overflow-scrolling: touch; /* smooth on iOS */
   overscroll-behavior: contain;      /* avoid page pull-to-refresh */
 }
+
 /* Optional: show grab cursor on desktop/touch emulators */
 .pdf-surface-wrap {
   cursor: grab;
