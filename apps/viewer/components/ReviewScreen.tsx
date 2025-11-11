@@ -1,7 +1,5 @@
 'use client';
 
-import { useState } from 'react';
-
 type Mark = {
   mark_id?: string;
   name: string;
@@ -19,10 +17,9 @@ type ReviewScreenProps = {
   onBack: () => void;
   onSubmit: () => void;
   isSubmitting: boolean;
-  /** ✅ called when a review row is clicked */
+  /** called when a review row is clicked */
   onJumpTo: (index: number) => void;
 };
-
 
 export default function ReviewScreen({
   marks,
@@ -30,74 +27,81 @@ export default function ReviewScreen({
   onBack,
   onSubmit,
   isSubmitting,
-  onJumpTo,             // ✅ add this
+  onJumpTo,
 }: ReviewScreenProps) {
-  const completedCount = Object.values(entries).filter(v => v.trim() !== '').length;
-  const allFilled = completedCount === marks.length;
+  const completedCount = Object.values(entries).filter((v) => v.trim() !== '').length;
+  const allFilled = marks.length > 0 && completedCount === marks.length;
+  const pct = marks.length ? Math.round((completedCount / marks.length) * 100) : 0;
 
   return (
-    <div style={{
-      position: 'fixed',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-      background: 'white',
-      zIndex: 1000,
-      display: 'flex',
-      flexDirection: 'column',
-      overflow: 'hidden'
-    }}>
+    <div
+      style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        background: 'white',
+        zIndex: 1000,
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+      }}
+    >
       {/* Header */}
-      <div style={{
-        padding: '16px',
-        background: '#1976d2',
-        color: 'white',
-        boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-      }}>
-        <h2 style={{ margin: 0, fontSize: '20px', fontWeight: '600' }}>
-          📋 Review Your Entries
-        </h2>
+      <div
+        style={{
+          padding: '16px',
+          background: '#1976d2',
+          color: 'white',
+          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+        }}
+      >
+        <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 600 }}>📋 Review Your Entries</h2>
         <p style={{ margin: '4px 0 0 0', fontSize: '14px', opacity: 0.9 }}>
           Check all values before submitting
         </p>
       </div>
 
       {/* Progress Summary */}
-      <div style={{
-        padding: '16px',
-        background: allFilled ? '#e8f5e9' : '#fff3e0',
-        borderBottom: '1px solid #ddd'
-      }}>
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          marginBottom: '8px'
-        }}>
-          <div style={{ fontSize: '16px', fontWeight: '600', color: '#333' }}>
+      <div
+        style={{
+          padding: '16px',
+          background: allFilled ? '#e8f5e9' : '#fff3e0',
+          borderBottom: '1px solid #ddd',
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            marginBottom: '8px',
+          }}
+        >
+          <div style={{ fontSize: '16px', fontWeight: 600, color: '#333' }}>
             Progress: {completedCount} / {marks.length} marks
           </div>
-          <div style={{
-            fontSize: '24px',
-            fontWeight: '700',
-            color: allFilled ? '#4caf50' : '#ff9800'
-          }}>
-            {Math.round((completedCount / marks.length) * 100)}%
+          <div style={{ fontSize: '24px', fontWeight: 700, color: allFilled ? '#4caf50' : '#ff9800' }}>
+            {pct}%
           </div>
         </div>
-        <div style={{
-          height: '8px',
-          background: '#e0e0e0',
-          borderRadius: '4px',
-          overflow: 'hidden'
-        }}>
-          <div style={{
-            height: '100%',
-            background: allFilled ? '#4caf50' : '#ff9800',
-            width: `${(completedCount / marks.length) * 100}%`,
-            transition: 'width 0.3s'
-          }} />
+        <div
+          style={{
+            height: '8px',
+            background: '#e0e0e0',
+            borderRadius: '4px',
+            overflow: 'hidden',
+          }}
+        >
+          <div
+            style={{
+              height: '100%',
+              background: allFilled ? '#4caf50' : '#ff9800',
+              width: `${marks.length ? (completedCount / marks.length) * 100 : 0}%`,
+              transition: 'width 0.3s',
+            }}
+          />
         </div>
       </div>
 
@@ -107,12 +111,11 @@ export default function ReviewScreen({
           flex: 1,
           overflow: 'auto',
           padding: '16px',
-          pointerEvents: isSubmitting ? 'none' : 'auto',  // << block clicks while submitting
-          opacity: isSubmitting ? 0.7 : 1                 // optional visual hint
+          pointerEvents: isSubmitting ? 'none' : 'auto',
+          opacity: isSubmitting ? 0.7 : 1,
         }}
         aria-busy={isSubmitting}
       >
-
         {marks.map((mark, idx) => {
           const value = entries[mark.mark_id || ''] || '';
           const isFilled = value.trim() !== '';
@@ -120,116 +123,159 @@ export default function ReviewScreen({
           return (
             <div
               key={mark.mark_id || idx}
-              onClick={() => { if (!isSubmitting) onJumpTo(idx); }}   // guard
+              onClick={() => {
+                if (!isSubmitting) onJumpTo(idx);
+              }}
               role="button"
-              tabIndex={isSubmitting ? -1 : 0}                        // not focusable while submitting
+              tabIndex={isSubmitting ? -1 : 0}
               aria-disabled={isSubmitting}
               onKeyDown={(e) => {
                 if (!isSubmitting && (e.key === 'Enter' || e.key === ' ')) onJumpTo(idx);
               }}
               style={{
-  marginBottom: '12px',
-  padding: '12px',
-  background: '#f9f9f9',
-  border: `2px solid ${isFilled ? '#c8e6c9' : '#ffcdd2'}`,
-  borderRadius: '8px',
-                cursor: isSubmitting ? 'not-allowed' : 'pointer',     // visual cue
+                display: 'flex',                 // <<< icon left + content
+                alignItems: 'flex-start',
+                gap: '10px',
+                marginBottom: '12px',
+                padding: '12px',
+                background: '#fff',
+                border: '1px solid #eee',        // <<< neutral, no red/green border
+                borderRadius: '8px',
+                cursor: isSubmitting ? 'not-allowed' : 'pointer',
                 userSelect: 'none',
                 transition: 'transform 120ms ease, box-shadow 120ms ease',
               }}
-              onMouseDown={(e) => { if (!isSubmitting) (e.currentTarget.style.transform = 'scale(0.995)'); }}
-              onMouseUp={(e) => { (e.currentTarget.style.transform = 'scale(1)'); }}
-              onMouseLeave={(e) => { (e.currentTarget.style.transform = 'scale(1)'); }}
+              onMouseDown={(e) => {
+                if (!isSubmitting) e.currentTarget.style.transform = 'scale(0.995)';
+              }}
+              onMouseUp={(e) => {
+                e.currentTarget.style.transform = 'scale(1)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = 'scale(1)';
+              }}
             >
+              {/* Left status icon only (no row border color) */}
+              <div
+                style={{
+                  minWidth: '24px',
+                  width: '24px',
+                  height: '24px',
+                  borderRadius: '50%',
+                  border: `2px solid ${isFilled ? '#4caf50' : '#ff5252'}`,
+                  background: isFilled ? '#4caf50' : 'white',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                  marginTop: 2,
+                }}
+                aria-hidden="true"
+              >
+                {isFilled ? (
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="white"
+                    strokeWidth="3"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <polyline points="20 6 9 17 4 12"></polyline>
+                  </svg>
+                ) : (
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="#ff5252"
+                    strokeWidth="3"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                  </svg>
+                )}
+              </div>
 
-              <div style={{
-  minWidth: '24px',
-  width: '24px',
-  height: '24px',
-  borderRadius: '50%',
-  border: `2px solid ${isFilled ? '#4caf50' : '#ff5252'}`,
-  background: isFilled ? '#4caf50' : 'white',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  flexShrink: 0
-}}>
-  {isFilled ? (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-      <polyline points="20 6 9 17 4 12"></polyline>
-    </svg>
-  ) : (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ff5252" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-      <line x1="18" y1="6" x2="6" y2="18"></line>
-      <line x1="6" y1="6" x2="18" y2="18"></line>
-    </svg>
-  )}
-</div>
+              {/* Content */}
+              <div style={{ flex: 1 }}>
+                <div
+                  style={{
+                    fontSize: '14px',
+                    fontWeight: 600,
+                    color: '#333',
+                    marginBottom: '4px',
+                    whiteSpace: 'normal',
+                    overflowWrap: 'anywhere',
+                    wordBreak: 'break-word',
+                    lineHeight: '1.25',
+                  }}
+                >
+                  <span style={{ opacity: 0.85 }}>{mark.label ?? '–'}.</span> {mark.name}
+                </div>
 
-                <div style={{ flex: 1 }}>
+                {isFilled ? (
                   <div
                     style={{
                       fontSize: '14px',
-                      fontWeight: '600',
-                      color: '#333',
-                      marginBottom: '4px',
-                      whiteSpace: 'normal',
-                      overflowWrap: 'anywhere',
-                      wordBreak: 'break-word',
-                      lineHeight: '1.25',
-                    }}
-                  >
-                    <span style={{ opacity: 0.85 }}>{mark.label ?? '–'}.</span> {mark.name}
-                  </div>
-
-                  {isFilled ? (
-                    <div style={{
-                      fontSize: '14px',
                       color: '#666',
                       padding: '8px',
-                      background: 'white',
+                      background: '#f9f9f9',
                       borderRadius: '4px',
-                      wordBreak: 'break-word'
-                    }}>
-                      {value}
-                    </div>
-                  ) : (
-                    <div style={{
+                      wordBreak: 'break-word',
+                    }}
+                  >
+                    {value}
+                  </div>
+                ) : (
+                  <div
+                    style={{
                       fontSize: '13px',
                       color: '#d32f2f',
-                      fontStyle: 'italic'
-                    }}>
-                      Missing - Please fill this mark
-                    </div>
-                  )}
-                </div>
+                      fontStyle: 'italic',
+                    }}
+                  >
+                    Missing - Please fill this mark
+                  </div>
+                )}
               </div>
+            </div>
           );
         })}
       </div>
 
       {/* Warning Message */}
       {!allFilled && (
-        <div style={{
-          padding: '12px 16px',
-          background: '#fff3e0',
-          borderTop: '1px solid #ffb74d',
-          color: '#e65100',
-          fontSize: '14px',
-          fontWeight: '500'
-        }}>
-          ⚠️ Please fill all {marks.length - completedCount} missing mark(s) before submitting
+        <div
+          style={{
+            padding: '12px 16px',
+            background: '#fff3e0',
+            borderTop: '1px solid #ffb74d',
+            color: '#e65100',
+            fontSize: '14px',
+            fontWeight: 500,
+          }}
+        >
+          ⚠️ Please fill all {Math.max(0, marks.length - completedCount)} missing mark(s) before
+          submitting
         </div>
       )}
 
       {/* Action Buttons */}
-      <div style={{
-        padding: '16px',
-        background: '#f9f9f9',
-        borderTop: '2px solid #ddd',
-        display: 'flex',
-        gap: '12px'
-      }}>
+      <div
+        style={{
+          padding: '16px',
+          background: '#f9f9f9',
+          borderTop: '2px solid #ddd',
+          display: 'flex',
+          gap: '12px',
+        }}
+      >
         <button
           onClick={onBack}
           disabled={isSubmitting}
@@ -237,13 +283,13 @@ export default function ReviewScreen({
             flex: 1,
             padding: '14px',
             fontSize: '16px',
-            fontWeight: '600',
+            fontWeight: 600,
             border: '2px solid #ddd',
             background: 'white',
             color: '#333',
             borderRadius: '8px',
             cursor: isSubmitting ? 'not-allowed' : 'pointer',
-            minHeight: '44px'
+            minHeight: '44px',
           }}
         >
           ← Go Back
@@ -255,17 +301,16 @@ export default function ReviewScreen({
             flex: 1,
             padding: '14px',
             fontSize: '16px',
-            fontWeight: '600',
+            fontWeight: 600,
             border: 'none',
-            background: isSubmitting ? '#81c784' : '#4caf50',  // lighter green while submitting
+            background: isSubmitting ? '#81c784' : '#4caf50',
             color: 'white',
             borderRadius: '8px',
             cursor: isSubmitting ? 'not-allowed' : 'pointer',
             minHeight: '44px',
             opacity: isSubmitting ? 0.7 : 1,
-            transition: 'background 0.2s, opacity 0.2s'
+            transition: 'background 0.2s, opacity 0.2s',
           }}
-
         >
           {isSubmitting ? '⏳ Submitting...' : '✓ Submit All'}
         </button>

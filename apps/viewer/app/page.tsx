@@ -798,13 +798,20 @@ setFlashRect({
 setTimeout(() => setFlashRect(null), 1200);
 
 // Persistent yellow outline (stays until next mark)
-setSelectedRect({
+const keepAliveRect = {
   pageNumber,
   x: rectAtZ.x,
   y: rectAtZ.y,
   w: rectAtZ.w,
   h: rectAtZ.h,
-});
+};
+setSelectedRect(keepAliveRect);
+
+// ⬅️ Re-apply once more after the flash ends to defeat any layout drift
+setTimeout(() => {
+  setSelectedRect(keepAliveRect);
+}, 1250);
+
 
         // Get actual page position in scrollable container
         const containerRect = container.getBoundingClientRect();
