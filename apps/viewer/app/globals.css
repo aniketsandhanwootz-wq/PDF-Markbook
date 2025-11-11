@@ -192,21 +192,32 @@ body {
   text-align: center;
 }
 
+/* PATCH: JS handles both pan + pinch; let pointer events through */
 .pdf-surface-wrap {
   flex: 1;
   overflow: auto;
   background: #525252;
-  touch-action: pan-x pan-y; /* we handle the pinch in JS */
+  touch-action: none;
+  -webkit-overflow-scrolling: touch; /* smooth on iOS */
+  overscroll-behavior: contain;      /* avoid page pull-to-refresh */
+}
+/* Optional: show grab cursor on desktop/touch emulators */
+.pdf-surface-wrap {
+  cursor: grab;
+}
+.pdf-surface-wrap:active {
+  cursor: grabbing;
 }
 
 
 .pdf-surface {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;  /* Always left-align for proper scrolling */
+  align-items: flex-start;
+  /* Always left-align for proper scrolling */
   gap: 16px;
   min-width: 100%;
-  padding: 16px; 
+  padding: 16px;
 }
 
 .page-wrapper {
@@ -227,7 +238,8 @@ body {
   top: 0;
   left: 0;
   pointer-events: none;
-  z-index: 200;            /* ensure the outline sits above the page bitmaps */
+  z-index: 200;
+  /* ensure the outline sits above the page bitmaps */
 }
 
 
@@ -266,6 +278,7 @@ body {
     min-height: 44px;
   }
 }
+
 /* ========== Mobile Input Panel Styles ========== */
 
 .viewer-mobile-layout {
@@ -283,7 +296,8 @@ body {
 
 .input-panel-section {
   height: 25vh;
-  background: transparent;    /* transparent so rounded card shows cleanly */
+  background: transparent;
+  /* transparent so rounded card shows cleanly */
   border-top: 0;
   padding: 8px 8px 10px;
 }
@@ -299,14 +313,16 @@ body {
 @media (max-width: 768px) {
   .viewer-mobile-layout {
     height: 100vh;
-    height: 100dvh; /* Dynamic viewport height */
+    height: 100dvh;
+    /* Dynamic viewport height */
     display: flex;
     flex-direction: column;
   }
 
   .pdf-viewer-section {
     flex: 1;
-    min-height: 0; /* Important for flex */
+    min-height: 0;
+    /* Important for flex */
     overflow: auto;
   }
 
@@ -323,7 +339,8 @@ body {
   }
 
   .viewer-mobile-layout .zoom-controls {
-    display: none; /* Hide zoom controls on mobile */
+    display: none;
+    /* Hide zoom controls on mobile */
   }
 
   .viewer-mobile-layout .page-nav {
@@ -356,6 +373,7 @@ body {
   padding: 0;
   border: none;
 }
+
 .pdf-surface {
   will-change: transform;
 }
@@ -364,11 +382,13 @@ body {
   image-rendering: auto;
   backface-visibility: hidden;
 }
+
 /* Desktop viewer vertical layout */
 .viewer-container .main-content {
   display: flex;
   flex-direction: column;
-  height: 100dvh; /* includes mobile browser UI properly */
+  height: 100dvh;
+  /* includes mobile browser UI properly */
 }
 
 /* Scroll area should take the remaining height above the input panel */
@@ -386,41 +406,53 @@ body {
   /* Let InputPanel render its own rounded card */
   background: transparent;
   border-top: 0;
-  padding: 8px 8px 10px; /* small breathing room around the rounded card */
+  padding: 8px 8px 10px;
+  /* small breathing room around the rounded card */
 }
 
 /* Ensure containers that host swipe handlers don't consume pinch */
 .swipe-gesture-host {
-  touch-action: pan-x pan-y !important; /* no pinch-zoom here */
+  touch-action: pan-x pan-y !important;
+  /* no pinch-zoom here */
 }
+
 .toolbar-overlay {
-  position: fixed;                               /* does NOT take layout space */
-  top: max(8px, env(safe-area-inset-top));       /* safe area on iOS */
+  position: fixed;
+  /* does NOT take layout space */
+  top: max(8px, env(safe-area-inset-top));
+  /* safe area on iOS */
   left: 50%;
   transform: translateX(-50%);
-  z-index: 300;                                   /* above canvases/overlays */
-  width: auto;                                    /* no full-width white strip */
+  z-index: 300;
+  /* above canvases/overlays */
+  width: auto;
+  /* no full-width white strip */
   display: flex;
   justify-content: center;
-  pointer-events: none;                           /* let the PDF receive scroll/drag */
+  pointer-events: none;
+  /* let the PDF receive scroll/drag */
 }
 
 /* Re-enable clicks on toolbar content */
-.toolbar-overlay > * {
+.toolbar-overlay>* {
   pointer-events: auto;
 }
 
 /* Optional: subtle elevation for buttons only (kept from before) */
 .toolbar-overlay button {
-  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
   border-radius: 8px;
 }
+
 /* ===== Floating HUD (maps-style) ===== */
 .hud-left,
 .hud-right {
-  position: fixed;                               /* don't consume layout space */
-  z-index: 500;                                  /* above canvases/overlays */
-  pointer-events: none;                          /* PDF can scroll/drag behind */
+  position: fixed;
+  /* don't consume layout space */
+  z-index: 500;
+  /* above canvases/overlays */
+  pointer-events: none;
+  /* PDF can scroll/drag behind */
 }
 
 .hud-left {
@@ -438,8 +470,8 @@ body {
 }
 
 /* clickable children */
-.hud-left > *,
-.hud-right > * {
+.hud-left>*,
+.hud-right>* {
   pointer-events: auto;
 }
 
@@ -449,9 +481,9 @@ body {
   height: 44px;
   padding: 0 12px;
   background: rgba(255, 255, 255, 0.95);
-  border: 1px solid rgba(0,0,0,0.15);
+  border: 1px solid rgba(0, 0, 0, 0.15);
   border-radius: 10px;
-  box-shadow: 0 2px 10px rgba(0,0,0,0.15);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
   cursor: pointer;
   font-size: 18px;
   line-height: 1;
@@ -468,7 +500,8 @@ body {
 /* Sidebar button a bit wider */
 .hud-sidebar-btn {
   min-width: 52px;
-  font-size: 22px;    /* larger icon */
+  font-size: 22px;
+  /* larger icon */
 }
 
 /* progress badge (rounded square) */
@@ -477,10 +510,10 @@ body {
   font-weight: 600;
   font-size: 14px;
   color: #111;
-  background: rgba(255,255,255,0.96);
-  border: 1px solid rgba(0,0,0,0.12);
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(0, 0, 0, 0.12);
   border-radius: 12px;
-  box-shadow: 0 2px 10px rgba(0,0,0,0.15);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
 }
 
 /* vertical zoom buttons */
@@ -492,33 +525,40 @@ body {
 
 /* Sidebar should always be above canvases when open */
 .sidebar {
-  z-index: 600;            /* above HUD too, so lists are clickable */
-  position: relative;      /* create stacking context (desktop) */
+  z-index: 600;
+  /* above HUD too, so lists are clickable */
+  position: relative;
+  /* create stacking context (desktop) */
 }
 
 @media (max-width: 768px) {
   .sidebar {
-    position: absolute;    /* you already do this in mobile; keep it above all */
+    position: absolute;
+    /* you already do this in mobile; keep it above all */
     top: 0;
     left: 0;
     height: 100%;
   }
 }
+
 /* ✅ Keep sidebar above canvases and overlays */
 .sidebar {
   position: relative;
-  z-index: 2000; /* higher than page overlays and HUD */
+  z-index: 2000;
+  /* higher than page overlays and HUD */
 }
+
 /* ===== Slide-over Sidebar (GPU-accelerated) ===== */
 .slide-scrim {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.20);
+  background: rgba(0, 0, 0, 0.20);
   backdrop-filter: blur(1.5px);
   opacity: 0;
   pointer-events: none;
   transition: opacity 200ms ease;
-  z-index: 1999; /* below sidebar, above PDF */
+  z-index: 1999;
+  /* below sidebar, above PDF */
 }
 
 .slide-scrim.show {
@@ -532,14 +572,18 @@ body {
   left: 0;
   height: 100dvh;
   background: #fff;
-  box-shadow: 2px 0 24px rgba(0,0,0,0.20);
-  transform: translate3d(-100%, 0, 0);  /* off-screen */
-  transition: transform 220ms cubic-bezier(.2,.7,.2,1);
-  will-change: transform;               /* hint for GPU path */
-  z-index: 2000;                        /* above scrim & canvases */
+  box-shadow: 2px 0 24px rgba(0, 0, 0, 0.20);
+  transform: translate3d(-100%, 0, 0);
+  /* off-screen */
+  transition: transform 220ms cubic-bezier(.2, .7, .2, 1);
+  will-change: transform;
+  /* hint for GPU path */
+  z-index: 2000;
+  /* above scrim & canvases */
   display: flex;
   flex-direction: column;
-  max-width: 90vw;                      /* safety on tiny phones */
+  max-width: 90vw;
+  /* safety on tiny phones */
 }
 
 .slide-sidebar.open {
@@ -568,11 +612,19 @@ body {
 }
 
 /* Keep old .sidebar visually above if it exists somewhere else */
-.sidebar { z-index: 10; }
+.sidebar {
+  z-index: 10;
+}
 
 /* ---- Prevent side-scroll & wrap long mark names in all sidebars ---- */
-.mark-list { overflow-x: hidden; }
-.mark-item { width: 100%; }
+.mark-list {
+  overflow-x: hidden;
+}
+
+.mark-item {
+  width: 100%;
+}
+
 .mark-name {
   white-space: normal;
   word-break: break-word;
@@ -581,20 +633,29 @@ body {
 
 /* If any sidebar container elsewhere caused horizontal scroll, force-hide it */
 .sidebar,
-.slide-sidebar__body { overflow-x: hidden; }
+.slide-sidebar__body {
+  overflow-x: hidden;
+}
 
 /* Make sure mark list can always scroll and header sticks */
 .mark-list {
   overflow-y: auto;
   max-height: 100%;
 }
+
 .mark-list-items {
-  padding-bottom: 8px; /* breathing room under last item */
+  padding-bottom: 8px;
+  /* breathing room under last item */
 }
 
 .mark-item.active {
-  background: #E3F2FD;     /* soft bluish */
-  color: inherit;          /* keep normal text color */
+  background: #E3F2FD;
+  /* soft bluish */
+  color: inherit;
+  /* keep normal text color */
   border: 2px solid #1976d2;
 }
-:root { padding-bottom: env(safe-area-inset-bottom); }
+
+:root {
+  padding-bottom: env(safe-area-inset-bottom);
+}
