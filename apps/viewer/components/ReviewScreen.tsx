@@ -128,11 +128,11 @@ export default function ReviewScreen({
                 if (!isSubmitting && (e.key === 'Enter' || e.key === ' ')) onJumpTo(idx);
               }}
               style={{
-                marginBottom: '12px',
-                padding: '12px',
-                background: isFilled ? '#f9f9f9' : '#fffde7',  // light yellow for missing
-                border: `2px solid ${isFilled ? '#c8e6c9' : '#ffe082'}`, // soft yellow border
-                borderRadius: '8px',
+  marginBottom: '12px',
+  padding: '12px',
+  background: '#f9f9f9',
+  border: `2px solid ${isFilled ? '#c8e6c9' : '#ffcdd2'}`,
+  borderRadius: '8px',
                 cursor: isSubmitting ? 'not-allowed' : 'pointer',     // visual cue
                 userSelect: 'none',
                 transition: 'transform 120ms ease, box-shadow 120ms ease',
@@ -143,24 +143,28 @@ export default function ReviewScreen({
             >
 
               <div style={{
-                display: 'flex',
-                alignItems: 'flex-start',
-                gap: '12px'
-              }}>
-                <div style={{
-                  minWidth: '24px',
-                  width: '24px',
-                  height: '24px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center'
-                }}>
-                  <img
-                    src={isFilled ? '/icons/check.png' : '/icons/cross.png'}
-                    alt={isFilled ? 'Done' : 'Missing'}
-                    style={{ width: '100%', height: 'auto' }}
-                  />
-                </div>
+  minWidth: '24px',
+  width: '24px',
+  height: '24px',
+  borderRadius: '50%',
+  border: `2px solid ${isFilled ? '#4caf50' : '#ff5252'}`,
+  background: isFilled ? '#4caf50' : 'white',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  flexShrink: 0
+}}>
+  {isFilled ? (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="20 6 9 17 4 12"></polyline>
+    </svg>
+  ) : (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ff5252" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="18" y1="6" x2="6" y2="18"></line>
+      <line x1="6" y1="6" x2="18" y2="18"></line>
+    </svg>
+  )}
+</div>
 
                 <div style={{ flex: 1 }}>
                   <div
@@ -200,7 +204,6 @@ export default function ReviewScreen({
                   )}
                 </div>
               </div>
-            </div>
           );
         })}
       </div>

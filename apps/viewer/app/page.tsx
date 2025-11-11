@@ -673,10 +673,12 @@ setIsMobileInputMode(isMobile);
         setIsMobileInputMode(false);
       });
   }, [markSetId, isDemo, showSetup, apiBase]);
-  // Auto-navigate to first mark when marks load
 useEffect(() => {
-  if (marks.length > 0 && pdf) {
-    navigateToMark(currentMarkIndex); // ensures the first mark is properly centered and outlined
+  if (marks.length > 0 && pdf && currentMarkIndex === 0) {
+    const timer = setTimeout(() => {
+      navigateToMark(0);
+    }, 800);
+    return () => clearTimeout(timer);
   }
 }, [marks, pdf]);
 
