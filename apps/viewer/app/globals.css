@@ -661,3 +661,12 @@ body {
 :root {
   padding-bottom: env(safe-area-inset-bottom);
 }
+
+/* PATCH[globals.css] — help the browser isolate scrolling/painting work */
+.pdf-surface-wrap {
+  contain: layout paint size;
+  backface-visibility: hidden;
+}
+.page-overlay {
+  contain: strict;
+}

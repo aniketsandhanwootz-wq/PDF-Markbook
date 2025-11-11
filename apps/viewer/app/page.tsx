@@ -83,6 +83,14 @@ async function waitForCanvasLayout(
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 // ease-out cubic for pleasant feel
 const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
+// PATCH[page.tsx] — add quantized zoom helpers (place after easeOutCubic)
+const quantize = (z: number) => {
+  // 2-decimal quantization stabilizes cache & reduces re-renders
+  const q = Math.round(clampZoom(z) * 100) / 100;
+  return q;
+};
+
+
 
 function clampScroll(container: HTMLElement, left: number, top: number) {
   const maxL = Math.max(0, container.scrollWidth - container.clientWidth);
@@ -424,6 +432,16 @@ function ViewerContent() {
   const [marks, setMarks] = useState<Mark[]>([]);
   const [currentMarkIndex, setCurrentMarkIndex] = useState(0);
   const [zoom, setZoom] = useState(1.0);
+    // Quantized zoom setter (must live at component top-level)
+  const setZoomQ = useCallback(
+    (z: number, ref?: React.MutableRefObject<number>) => {
+      const q = quantize(z);   // uses the top-level quantize()
+      setZoom(q);              // update state
+      if (ref) ref.current = q; // keep ref in sync for math during gestures
+      return q;
+    },
+    []
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false); // Start closed on mobile
@@ -489,7 +507,8 @@ function ViewerContent() {
         const k = z / startZoom;
 
         // 1) apply zoom (triggers canvas resize/layout)
-        setZoom(z);
+        setZoomQ(z, zoomRef);
+      
 
         // 2) keep focal point centered (clamped)
         const targetLeft = contentX * k - anchorX;
@@ -546,8 +565,8 @@ const zoomAt = useCallback(
     const scale = nextZoom / prevZoom;
 
     // 1) set zoom state quickly (no extra animations here)
-    setZoom(nextZoom);
-    zoomRef.current = nextZoom;
+    setZoomQ(nextZoom, zoomRef);
+
 
     // 2) keep the same content point under the anchor
     const targetLeft = contentX * scale - anchorX;
@@ -763,162 +782,119 @@ const zoomAt = useCallback(
     return () => container.removeEventListener('scroll', handleScroll);
   }, [pdf, numPages]);
 
+  // PATCH[page.tsx] — precompute page sizes at scale=1 (used everywhere without getPage)
+useEffect(() => {
+  if (!pdf) return;
+  let cancelled = false;
+
+  (async () => {
+    const n = pdf.numPages;
+    const sizes: Array<{ w: number; h: number }> = new Array(n);
+    for (let i = 1; i <= n; i++) {
+      const page = await pdf.getPage(i);
+      if (cancelled) return;
+      const vp = page.getViewport({ scale: 1 });
+      sizes[i - 1] = { w: vp.width, h: vp.height };
+    }
+    basePageSizeRef.current = sizes;
+  })();
+
+  return () => { cancelled = true; };
+}, [pdf]);
+
   const navigateToMark = useCallback(
     async (index: number) => {
-      if (!pdf || index < 0 || index >= marks.length) return;
+        if (!pdf || index < 0 || index >= marks.length) return;
 
-      const mark = marks[index];
-      setCurrentMarkIndex(index);
+  const mark = marks[index];
+  setCurrentMarkIndex(index);
 
-      const pageNumber = mark.page_index + 1;
-      const container = containerRef.current;
-      const pageEl = pageElsRef.current[mark.page_index];
+  const pageNumber = mark.page_index + 1;
+  const container = containerRef.current;
+  const pageEl = pageElsRef.current[mark.page_index];
+  if (!container || !pageEl) return;
 
-      if (!container || !pageEl) return;
+  // Use precomputed base size (scale=1) — no getPage here
+  const base = basePageSizeRef.current[mark.page_index];
+  if (!base) return;
 
-      try {
-        const page = await pdf.getPage(pageNumber);
-        const vp1 = page.getViewport({ scale: 1 });
-        basePageSizeRef.current[mark.page_index] = { w: vp1.width, h: vp1.height };
+  // Rect at scale=1
+  const rectAt1 = {
+    x: mark.nx * base.w,
+    y: mark.ny * base.h,
+    w: mark.nw * base.w,
+    h: mark.nh * base.h,
+  };
 
-        const rectAt1 = {
-          x: mark.nx * vp1.width,
-          y: mark.ny * vp1.height,
-          w: mark.nw * vp1.width,
-          h: mark.nh * vp1.height,
-        };
+  const containerW = container.clientWidth;
+  const containerH = container.clientHeight;
 
-        const containerW = container.clientWidth;
-        const containerH = container.clientHeight;
+  let targetZoom = Math.min((containerW * 0.8) / rectAt1.w, (containerH * 0.8) / rectAt1.h);
+  targetZoom = Math.min(targetZoom, 4);
+  if (containerW < 600) targetZoom = Math.min(targetZoom, 3);
 
-        const zoomX = (containerW * 0.8) / rectAt1.w;
-        const zoomY = (containerH * 0.8) / rectAt1.h;
+  const qZoom = setZoomQ(targetZoom, zoomRef);
 
-        let targetZoom = Math.min(zoomX, zoomY);   // declare
-        targetZoom = Math.min(targetZoom, 4);      // desktop guard
-        if (containerW < 600) targetZoom = Math.min(targetZoom, 3); // mobile guard
-        targetZoom = clampZoom(targetZoom);
-        setZoom(targetZoom);
+  // Rect directly at qZoom (no layout wait)
+  const rectAtZ = {
+    x: mark.nx * base.w * qZoom,
+    y: mark.ny * base.h * qZoom,
+    w: mark.nw * base.w * qZoom,
+    h: mark.nh * base.h * qZoom,
+  };
 
-        // Pre-compute expected page size at target zoom
-        const vpExpected = page.getViewport({ scale: targetZoom });
-        const expectedW = Math.round(vpExpected.width);
-        const expectedH = Math.round(vpExpected.height);
+  // Flash + persistent outline
+  setFlashRect({ pageNumber, ...rectAtZ });
+  setTimeout(() => setFlashRect(null), 1200);
+  const keepAliveRect = { pageNumber, ...rectAtZ };
+  setSelectedRect(keepAliveRect);
+  setTimeout(() => setSelectedRect(keepAliveRect), 1250);
 
-        // Wait until the <canvas> actually reaches that CSS size
-        await waitForCanvasLayout(pageEl, expectedW, expectedH);
+  // Center after next frame (ensures CSS sizes applied)
+  requestAnimationFrame(() => {
+    const containerRect = container.getBoundingClientRect();
+    const pageRect = pageEl.getBoundingClientRect();
 
-        // Use the same viewport for rect math
-        const vpZ = vpExpected;
+    const pageOffsetLeft = container.scrollLeft + (pageRect.left - containerRect.left);
+    const pageOffsetTop  = container.scrollTop  + (pageRect.top  - containerRect.top);
 
+    const markCenterX = pageOffsetLeft + rectAtZ.x + rectAtZ.w / 2;
+    const markCenterY = pageOffsetTop  + rectAtZ.y + rectAtZ.h / 2;
 
-        // Calculate mark rect at target zoom
-        const rectAtZ = {
-          x: mark.nx * vpZ.width,
-          y: mark.ny * vpZ.height,
-          w: mark.nw * vpZ.width,
-          h: mark.nh * vpZ.height,
-        };
+    const targetScrollLeft = markCenterX - containerW / 2;
+    const targetScrollTop  = markCenterY - containerH / 2;
 
-        // Flash the mark (temporary red)
-        setFlashRect({
-          pageNumber,
-          x: rectAtZ.x,
-          y: rectAtZ.y,
-          w: rectAtZ.w,
-          h: rectAtZ.h,
-        });
-        setTimeout(() => setFlashRect(null), 1200);
+    const { left: clampedL, top: clampedT } = clampScroll(container, targetScrollLeft, targetScrollTop);
+    container.scrollTo({ left: clampedL, top: clampedT, behavior: 'smooth' });
+  });
 
-        // Persistent yellow outline (stays until next mark)
-        const keepAliveRect = {
-          pageNumber,
-          x: rectAtZ.x,
-          y: rectAtZ.y,
-          w: rectAtZ.w,
-          h: rectAtZ.h,
-        };
-        setSelectedRect(keepAliveRect);
-
-        // ⬅️ Re-apply once more after the flash ends to defeat any layout drift
-        setTimeout(() => {
-          setSelectedRect(keepAliveRect);
-        }, 1250);
-
-
-        // Get actual page position in scrollable container
-        const containerRect = container.getBoundingClientRect();
-        const pageRect = pageEl.getBoundingClientRect();
-
-        // Calculate page offset relative to container's scroll origin
-        const pageOffsetLeft = container.scrollLeft + (pageRect.left - containerRect.left);
-        const pageOffsetTop = container.scrollTop + (pageRect.top - containerRect.top);
-
-        // Calculate mark center in absolute scroll coordinates
-        const markCenterX = pageOffsetLeft + rectAtZ.x + rectAtZ.w / 2;
-        const markCenterY = pageOffsetTop + rectAtZ.y + rectAtZ.h / 2;
-
-        // Calculate scroll position to center mark in viewport
-        const targetScrollLeft = markCenterX - containerW / 2;
-        const targetScrollTop = markCenterY - containerH / 2;
-
-        const { left: clampedL, top: clampedT } =
-          clampScroll(container, targetScrollLeft, targetScrollTop);
-
-        container.scrollTo({ left: clampedL, top: clampedT, behavior: 'smooth' });
-
-
-      } catch (error) {
-        console.error('Error navigating to mark:', error);
-      }
     },
     [marks, pdf]
   );
 
+ 
   useEffect(() => {
-    (async () => {
-      if (!pdf || marks.length === 0) return;
-      if (isZoomAnimatingRef.current) return;
+  if (marks.length === 0) return;
+  if (isZoomAnimatingRef.current) return;
 
-      const mark = marks[currentMarkIndex];
-      if (!mark) return;
+  const mark = marks[currentMarkIndex];
+  if (!mark) return;
 
-      const pageNumber = mark.page_index + 1;
-      const container = containerRef.current;
-      const pageEl = pageElsRef.current[mark.page_index];
-      if (!container || !pageEl) return;
+  const base = basePageSizeRef.current[mark.page_index];
+  if (!base) return;
 
-      try {
-        const page = await pdf.getPage(pageNumber);
+  const rectAtZ = {
+    x: mark.nx * base.w * zoom,
+    y: mark.ny * base.h * zoom,
+    w: mark.nw * base.w * zoom,
+    h: mark.nh * base.h * zoom,
+  };
 
-        // expected size at current zoom
-        const vpZ = page.getViewport({ scale: zoom });
-        const expectedW = Math.round(vpZ.width);
-        const expectedH = Math.round(vpZ.height);
-
-        // wait until canvas is actually at this CSS size
-        await waitForCanvasLayout(pageEl, expectedW, expectedH);
-
-        // recompute rect in current zoom
-        const rectAtZ = {
-          x: mark.nx * vpZ.width,
-          y: mark.ny * vpZ.height,
-          w: mark.nw * vpZ.width,
-          h: mark.nh * vpZ.height,
-        };
-
-        setSelectedRect({
-          pageNumber,
-          x: rectAtZ.x,
-          y: rectAtZ.y,
-          w: rectAtZ.w,
-          h: rectAtZ.h,
-        });
-      } catch {
-        // ignore if page gone
-      }
-    })();
-  }, [zoom, currentMarkIndex, pdf, marks]);
+  setSelectedRect({
+    pageNumber: mark.page_index + 1,
+    ...rectAtZ,
+  });
+}, [zoom, currentMarkIndex, marks]);
 
   const prevMark = useCallback(() => {
     if (currentMarkIndex > 0) {
@@ -1126,7 +1102,7 @@ const zoomOut = useCallback(() => {
   // (optional) make reset smooth as well:
   // const resetZoom = useCallback(() => smoothZoom(1.0), [smoothZoom]);
 
-  const resetZoom = useCallback(() => setZoom(1.0), []);
+  const resetZoom = useCallback(() => setZoomQ(1.0, zoomRef), []);
 
   const fitToWidthZoom = useCallback(() => {
     if (!pdf || !containerRef.current) return;
@@ -1135,7 +1111,7 @@ const zoomOut = useCallback(() => {
       const viewport = page.getViewport({ scale: 1.0 });
       const containerWidth = containerRef.current!.clientWidth - 32;
       const newZoom = containerWidth / viewport.width;
-      setZoom(clampZoom(newZoom));
+      setZoomQ(newZoom, zoomRef);
     });
   }, [pdf]);
 

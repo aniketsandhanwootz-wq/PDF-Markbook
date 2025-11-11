@@ -83,7 +83,7 @@ const renderPage = async () => {
     const dpr = isTouch ? 1.5 : Math.min(window.devicePixelRatio || 1, 2);
 
     // Guard: never exceed ~8MP canvas to avoid mobile GPU stalls
-    const MAX_PIXELS = 8_000_000;
+    const MAX_PIXELS = 6_000_000;
     let effDpr = dpr;
     const estPixels = viewport.width * viewport.height * (dpr * dpr);
     if (estPixels > MAX_PIXELS) {
@@ -199,9 +199,11 @@ setCurrentCanvas(currentCanvasRef.current);
 
 // PATCH[PageCanvas.tsx] — slightly higher hysteresis to reduce churn
 const zoomDiff = Math.abs(zoom - lastRenderedZoomRef.current);
-if (zoomDiff > 0.02 || lastRenderedZoomRef.current === 0) {
+// PATCH[PageCanvas.tsx] — slightly higher hysteresis to cut mid-gesture churn
+if (zoomDiff > 0.035 || lastRenderedZoomRef.current === 0) {
   renderPage();
 }
+
 
 
     return () => {
