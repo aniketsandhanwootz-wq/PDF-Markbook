@@ -103,44 +103,44 @@ export default function ReviewScreen({
 
       {/* Entries List */}
       <div
-  style={{
-    flex: 1,
-    overflow: 'auto',
-    padding: '16px',
-    pointerEvents: isSubmitting ? 'none' : 'auto',  // << block clicks while submitting
-    opacity: isSubmitting ? 0.7 : 1                 // optional visual hint
-  }}
-  aria-busy={isSubmitting}
->
+        style={{
+          flex: 1,
+          overflow: 'auto',
+          padding: '16px',
+          pointerEvents: isSubmitting ? 'none' : 'auto',  // << block clicks while submitting
+          opacity: isSubmitting ? 0.7 : 1                 // optional visual hint
+        }}
+        aria-busy={isSubmitting}
+      >
 
         {marks.map((mark, idx) => {
           const value = entries[mark.mark_id || ''] || '';
           const isFilled = value.trim() !== '';
 
           return (
-  <div
-  key={mark.mark_id || idx}
-  onClick={() => { if (!isSubmitting) onJumpTo(idx); }}   // guard
-  role="button"
-  tabIndex={isSubmitting ? -1 : 0}                        // not focusable while submitting
-  aria-disabled={isSubmitting}
-  onKeyDown={(e) => {
-    if (!isSubmitting && (e.key === 'Enter' || e.key === ' ')) onJumpTo(idx);
-  }}
-  style={{
-    marginBottom: '12px',
-    padding: '12px',
-    background: isFilled ? '#f1f8e9' : '#ffebee',
-    border: `2px solid ${isFilled ? '#c5e1a5' : '#ffcdd2'}`,
-    borderRadius: '8px',
-    cursor: isSubmitting ? 'not-allowed' : 'pointer',     // visual cue
-    userSelect: 'none',
-    transition: 'transform 120ms ease, box-shadow 120ms ease',
-  }}
-  onMouseDown={(e) => { if (!isSubmitting) (e.currentTarget.style.transform = 'scale(0.995)'); }}
-  onMouseUp={(e) => { (e.currentTarget.style.transform = 'scale(1)'); }}
-  onMouseLeave={(e) => { (e.currentTarget.style.transform = 'scale(1)'); }}
->
+            <div
+              key={mark.mark_id || idx}
+              onClick={() => { if (!isSubmitting) onJumpTo(idx); }}   // guard
+              role="button"
+              tabIndex={isSubmitting ? -1 : 0}                        // not focusable while submitting
+              aria-disabled={isSubmitting}
+              onKeyDown={(e) => {
+                if (!isSubmitting && (e.key === 'Enter' || e.key === ' ')) onJumpTo(idx);
+              }}
+              style={{
+                marginBottom: '12px',
+                padding: '12px',
+                background: isFilled ? '#f9f9f9' : '#fffde7',  // light yellow for missing
+                border: `2px solid ${isFilled ? '#c8e6c9' : '#ffe082'}`, // soft yellow border
+                borderRadius: '8px',
+                cursor: isSubmitting ? 'not-allowed' : 'pointer',     // visual cue
+                userSelect: 'none',
+                transition: 'transform 120ms ease, box-shadow 120ms ease',
+              }}
+              onMouseDown={(e) => { if (!isSubmitting) (e.currentTarget.style.transform = 'scale(0.995)'); }}
+              onMouseUp={(e) => { (e.currentTarget.style.transform = 'scale(1)'); }}
+              onMouseLeave={(e) => { (e.currentTarget.style.transform = 'scale(1)'); }}
+            >
 
               <div style={{
                 display: 'flex',
@@ -148,26 +148,35 @@ export default function ReviewScreen({
                 gap: '12px'
               }}>
                 <div style={{
-                  fontSize: '20px',
-                  minWidth: '24px'
+                  minWidth: '24px',
+                  width: '24px',
+                  height: '24px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
                 }}>
-                  {isFilled ? '✓' : '⚠️'}
+                  <img
+                    src={isFilled ? '/icons/check.png' : '/icons/cross.png'}
+                    alt={isFilled ? 'Done' : 'Missing'}
+                    style={{ width: '100%', height: 'auto' }}
+                  />
                 </div>
+
                 <div style={{ flex: 1 }}>
                   <div
-  style={{
-    fontSize: '14px',
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: '4px',
-    whiteSpace: 'normal',
-    overflowWrap: 'anywhere',
-    wordBreak: 'break-word',
-    lineHeight: '1.25',
-  }}
->
-  <span style={{ opacity: 0.85 }}>{mark.label ?? '–'}.</span> {mark.name}
-</div>
+                    style={{
+                      fontSize: '14px',
+                      fontWeight: '600',
+                      color: '#333',
+                      marginBottom: '4px',
+                      whiteSpace: 'normal',
+                      overflowWrap: 'anywhere',
+                      wordBreak: 'break-word',
+                      lineHeight: '1.25',
+                    }}
+                  >
+                    <span style={{ opacity: 0.85 }}>{mark.label ?? '–'}.</span> {mark.name}
+                  </div>
 
                   {isFilled ? (
                     <div style={{
@@ -245,12 +254,15 @@ export default function ReviewScreen({
             fontSize: '16px',
             fontWeight: '600',
             border: 'none',
-            background: !allFilled || isSubmitting ? '#ccc' : '#4caf50',
+            background: isSubmitting ? '#81c784' : '#4caf50',  // lighter green while submitting
             color: 'white',
             borderRadius: '8px',
-            cursor: !allFilled || isSubmitting ? 'not-allowed' : 'pointer',
-            minHeight: '44px'
+            cursor: isSubmitting ? 'not-allowed' : 'pointer',
+            minHeight: '44px',
+            opacity: isSubmitting ? 0.7 : 1,
+            transition: 'background 0.2s, opacity 0.2s'
           }}
+
         >
           {isSubmitting ? '⏳ Submitting...' : '✓ Submit All'}
         </button>

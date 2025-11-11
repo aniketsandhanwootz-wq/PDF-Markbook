@@ -676,12 +676,10 @@ setIsMobileInputMode(isMobile);
   // Auto-navigate to first mark when marks load
 useEffect(() => {
   if (marks.length > 0 && pdf) {
-    const timer = setTimeout(() => {
-      navigateToMark(currentMarkIndex);
-    }, 800);
-    return () => clearTimeout(timer);
+    navigateToMark(currentMarkIndex); // ensures the first mark is properly centered and outlined
   }
 }, [marks, pdf]);
+
 
 // Set initial sidebar state based on screen size
 useEffect(() => {
