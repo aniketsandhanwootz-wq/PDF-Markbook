@@ -197,11 +197,12 @@ setCurrentCanvas(currentCanvasRef.current);
   }
 };
 
-    // Only re-render if zoom changed significantly (avoid micro-renders)
-    const zoomDiff = Math.abs(zoom - lastRenderedZoomRef.current);
-    if (zoomDiff > 0.01 || lastRenderedZoomRef.current === 0) {
-      renderPage();
-    }
+// PATCH[PageCanvas.tsx] — slightly higher hysteresis to reduce churn
+const zoomDiff = Math.abs(zoom - lastRenderedZoomRef.current);
+if (zoomDiff > 0.02 || lastRenderedZoomRef.current === 0) {
+  renderPage();
+}
+
 
     return () => {
       isCancelled = true;

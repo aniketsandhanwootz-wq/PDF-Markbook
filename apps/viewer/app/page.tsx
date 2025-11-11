@@ -24,12 +24,12 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs
 // Clean nested Cloudinary URLs - DEBUG VERSION
 function cleanPdfUrl(url: string): string {
   console.log('🔍 [cleanPdfUrl] INPUT:', url);
-  
+
   if (!url) {
     console.log('❌ [cleanPdfUrl] Empty URL');
     return url;
   }
-  
+
   // Decode URL-encoded string to find nested URLs
   let decoded = url;
   try {
@@ -45,7 +45,7 @@ function cleanPdfUrl(url: string): string {
     console.warn('⚠️ [cleanPdfUrl] Decode failed, using original');
     decoded = url;
   }
-  
+
   // Extract Google Storage URL
   const match = decoded.match(/https:\/\/storage\.googleapis\.com\/[^\s"'<>)]+\.pdf/i);
   if (match) {
@@ -53,7 +53,7 @@ function cleanPdfUrl(url: string): string {
     console.log('✅ [cleanPdfUrl] OUTPUT:', cleaned);
     return cleaned;
   }
-  
+
   console.log('⚠️ [cleanPdfUrl] No Google Storage URL found, returning original');
   return url;
 }
@@ -287,7 +287,7 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
               style={{ ...inp, width: '100%', marginBottom: 12 }}
             />
 
-            {err && <div style={{ background:'#ffebee', color:'#c62828', padding:10, borderRadius:4, marginBottom:12 }}>{err}</div>}
+            {err && <div style={{ background: '#ffebee', color: '#c62828', padding: 10, borderRadius: 4, marginBottom: 12 }}>{err}</div>}
 
             {!boot ? (
               <button onClick={runBootstrap} disabled={loading} style={btnPrimary}>
@@ -305,24 +305,24 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
 
         {boot && (
           <>
- 
 
-            {err && <div style={{ background:'#ffebee', color:'#c62828', padding:10, borderRadius:4, marginTop:12 }}>{err}</div>}
+
+            {err && <div style={{ background: '#ffebee', color: '#c62828', padding: 10, borderRadius: 4, marginTop: 12 }}>{err}</div>}
 
             {/* Master Mark Set (Pinned) */}
             {masterMarkset && (
-  <div style={{ marginTop:16 }}>
-    <div style={{ display:'flex', alignItems:'center', justifyContent:'flex-start', marginBottom:8 }}>
-      <div style={{ fontWeight:600 }}>⭐ Master Mark Set</div>
-    </div>
-    <div style={{ border:'2px solid #ffc107', borderRadius:6, padding:12, background:'#fffde7' }}>
-      {/* ...rest stays same... */}
- <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+              <div style={{ marginTop: 16 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start', marginBottom: 8 }}>
+                  <div style={{ fontWeight: 600 }}>⭐ Master Mark Set</div>
+                </div>
+                <div style={{ border: '2px solid #ffc107', borderRadius: 6, padding: 12, background: '#fffde7' }}>
+                  {/* ...rest stays same... */}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <div>
-                      <div style={{ fontWeight:700, fontSize:16, color:'#333' }}>{masterMarkset.label}</div>
-                      <div style={{ color:'#666', fontSize:12 }}>{(masterMarkset.marks_count ?? 0)} marks</div>
+                      <div style={{ fontWeight: 700, fontSize: 16, color: '#333' }}>{masterMarkset.label}</div>
+                      <div style={{ color: '#666', fontSize: 12 }}>{(masterMarkset.marks_count ?? 0)} marks</div>
                     </div>
-                    <button onClick={() => handleOpenMarkset(masterMarkset.mark_set_id)} style={{...btn, background:'#1976d2', color:'#fff', border:'none'}}>
+                    <button onClick={() => handleOpenMarkset(masterMarkset.mark_set_id)} style={{ ...btn, background: '#1976d2', color: '#fff', border: 'none' }}>
                       Open
                     </button>
                   </div>
@@ -332,21 +332,21 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
 
             {/* Other Mark Sets */}
             {otherMarksets.length > 0 && (
-              <div style={{ marginTop:16 }}>
-                <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8 }}>
-                  <div style={{ fontWeight:600 }}>Other Mark Sets</div>
+              <div style={{ marginTop: 16 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                  <div style={{ fontWeight: 600 }}>Other Mark Sets</div>
                   {!masterMarkset && (
-                    <button onClick={() => setShowCreateModal(true)} style={{...btn, borderColor:'#4caf50', color:'#4caf50', fontWeight:600}}>
+                    <button onClick={() => setShowCreateModal(true)} style={{ ...btn, borderColor: '#4caf50', color: '#4caf50', fontWeight: 600 }}>
                       + Create New
                     </button>
                   )}
                 </div>
-                <div style={{ display:'grid', gap:8, maxHeight: 320, overflowY: 'auto' }}>
+                <div style={{ display: 'grid', gap: 8, maxHeight: 320, overflowY: 'auto' }}>
                   {otherMarksets.map(ms => (
-                    <div key={ms.mark_set_id} style={{ border:'1px solid #ddd', borderRadius:6, padding:10, background:'#fff', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+                    <div key={ms.mark_set_id} style={{ border: '1px solid #ddd', borderRadius: 6, padding: 10, background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                       <div>
-                        <div style={{ fontWeight:600 }}>{ms.label}</div>
-                        <div style={{ color:'#666', fontSize:12 }}>{(ms.marks_count ?? 0)} marks</div>
+                        <div style={{ fontWeight: 600 }}>{ms.label}</div>
+                        <div style={{ color: '#666', fontSize: 12 }}>{(ms.marks_count ?? 0)} marks</div>
                       </div>
                       <button onClick={() => handleOpenMarkset(ms.mark_set_id)} style={btn}>
                         Open
@@ -358,8 +358,8 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
             )}
 
             {boot.mark_sets.length === 0 && (
-              <div style={{ marginTop:16, textAlign:'center' }}>
-                <div style={{ color:'#666', fontSize:13, marginBottom:12 }}>No mark sets yet.</div>
+              <div style={{ marginTop: 16, textAlign: 'center' }}>
+                <div style={{ color: '#666', fontSize: 13, marginBottom: 12 }}>No mark sets yet.</div>
                 <button onClick={() => setShowCreateModal(true)} style={btnPrimary}>
                   + Create First Mark Set
                 </button>
@@ -370,33 +370,33 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
 
         {/* Create Modal */}
         {showCreateModal && (
-          <div style={{ position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.5)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:9999 }}>
-            <div style={{ background:'#fff', borderRadius:8, padding:24, width:'90%', maxWidth:460, boxShadow:'0 4px 24px rgba(0,0,0,0.2)' }}>
-              <h3 style={{ margin:'0 0 16px 0', fontSize:18, fontWeight:700 }}>Create New Mark Set</h3>
-              
-              <input 
-                placeholder="Enter label (e.g., Heating System)" 
-                value={newLabel} 
+          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
+            <div style={{ background: '#fff', borderRadius: 8, padding: 24, width: '90%', maxWidth: 460, boxShadow: '0 4px 24px rgba(0,0,0,0.2)' }}>
+              <h3 style={{ margin: '0 0 16px 0', fontSize: 18, fontWeight: 700 }}>Create New Mark Set</h3>
+
+              <input
+                placeholder="Enter label (e.g., Heating System)"
+                value={newLabel}
                 onChange={e => setNewLabel(e.target.value)}
-                style={{...inp, width:'100%', marginBottom:12}}
+                style={{ ...inp, width: '100%', marginBottom: 12 }}
                 autoFocus
               />
 
-              <label style={{ display:'flex', alignItems:'center', marginBottom:16, cursor:'pointer' }}>
-                <input 
-                  type="checkbox" 
-                  checked={newIsMaster} 
+              <label style={{ display: 'flex', alignItems: 'center', marginBottom: 16, cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={newIsMaster}
                   onChange={e => setNewIsMaster(e.target.checked)}
-                  style={{ marginRight:8, width:18, height:18 }}
+                  style={{ marginRight: 8, width: 18, height: 18 }}
                 />
-                <span style={{ fontSize:14 }}>Set as Master Mark Set</span>
+                <span style={{ fontSize: 14 }}>Set as Master Mark Set</span>
               </label>
 
-              <div style={{ display:'flex', gap:8 }}>
-                <button onClick={() => setShowCreateModal(false)} disabled={creating} style={{...btn, flex:1}}>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button onClick={() => setShowCreateModal(false)} disabled={creating} style={{ ...btn, flex: 1 }}>
                   Cancel
                 </button>
-                <button onClick={handleCreateMarkset} disabled={creating} style={{...btnPrimary, flex:1, background:'#4caf50', borderColor:'#4caf50', color:'#fff'}}>
+                <button onClick={handleCreateMarkset} disabled={creating} style={{ ...btnPrimary, flex: 1, background: '#4caf50', borderColor: '#4caf50', color: '#fff' }}>
                   {creating ? 'Creating...' : 'Create'}
                 </button>
               </div>
@@ -408,9 +408,9 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
   );
 }
 // small styles for setup
-const inp: React.CSSProperties = { padding:'10px 12px', border:'1px solid #ddd', borderRadius:4, fontSize:14, outline:'none' };
-const btn: React.CSSProperties = { padding:'8px 14px', border:'1px solid #ccc', borderRadius:6, background:'#fff', cursor:'pointer' };
-const btnPrimary: React.CSSProperties = { ...btn, borderColor:'#1976d2', color:'#1976d2', fontWeight:700 };
+const inp: React.CSSProperties = { padding: '10px 12px', border: '1px solid #ddd', borderRadius: 4, fontSize: 14, outline: 'none' };
+const btn: React.CSSProperties = { padding: '8px 14px', border: '1px solid #ccc', borderRadius: 6, background: '#fff', cursor: 'pointer' };
+const btnPrimary: React.CSSProperties = { ...btn, borderColor: '#1976d2', color: '#1976d2', fontWeight: 700 };
 
 
 // Main Viewer Component
@@ -438,89 +438,127 @@ function ViewerContent() {
   const [showReview, setShowReview] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   // Refs used by the viewer and smooth zoom
-const containerRef = useRef<HTMLDivElement>(null);
-const pageHeightsRef = useRef<number[]>([]);
-const pageElsRef = useRef<Array<HTMLDivElement | null>>([]);
-const basePageSizeRef = useRef<Array<{ w: number; h: number }>>([]);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const pageHeightsRef = useRef<number[]>([]);
+  const pageElsRef = useRef<Array<HTMLDivElement | null>>([]);
+  const basePageSizeRef = useRef<Array<{ w: number; h: number }>>([]);
 
 
-// keep current zoom in a ref for synchronous math
-const zoomRef = useRef(zoom);
-useEffect(() => { zoomRef.current = zoom; }, [zoom]);
+  // keep current zoom in a ref for synchronous math
+  const zoomRef = useRef(zoom);
+  useEffect(() => { zoomRef.current = zoom; }, [zoom]);
 
-// smooth zoom animation bookkeeping
-const animRafRef = useRef<number | null>(null);
-const isZoomAnimatingRef = useRef(false);
+  // smooth zoom animation bookkeeping
+  const animRafRef = useRef<number | null>(null);
+  const isZoomAnimatingRef = useRef(false);
 
-// Smooth animated zoom that keeps the same focal point centered
-// Smooth animated zoom that keeps the same focal point centered
-const smoothZoom = useCallback(
-  (toZoomRaw: number, durationMs = 240) => {
+  // Smooth animated zoom that keeps the same focal point centered
+  // Smooth animated zoom that keeps the same focal point centered
+  const smoothZoom = useCallback(
+    (toZoomRaw: number, durationMs = 240) => {
+      const container = containerRef.current;
+      if (!container) return;
+
+      const toZoom = clampZoom(toZoomRaw);
+
+      // cancel an in-flight animation
+      if (animRafRef.current) cancelAnimationFrame(animRafRef.current);
+
+      const startZoom = zoomRef.current;
+      if (Math.abs(toZoom - startZoom) < 1e-4) return;
+
+      // anchor at the center of the viewport
+      const anchorX = container.clientWidth / 2;
+      const anchorY = container.clientHeight / 2;
+
+      // content coords under that anchor at start
+      const contentX = container.scrollLeft + anchorX;
+      const contentY = container.scrollTop + anchorY;
+
+      const mark = marks[currentMarkIndex];                 // ⬅️ use current mark
+      const base = mark ? basePageSizeRef.current[mark.page_index] : undefined;
+
+      const t0 = performance.now();
+      isZoomAnimatingRef.current = true;
+
+      const step = (now: number) => {
+        const t = Math.min(1, durationMs === 0 ? 1 : (now - t0) / durationMs);
+        const z = lerp(startZoom, toZoom, easeOutCubic(t));
+        const k = z / startZoom;
+
+        // 1) apply zoom (triggers canvas resize/layout)
+        setZoom(z);
+
+        // 2) keep focal point centered (clamped)
+        const targetLeft = contentX * k - anchorX;
+        const targetTop = contentY * k - anchorY;
+        const { left, top } = clampScroll(container, targetLeft, targetTop);
+        container.scrollLeft = left;
+        container.scrollTop = top;
+
+        // 3) move the yellow rect *in sync* with zoom (no waiting)
+        if (mark && base) {
+          const wZ = base.w * z;
+          const hZ = base.h * z;
+          setSelectedRect({
+            pageNumber: mark.page_index + 1,
+            x: mark.nx * wZ,
+            y: mark.ny * hZ,
+            w: mark.nw * wZ,
+            h: mark.nh * hZ,
+          });
+        }
+
+        if (t < 1) {
+          animRafRef.current = requestAnimationFrame(step);
+        } else {
+          animRafRef.current = null;
+          isZoomAnimatingRef.current = false;
+        }
+      };
+
+      animRafRef.current = requestAnimationFrame(step);
+    },
+    // deps: include things we read directly
+    [marks, currentMarkIndex, clampZoom]
+  );
+// PATCH[page.tsx] — add focal-point zoom helper
+const zoomAt = useCallback(
+  (nextZoomRaw: number, clientX: number, clientY: number) => {
     const container = containerRef.current;
     if (!container) return;
 
-    const toZoom = clampZoom(toZoomRaw);
+    const nextZoom = clampZoom(nextZoomRaw);
+    const prevZoom = zoomRef.current;
+    if (Math.abs(nextZoom - prevZoom) < 1e-4) return;
 
-    // cancel an in-flight animation
-    if (animRafRef.current) cancelAnimationFrame(animRafRef.current);
+    // Anchor at the given screen point (mouse or gesture center)
+    const rect = container.getBoundingClientRect();
+    const anchorX = clientX - rect.left;
+    const anchorY = clientY - rect.top;
 
-    const startZoom = zoomRef.current;
-    if (Math.abs(toZoom - startZoom) < 1e-4) return;
-
-    // anchor at the center of the viewport
-    const anchorX = container.clientWidth / 2;
-    const anchorY = container.clientHeight / 2;
-
-    // content coords under that anchor at start
+    // Content coords under anchor at previous zoom
     const contentX = container.scrollLeft + anchorX;
     const contentY = container.scrollTop + anchorY;
 
-    const mark = marks[currentMarkIndex];                 // ⬅️ use current mark
-    const base = mark ? basePageSizeRef.current[mark.page_index] : undefined;
+    const scale = nextZoom / prevZoom;
 
-    const t0 = performance.now();
-    isZoomAnimatingRef.current = true;
+    // 1) set zoom state quickly (no extra animations here)
+    setZoom(nextZoom);
+    zoomRef.current = nextZoom;
 
-    const step = (now: number) => {
-      const t = Math.min(1, durationMs === 0 ? 1 : (now - t0) / durationMs);
-      const z = lerp(startZoom, toZoom, easeOutCubic(t));
-      const k = z / startZoom;
+    // 2) keep the same content point under the anchor
+    const targetLeft = contentX * scale - anchorX;
+    const targetTop  = contentY * scale - anchorY;
 
-      // 1) apply zoom (triggers canvas resize/layout)
-      setZoom(z);
-
-      // 2) keep focal point centered (clamped)
-      const targetLeft = contentX * k - anchorX;
-      const targetTop  = contentY * k - anchorY;
-      const { left, top } = clampScroll(container, targetLeft, targetTop);
+    const { left, top } = clampScroll(container, targetLeft, targetTop);
+    // rAF prevents layout thrash during trackpad zooming
+    requestAnimationFrame(() => {
       container.scrollLeft = left;
       container.scrollTop  = top;
-
-      // 3) move the yellow rect *in sync* with zoom (no waiting)
-      if (mark && base) {
-        const wZ = base.w * z;
-        const hZ = base.h * z;
-        setSelectedRect({
-          pageNumber: mark.page_index + 1,
-          x: mark.nx * wZ,
-          y: mark.ny * hZ,
-          w: mark.nw * wZ,
-          h: mark.nh * hZ,
-        });
-      }
-
-      if (t < 1) {
-        animRafRef.current = requestAnimationFrame(step);
-      } else {
-        animRafRef.current = null;
-        isZoomAnimatingRef.current = false;
-      }
-    };
-
-    animRafRef.current = requestAnimationFrame(step);
+    });
   },
-  // deps: include things we read directly
-  [marks, currentMarkIndex, clampZoom]
+  [clampZoom]
 );
 
 
@@ -545,20 +583,20 @@ const smoothZoom = useCallback(
   }, [pdfUrlParam, hasBootstrapKeys]);
 
 
-const handleSetupComplete = (url: string, setId: string) => {
-  const prevQs = sessionStorage.getItem('viewerLastSetupParams')
-    || window.location.search.slice(1); // drop '?'
-  const params = new URLSearchParams(prevQs);
+  const handleSetupComplete = (url: string, setId: string) => {
+    const prevQs = sessionStorage.getItem('viewerLastSetupParams')
+      || window.location.search.slice(1); // drop '?'
+    const params = new URLSearchParams(prevQs);
 
-  // keep existing bootstrap params (project_name, id, part_number, user_mail, assembly_drawing)
-  params.set('pdf_url', url);
-  if (setId) params.set('mark_set_id', setId);
+    // keep existing bootstrap params (project_name, id, part_number, user_mail, assembly_drawing)
+    params.set('pdf_url', url);
+    if (setId) params.set('mark_set_id', setId);
 
-  // persist and navigate
-  sessionStorage.setItem('viewerLastSetupParams', params.toString());
-  const newUrl = `${window.location.pathname}?${params.toString()}`;
-  window.location.href = newUrl;
-};
+    // persist and navigate
+    sessionStorage.setItem('viewerLastSetupParams', params.toString());
+    const newUrl = `${window.location.pathname}?${params.toString()}`;
+    window.location.href = newUrl;
+  };
 
   const rawPdfUrl = cleanPdfUrl(
     isDemo
@@ -566,7 +604,7 @@ const handleSetupComplete = (url: string, setId: string) => {
       : pdfUrlParam || 'https://mozilla.github.io/pdf.js/web/compressed.tracemonkey-pldi-09.pdf'
   );
   const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
-  const pdfUrl = rawPdfUrl 
+  const pdfUrl = rawPdfUrl
     ? `${apiBase}/proxy-pdf?url=${encodeURIComponent(rawPdfUrl)}`
     : '';
 
@@ -597,17 +635,17 @@ const handleSetupComplete = (url: string, setId: string) => {
     },
   ];
   usePinchZoom({
-  containerRef,
-  setZoom,
-  zoomRef,
-  clampZoom,
-  maxPhoneZoom: 3,
-});
+    containerRef,
+    setZoom,
+    zoomRef,
+    clampZoom,
+    maxPhoneZoom: 3,
+  });
 
   // Load PDF
   useEffect(() => {
     if (showSetup) return;
-    
+
     if (!pdfUrl) {
       setError('No PDF URL provided');
       setLoading(false);
@@ -654,7 +692,7 @@ const handleSetupComplete = (url: string, setId: string) => {
       .then((data: Mark[]) => {
         const sorted = [...data].sort((a, b) => a.order_index - b.order_index);
         setMarks(sorted);
-        
+
         const initialEntries: Record<string, string> = {};
         sorted.forEach(mark => {
           if (mark.mark_id) {
@@ -662,10 +700,10 @@ const handleSetupComplete = (url: string, setId: string) => {
           }
         });
         setEntries(initialEntries);
-        
+
         // Force mobile mode if marks exist AND screen is narrow
-const isMobile = window.innerWidth < 900 || ('ontouchstart' in window && window.innerWidth < 1024);
-setIsMobileInputMode(isMobile);
+        const isMobile = window.innerWidth < 900 || ('ontouchstart' in window && window.innerWidth < 1024);
+        setIsMobileInputMode(isMobile);
       })
       .catch((err) => {
         console.error('Marks fetch error:', err);
@@ -673,27 +711,27 @@ setIsMobileInputMode(isMobile);
         setIsMobileInputMode(false);
       });
   }, [markSetId, isDemo, showSetup, apiBase]);
-useEffect(() => {
-  if (marks.length > 0 && pdf && currentMarkIndex === 0) {
-    const timer = setTimeout(() => {
-      navigateToMark(0);
-    }, 800);
-    return () => clearTimeout(timer);
-  }
-}, [marks, pdf]);
+  useEffect(() => {
+    if (marks.length > 0 && pdf && currentMarkIndex === 0) {
+      const timer = setTimeout(() => {
+        navigateToMark(0);
+      }, 800);
+      return () => clearTimeout(timer);
+    }
+  }, [marks, pdf]);
 
 
-// Set initial sidebar state based on screen size
-useEffect(() => {
-  setSidebarOpen(window.innerWidth > 768);
-}, []);
+  // Set initial sidebar state based on screen size
+  useEffect(() => {
+    setSidebarOpen(window.innerWidth > 768);
+  }, []);
   useEffect(() => {
     const handleResize = () => {
       if (marks.length > 0) {
         const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
         const isNarrowScreen = window.innerWidth <= 900;
         const shouldBeMobile = isNarrowScreen || isTouchDevice;
-        
+
         setIsMobileInputMode(shouldBeMobile);
       }
     };
@@ -730,7 +768,7 @@ useEffect(() => {
     return () => container.removeEventListener('scroll', handleScroll);
   }, [pdf, numPages]);
 
-const navigateToMark = useCallback(
+  const navigateToMark = useCallback(
     async (index: number) => {
       if (!pdf || index < 0 || index >= marks.length) return;
 
@@ -740,14 +778,14 @@ const navigateToMark = useCallback(
       const pageNumber = mark.page_index + 1;
       const container = containerRef.current;
       const pageEl = pageElsRef.current[mark.page_index];
-      
+
       if (!container || !pageEl) return;
 
       try {
         const page = await pdf.getPage(pageNumber);
         const vp1 = page.getViewport({ scale: 1 });
         basePageSizeRef.current[mark.page_index] = { w: vp1.width, h: vp1.height };
-        
+
         const rectAt1 = {
           x: mark.nx * vp1.width,
           y: mark.ny * vp1.height,
@@ -758,14 +796,14 @@ const navigateToMark = useCallback(
         const containerW = container.clientWidth;
         const containerH = container.clientHeight;
 
-const zoomX = (containerW * 0.8) / rectAt1.w;
-const zoomY = (containerH * 0.8) / rectAt1.h;
+        const zoomX = (containerW * 0.8) / rectAt1.w;
+        const zoomY = (containerH * 0.8) / rectAt1.h;
 
-let targetZoom = Math.min(zoomX, zoomY);   // declare
-targetZoom = Math.min(targetZoom, 4);      // desktop guard
-if (containerW < 600) targetZoom = Math.min(targetZoom, 3); // mobile guard
-targetZoom = clampZoom(targetZoom);
-setZoom(targetZoom);
+        let targetZoom = Math.min(zoomX, zoomY);   // declare
+        targetZoom = Math.min(targetZoom, 4);      // desktop guard
+        if (containerW < 600) targetZoom = Math.min(targetZoom, 3); // mobile guard
+        targetZoom = clampZoom(targetZoom);
+        setZoom(targetZoom);
 
         // Pre-compute expected page size at target zoom
         const vpExpected = page.getViewport({ scale: targetZoom });
@@ -778,45 +816,45 @@ setZoom(targetZoom);
         // Use the same viewport for rect math
         const vpZ = vpExpected;
 
-        
-// Calculate mark rect at target zoom
-const rectAtZ = {
-  x: mark.nx * vpZ.width,
-  y: mark.ny * vpZ.height,
-  w: mark.nw * vpZ.width,
-  h: mark.nh * vpZ.height,
-};
 
-// Flash the mark (temporary red)
-setFlashRect({
-  pageNumber,
-  x: rectAtZ.x,
-  y: rectAtZ.y,
-  w: rectAtZ.w,
-  h: rectAtZ.h,
-});
-setTimeout(() => setFlashRect(null), 1200);
+        // Calculate mark rect at target zoom
+        const rectAtZ = {
+          x: mark.nx * vpZ.width,
+          y: mark.ny * vpZ.height,
+          w: mark.nw * vpZ.width,
+          h: mark.nh * vpZ.height,
+        };
 
-// Persistent yellow outline (stays until next mark)
-const keepAliveRect = {
-  pageNumber,
-  x: rectAtZ.x,
-  y: rectAtZ.y,
-  w: rectAtZ.w,
-  h: rectAtZ.h,
-};
-setSelectedRect(keepAliveRect);
+        // Flash the mark (temporary red)
+        setFlashRect({
+          pageNumber,
+          x: rectAtZ.x,
+          y: rectAtZ.y,
+          w: rectAtZ.w,
+          h: rectAtZ.h,
+        });
+        setTimeout(() => setFlashRect(null), 1200);
 
-// ⬅️ Re-apply once more after the flash ends to defeat any layout drift
-setTimeout(() => {
-  setSelectedRect(keepAliveRect);
-}, 1250);
+        // Persistent yellow outline (stays until next mark)
+        const keepAliveRect = {
+          pageNumber,
+          x: rectAtZ.x,
+          y: rectAtZ.y,
+          w: rectAtZ.w,
+          h: rectAtZ.h,
+        };
+        setSelectedRect(keepAliveRect);
+
+        // ⬅️ Re-apply once more after the flash ends to defeat any layout drift
+        setTimeout(() => {
+          setSelectedRect(keepAliveRect);
+        }, 1250);
 
 
         // Get actual page position in scrollable container
         const containerRect = container.getBoundingClientRect();
         const pageRect = pageEl.getBoundingClientRect();
-        
+
         // Calculate page offset relative to container's scroll origin
         const pageOffsetLeft = container.scrollLeft + (pageRect.left - containerRect.left);
         const pageOffsetTop = container.scrollTop + (pageRect.top - containerRect.top);
@@ -829,10 +867,10 @@ setTimeout(() => {
         const targetScrollLeft = markCenterX - containerW / 2;
         const targetScrollTop = markCenterY - containerH / 2;
 
-const { left: clampedL, top: clampedT } =
-  clampScroll(container, targetScrollLeft, targetScrollTop);
+        const { left: clampedL, top: clampedT } =
+          clampScroll(container, targetScrollLeft, targetScrollTop);
 
-container.scrollTo({ left: clampedL, top: clampedT, behavior: 'smooth' });
+        container.scrollTo({ left: clampedL, top: clampedT, behavior: 'smooth' });
 
 
       } catch (error) {
@@ -843,49 +881,49 @@ container.scrollTo({ left: clampedL, top: clampedT, behavior: 'smooth' });
   );
 
   useEffect(() => {
-  (async () => {
-    if (!pdf || marks.length === 0) return;
-    if (isZoomAnimatingRef.current) return;
+    (async () => {
+      if (!pdf || marks.length === 0) return;
+      if (isZoomAnimatingRef.current) return;
 
-    const mark = marks[currentMarkIndex];
-    if (!mark) return;
+      const mark = marks[currentMarkIndex];
+      if (!mark) return;
 
-    const pageNumber = mark.page_index + 1;
-    const container = containerRef.current;
-    const pageEl = pageElsRef.current[mark.page_index];
-    if (!container || !pageEl) return;
+      const pageNumber = mark.page_index + 1;
+      const container = containerRef.current;
+      const pageEl = pageElsRef.current[mark.page_index];
+      if (!container || !pageEl) return;
 
-    try {
-      const page = await pdf.getPage(pageNumber);
+      try {
+        const page = await pdf.getPage(pageNumber);
 
-      // expected size at current zoom
-      const vpZ = page.getViewport({ scale: zoom });
-      const expectedW = Math.round(vpZ.width);
-      const expectedH = Math.round(vpZ.height);
+        // expected size at current zoom
+        const vpZ = page.getViewport({ scale: zoom });
+        const expectedW = Math.round(vpZ.width);
+        const expectedH = Math.round(vpZ.height);
 
-      // wait until canvas is actually at this CSS size
-      await waitForCanvasLayout(pageEl, expectedW, expectedH);
+        // wait until canvas is actually at this CSS size
+        await waitForCanvasLayout(pageEl, expectedW, expectedH);
 
-      // recompute rect in current zoom
-      const rectAtZ = {
-        x: mark.nx * vpZ.width,
-        y: mark.ny * vpZ.height,
-        w: mark.nw * vpZ.width,
-        h: mark.nh * vpZ.height,
-      };
+        // recompute rect in current zoom
+        const rectAtZ = {
+          x: mark.nx * vpZ.width,
+          y: mark.ny * vpZ.height,
+          w: mark.nw * vpZ.width,
+          h: mark.nh * vpZ.height,
+        };
 
-      setSelectedRect({
-        pageNumber,
-        x: rectAtZ.x,
-        y: rectAtZ.y,
-        w: rectAtZ.w,
-        h: rectAtZ.h,
-      });
-    } catch {
-      // ignore if page gone
-    }
-  })();
-}, [zoom, currentMarkIndex, pdf, marks]);
+        setSelectedRect({
+          pageNumber,
+          x: rectAtZ.x,
+          y: rectAtZ.y,
+          w: rectAtZ.w,
+          h: rectAtZ.h,
+        });
+      } catch {
+        // ignore if page gone
+      }
+    })();
+  }, [zoom, currentMarkIndex, pdf, marks]);
 
   const prevMark = useCallback(() => {
     if (currentMarkIndex > 0) {
@@ -900,26 +938,26 @@ container.scrollTo({ left: clampedL, top: clampedT, behavior: 'smooth' });
       setShowReview(true);
     }
   }, [currentMarkIndex, marks.length, navigateToMark]);
-  
+
   const handleJumpFromReview = useCallback((index: number) => {
-  setShowReview(false);           // close review
-  setTimeout(() => {
-    navigateToMark(index);        // jump to the chosen mark
-  }, 0);                          // let ReviewScreen unmount first
-}, [navigateToMark]);
+    setShowReview(false);           // close review
+    setTimeout(() => {
+      navigateToMark(index);        // jump to the chosen mark
+    }, 0);                          // let ReviewScreen unmount first
+  }, [navigateToMark]);
 
   const selectFromList = useCallback((index: number) => {
-  // If mobile and sidebar is open, we may close it and the container width changes.
-  // Give layout a tick, then navigate so zoom math uses the final width.
-  const needsDelay = window.innerWidth < 900; // narrow screens
-  if (needsDelay) {
-    // Close the sidebar if it's open (mobile UX)
-    if (sidebarOpen) setSidebarOpen(false);
-    setTimeout(() => navigateToMark(index), 80); // one frame on mobile Safari
-  } else {
-    navigateToMark(index);
-  }
-}, [navigateToMark, sidebarOpen]);
+    // If mobile and sidebar is open, we may close it and the container width changes.
+    // Give layout a tick, then navigate so zoom math uses the final width.
+    const needsDelay = window.innerWidth < 900; // narrow screens
+    if (needsDelay) {
+      // Close the sidebar if it's open (mobile UX)
+      if (sidebarOpen) setSidebarOpen(false);
+      setTimeout(() => navigateToMark(index), 80); // one frame on mobile Safari
+    } else {
+      navigateToMark(index);
+    }
+  }, [navigateToMark, sidebarOpen]);
 
   const jumpToPage = useCallback((pageNumber: number) => {
     if (!pdf || !containerRef.current) return;
@@ -956,132 +994,142 @@ container.scrollTo({ left: clampedL, top: clampedT, behavior: 'smooth' });
     }
   }, [currentMarkIndex, marks]);
 
-const handleSubmit = useCallback(async () => {
-  if (!markSetId) {
-    toast.error('No mark set ID provided');
-    return;
-  }
-
-  setIsSubmitting(true);
-  // ✅ Fill any missing entries with "NA"
-const finalEntries: Record<string, string> = { ...entries };
-marks.forEach((mark) => {
-  if (mark.mark_id && !finalEntries[mark.mark_id]?.trim()) {
-    finalEntries[mark.mark_id] = 'NA';
-  }
-});
-
-
-  try {
-    // ✅ FIX: Get actual email from query params (user_mail)
-    const userEmail = searchParams?.get('user_mail') || qUser || null;
-    
-    // Validate email format if provided
-    if (userEmail && !userEmail.includes('@')) {
-      console.warn('Invalid email format, skipping email send');
+  const handleSubmit = useCallback(async () => {
+    if (!markSetId) {
+      toast.error('No mark set ID provided');
+      return;
     }
 
-    console.log('📧 Submitting with email:', userEmail);
-
-    // Call bundle endpoint (generates PDF + Excel + ZIP)
-    const response = await fetch(`${apiBase}/reports/generate-bundle`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        mark_set_id: markSetId,
-        entries: finalEntries,
-        pdf_url: rawPdfUrl,
-        user_email: userEmail,  // ✅ Now sends actual email or null
-        padding_pct: 0.25,
-        office_variant: 'o365',
-      }),
+    setIsSubmitting(true);
+    // ✅ Fill any missing entries with "NA"
+    const finalEntries: Record<string, string> = { ...entries };
+    marks.forEach((mark) => {
+      if (mark.mark_id && !finalEntries[mark.mark_id]?.trim()) {
+        finalEntries[mark.mark_id] = 'NA';
+      }
     });
 
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`Bundle generation failed: ${response.status} ${text}`);
+
+    try {
+      // ✅ FIX: Get actual email from query params (user_mail)
+      const userEmail = searchParams?.get('user_mail') || qUser || null;
+
+      // Validate email format if provided
+      if (userEmail && !userEmail.includes('@')) {
+        console.warn('Invalid email format, skipping email send');
+      }
+
+      console.log('📧 Submitting with email:', userEmail);
+
+      // Call bundle endpoint (generates PDF + Excel + ZIP)
+      const response = await fetch(`${apiBase}/reports/generate-bundle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mark_set_id: markSetId,
+          entries: finalEntries,
+          pdf_url: rawPdfUrl,
+          user_email: userEmail,  // ✅ Now sends actual email or null
+          padding_pct: 0.25,
+          office_variant: 'o365',
+        }),
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Bundle generation failed: ${response.status} ${text}`);
+      }
+
+      // Check email status from header
+      const emailStatus = response.headers.get('X-Email-Status');
+
+      // Download ZIP
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `submission_${markSetId}.zip`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+
+      // Success message based on email status
+      if (emailStatus === 'queued' && userEmail) {
+        toast.success(`✓ Report downloaded! Email sent to ${userEmail}`, {
+          duration: 4000,
+        });
+      } else if (!userEmail) {
+        toast.success('✓ Report downloaded as ZIP!', {
+          duration: 3000,
+        });
+      } else {
+        toast.success('✓ Report downloaded! (Email may have failed - check logs)', {
+          duration: 3000,
+        });
+      }
+
+      // Return to markset list after delay (always navigate back)
+      setTimeout(() => {
+        // Prefer the last setup params so we land on the mark-set chooser with autoboot
+        const qs = sessionStorage.getItem('viewerLastSetupParams')
+          || window.location.search.slice(1);
+        const sp = new URLSearchParams(qs);
+        sp.set('autoboot', '1');
+        // optional: clear viewer-only params so it re-opens the chooser cleanly
+        sp.delete('pdf_url');
+        sp.delete('mark_set_id');
+
+        window.location.href = `${window.location.pathname}?${sp.toString()}`;
+      }, 1200);
+
+
+    } catch (error) {
+      console.error('Submit error:', error);
+      toast.error('Failed to generate reports. Please try again.');
+    } finally {
+      setIsSubmitting(false);
     }
-
-    // Check email status from header
-    const emailStatus = response.headers.get('X-Email-Status');
-    
-    // Download ZIP
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `submission_${markSetId}.zip`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-
-    // Success message based on email status
-    if (emailStatus === 'queued' && userEmail) {
-      toast.success(`✓ Report downloaded! Email sent to ${userEmail}`, {
-        duration: 4000,
-      });
-    } else if (!userEmail) {
-      toast.success('✓ Report downloaded as ZIP!', {
-        duration: 3000,
-      });
-    } else {
-      toast.success('✓ Report downloaded! (Email may have failed - check logs)', {
-        duration: 3000,
-      });
-    }
-
-// Return to markset list after delay (always navigate back)
-setTimeout(() => {
-  // Prefer the last setup params so we land on the mark-set chooser with autoboot
-  const qs = sessionStorage.getItem('viewerLastSetupParams')
-    || window.location.search.slice(1);
-  const sp = new URLSearchParams(qs);
-  sp.set('autoboot', '1');
-  // optional: clear viewer-only params so it re-opens the chooser cleanly
-  sp.delete('pdf_url');
-  sp.delete('mark_set_id');
-
-  window.location.href = `${window.location.pathname}?${sp.toString()}`;
-}, 1200);
-
-
-  } catch (error) {
-    console.error('Submit error:', error);
-    toast.error('Failed to generate reports. Please try again.');
-  } finally {
-    setIsSubmitting(false);
-  }
-}, [markSetId, entries, apiBase, rawPdfUrl, searchParams, qUser]);
+  }, [markSetId, entries, apiBase, rawPdfUrl, searchParams, qUser]);
 
   const swipeHandlers = useSwipeable({
-  onSwipedLeft: () => {
-    if (!showReview && marks.length > 0) {
-      nextMark();
-    }
-  },
-  onSwipedRight: () => {
-    if (!showReview && marks.length > 0) {
-      prevMark();
-    }
-  },
-  trackMouse: false,
-  trackTouch: true,
-  delta: 100, // Require 100px swipe (less sensitive)
-  preventScrollOnSwipe: false, // Allow vertical scroll
-  swipeDuration: 500, // Must swipe within 500ms
-});
+    onSwipedLeft: () => {
+      if (!showReview && marks.length > 0) {
+        nextMark();
+      }
+    },
+    onSwipedRight: () => {
+      if (!showReview && marks.length > 0) {
+        prevMark();
+      }
+    },
+    trackMouse: false,
+    trackTouch: true,
+    delta: 100, // Require 100px swipe (less sensitive)
+    preventScrollOnSwipe: false, // Allow vertical scroll
+    swipeDuration: 500, // Must swipe within 500ms
+  });
 
+// PATCH: HUD zoom anchored at viewer center (consistent with wheel/pinch)
 const zoomIn = useCallback(() => {
-  smoothZoom(clampZoom(zoomRef.current * 1.2));
-}, [smoothZoom, clampZoom]);
+  const container = containerRef.current;
+  if (!container) return;
+  const rect = container.getBoundingClientRect();
+  const next = clampZoom(zoomRef.current * 1.2);
+  zoomAt(next, rect.left + rect.width / 2, rect.top + rect.height / 2);
+}, [zoomAt, clampZoom]);
 
 const zoomOut = useCallback(() => {
-  smoothZoom(clampZoom(zoomRef.current / 1.2));
-}, [smoothZoom, clampZoom]);
+  const container = containerRef.current;
+  if (!container) return;
+  const rect = container.getBoundingClientRect();
+  const next = clampZoom(zoomRef.current / 1.2);
+  zoomAt(next, rect.left + rect.width / 2, rect.top + rect.height / 2);
+}, [zoomAt, clampZoom]);
 
-// (optional) make reset smooth as well:
-// const resetZoom = useCallback(() => smoothZoom(1.0), [smoothZoom]);
+
+  // (optional) make reset smooth as well:
+  // const resetZoom = useCallback(() => smoothZoom(1.0), [smoothZoom]);
 
   const resetZoom = useCallback(() => setZoom(1.0), []);
 
@@ -1096,53 +1144,39 @@ const zoomOut = useCallback(() => {
     });
   }, [pdf]);
 
-  useEffect(() => {
-    const handleWheel = (e: WheelEvent) => {
-      const container = containerRef.current;
-      if (!container) return;
+  // PATCH: desktop wheel/trackpad zoom anchored at cursor, scoped to container
+useEffect(() => {
+  const container = containerRef.current;
+  if (!container) return;
 
-      const target = e.target as HTMLElement;
-      if (!container.contains(target)) return;
+  let raf: number | null = null;
 
-      if (!e.ctrlKey && !e.metaKey) return;
+  const onWheel = (e: WheelEvent) => {
+    // Zoom only when ctrl/cmd is held (Mac trackpad pinch sets ctrlKey)
+    if (!e.ctrlKey && !e.metaKey) return;
+    if (!container.contains(e.target as Node)) return;
 
-      e.preventDefault();
-      e.stopPropagation();
+    e.preventDefault();
+    e.stopPropagation();
 
-      const rect = container.getBoundingClientRect();
-      const mouseX = e.clientX - rect.left;
-      const mouseY = e.clientY - rect.top;
-      const scrollLeft = container.scrollLeft;
-      const scrollTop = container.scrollTop;
-      const contentX = scrollLeft + mouseX;
-      const contentY = scrollTop + mouseY;
-      
-      const zoomFactor = e.deltaY > 0 ? 0.95 : 1.05;
+    const factor = e.deltaY > 0 ? 0.95 : 1.05;
 
-      setZoom((prevZoom) => {
-  const newZoom = clampZoom(prevZoom * zoomFactor);
-  const scale = newZoom / prevZoom;
+    // Throttle to one update per frame
+    if (raf) cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(() => {
+      const next = clampZoom(zoomRef.current * factor);
+      zoomAt(next, e.clientX, e.clientY);
+      raf = null;
+    });
+  };
 
-  // keep the same focal scroll correction you already do
-  requestAnimationFrame(() => {
-    container.scrollLeft = contentX * scale - mouseX;
-    container.scrollTop = contentY * scale - mouseY;
-  });
+  container.addEventListener('wheel', onWheel, { passive: false });
+  return () => {
+    container.removeEventListener('wheel', onWheel as any);
+    if (raf) cancelAnimationFrame(raf);
+  };
+}, [zoomAt, clampZoom]);
 
-  // run a short smooth zoom so the yellow rect updates in sync
-  requestAnimationFrame(() => smoothZoom(newZoom, 80));   // 80ms micro-animation
-  return prevZoom; // smoothZoom will drive zoom; don't jump here
-});
-
-    };
-
-    document.addEventListener('wheel', handleWheel, { passive: false, capture: true });
-    
-    return () => {
-      document.removeEventListener('wheel', handleWheel, { capture: true } as any);
-    };
-  }, []);
-  
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
@@ -1165,9 +1199,9 @@ const zoomOut = useCallback(() => {
     jumpToPage(pageNumber);
   }, [jumpToPage]);
 
-if (showSetup) {
-  return <ViewerSetupScreen onStart={handleSetupComplete} />;
-}
+  if (showSetup) {
+    return <ViewerSetupScreen onStart={handleSetupComplete} />;
+  }
 
 
 
@@ -1188,30 +1222,30 @@ if (showSetup) {
     );
   }
 
-if (showReview) {
-  return (
-    <>
-    <ReviewScreen
-  marks={marks}
-  entries={entries}
-  onBack={() => {
-    setShowReview(false);
-    // give the viewer a tick to reflow before centering
-    setTimeout(() => navigateToMark(currentMarkIndex), 120);
-  }}
-  onSubmit={handleSubmit}
-  isSubmitting={isSubmitting}
-  onJumpTo={(i) => {
-    setShowReview(false);
-    // jump straight to the chosen mark (center + zoom)
-    setTimeout(() => navigateToMark(i), 120);
-  }}
-/>
+  if (showReview) {
+    return (
+      <>
+        <ReviewScreen
+          marks={marks}
+          entries={entries}
+          onBack={() => {
+            setShowReview(false);
+            // give the viewer a tick to reflow before centering
+            setTimeout(() => navigateToMark(currentMarkIndex), 120);
+          }}
+          onSubmit={handleSubmit}
+          isSubmitting={isSubmitting}
+          onJumpTo={(i) => {
+            setShowReview(false);
+            // jump straight to the chosen mark (center + zoom)
+            setTimeout(() => navigateToMark(i), 120);
+          }}
+        />
 
-      <Toaster position="top-center" />
-    </>
-  );
-}
+        <Toaster position="top-center" />
+      </>
+    );
+  }
 
 
   // Mobile input mode
@@ -1220,108 +1254,108 @@ if (showReview) {
     const currentValue = currentMark?.mark_id ? entries[currentMark.mark_id] || '' : '';
 
     return (
-      <div style={{ 
-  display: 'flex', 
-  flexDirection: 'column', 
-  height: '100dvh',
-  overflow: 'hidden' 
-}}>
+      <div style={{
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100dvh',
+        overflow: 'hidden'
+      }}>
         <Toaster position="top-center" />
-        
-        <div style={{ 
-  flex: 1,
-  minHeight: 0,
-  display: 'flex',
-  flexDirection: 'row',
-  overflow: 'hidden'
-}}>
 
- {/* Slide-over sidebar (mobile) */}
-<SlideSidebar
-  open={sidebarOpen}
-  onClose={() => setSidebarOpen(false)}
-  title="Marks"
->
-  <MarkList
-  marks={marks}
-  currentIndex={currentMarkIndex}
-  entries={entries}                // ✅ ADD THIS LINE
-  onSelect={(index) => {
-    setCurrentMarkIndex(index);
-    setSidebarOpen(false);
-    setTimeout(() => selectFromList(index), 80);
-  }}
-/>
+        <div style={{
+          flex: 1,
+          minHeight: 0,
+          display: 'flex',
+          flexDirection: 'row',
+          overflow: 'hidden'
+        }}>
 
-</SlideSidebar>
+          {/* Slide-over sidebar (mobile) */}
+          <SlideSidebar
+            open={sidebarOpen}
+            onClose={() => setSidebarOpen(false)}
+            title="Marks"
+          >
+            <MarkList
+              marks={marks}
+              currentIndex={currentMarkIndex}
+              entries={entries}                // ✅ ADD THIS LINE
+              onSelect={(index) => {
+                setCurrentMarkIndex(index);
+                setSidebarOpen(false);
+                setTimeout(() => selectFromList(index), 80);
+              }}
+            />
 
-
-         <div
-  className="swipe-gesture-host"
-  style={{
-    flex: 1,
-    display: 'flex',
-    flexDirection: 'column',
-    overflow: 'hidden',
-    minWidth: 0
-  }}
-  {...(SWIPE_TO_STEP_ENABLED ? swipeHandlers : {})}
->
-
-
-   {/* ✅ Floating HUD (mobile) */}
-<FloatingHUD
-  sidebarOpen={sidebarOpen}
-  onSidebarToggle={() => setSidebarOpen(!sidebarOpen)}
-  currentMarkIndex={currentMarkIndex}
-  totalMarks={marks.length}
-  onZoomIn={zoomIn}
-  onZoomOut={zoomOut}
-/>
-
+          </SlideSidebar>
 
 
           <div
-  style={{
-    flex: 1,
-    overflow: 'auto',
-    background: '#525252',
-    WebkitOverflowScrolling: 'touch',
-    touchAction: 'pan-x pan-y',
-  }}
-  className="pdf-surface-wrap"
-  ref={containerRef}
->
-
- 
-<div className="pdf-surface">
-  {Array.from({ length: numPages }, (_, i) => i + 1).map((pageNum) => (
-    <div 
-      key={pageNum}
-      style={{ position: 'relative' }}
-      ref={(el) => { pageElsRef.current[pageNum - 1] = el; }}
-    >
-     <PageCanvas
-  pdf={pdf}
-  pageNumber={pageNum}
-  zoom={zoom}
-  onReady={(height) => handlePageReady(pageNum, height)}
-  flashRect={
-    flashRect?.pageNumber === pageNum
-      ? { x: flashRect.x, y: flashRect.y, w: flashRect.w, h: flashRect.h }
-      : null
-  }
-  selectedRect={
-    selectedRect?.pageNumber === pageNum
-      ? { x: selectedRect.x, y: selectedRect.y, w: selectedRect.w, h: selectedRect.h }
-      : null
-  }
-/>
+            className="swipe-gesture-host"
+            style={{
+              flex: 1,
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+              minWidth: 0
+            }}
+            {...(SWIPE_TO_STEP_ENABLED ? swipeHandlers : {})}
+          >
 
 
-    </div>
-  ))}
-</div>
+            {/* ✅ Floating HUD (mobile) */}
+            <FloatingHUD
+              sidebarOpen={sidebarOpen}
+              onSidebarToggle={() => setSidebarOpen(!sidebarOpen)}
+              currentMarkIndex={currentMarkIndex}
+              totalMarks={marks.length}
+              onZoomIn={zoomIn}
+              onZoomOut={zoomOut}
+            />
+
+
+
+            <div
+              style={{
+                flex: 1,
+                overflow: 'auto',
+                background: '#525252',
+                WebkitOverflowScrolling: 'touch',
+                touchAction: 'none', // PATCH: allow pinch-zoom via pointer events
+              }}
+              className="pdf-surface-wrap"
+              ref={containerRef}
+            >
+
+
+              <div className="pdf-surface">
+                {Array.from({ length: numPages }, (_, i) => i + 1).map((pageNum) => (
+                  <div
+                    key={pageNum}
+                    style={{ position: 'relative' }}
+                    ref={(el) => { pageElsRef.current[pageNum - 1] = el; }}
+                  >
+                    <PageCanvas
+                      pdf={pdf}
+                      pageNumber={pageNum}
+                      zoom={zoom}
+                      onReady={(height) => handlePageReady(pageNum, height)}
+                      flashRect={
+                        flashRect?.pageNumber === pageNum
+                          ? { x: flashRect.x, y: flashRect.y, w: flashRect.w, h: flashRect.h }
+                          : null
+                      }
+                      selectedRect={
+                        selectedRect?.pageNumber === pageNum
+                          ? { x: selectedRect.x, y: selectedRect.y, w: selectedRect.w, h: selectedRect.h }
+                          : null
+                      }
+                    />
+
+
+                  </div>
+                ))}
+              </div>
 
             </div>
           </div>
@@ -1343,117 +1377,117 @@ if (showReview) {
   }
 
   // Desktop mode
-return (
-  <div className="viewer-container">
-    <Toaster position="top-center" />
+  return (
+    <div className="viewer-container">
+      <Toaster position="top-center" />
 
-    {marks.length > 0 && (
-      <SlideSidebar
-        open={sidebarOpen}
-        onClose={() => setSidebarOpen(false)}
-        title="Marks"
-      >
- <MarkList
-  marks={marks}
-  currentIndex={currentMarkIndex}
-  entries={entries}                // ✅ ADD THIS LINE
-  onSelect={(index) => {
-    setCurrentMarkIndex(index);
-    setSidebarOpen(false);
-    setTimeout(() => selectFromList(index), 80);
-  }}
-/>
-      </SlideSidebar>
-    )}
-
-
-    <div className="main-content">
-            {/* ✅ Floating HUD (desktop) */}
-<FloatingHUD
-  sidebarOpen={sidebarOpen}
-  onSidebarToggle={() => setSidebarOpen(!sidebarOpen)}
-  currentMarkIndex={currentMarkIndex}
-  totalMarks={marks.length}
-  onZoomIn={zoomIn}
-  onZoomOut={zoomOut}
-/>
+      {marks.length > 0 && (
+        <SlideSidebar
+          open={sidebarOpen}
+          onClose={() => setSidebarOpen(false)}
+          title="Marks"
+        >
+          <MarkList
+            marks={marks}
+            currentIndex={currentMarkIndex}
+            entries={entries}                // ✅ ADD THIS LINE
+            onSelect={(index) => {
+              setCurrentMarkIndex(index);
+              setSidebarOpen(false);
+              setTimeout(() => selectFromList(index), 80);
+            }}
+          />
+        </SlideSidebar>
+      )}
 
 
-
-      <div className="pdf-surface-wrap" ref={containerRef} style={{ touchAction: 'pan-y pan-x' }}>
-<div className="pdf-surface">
-  {Array.from({ length: numPages }, (_, i) => i + 1).map((pageNum) => (
-    <div
-      key={pageNum}
-      style={{ position: 'relative' }}
-      ref={(el) => { pageElsRef.current[pageNum - 1] = el; }}
-    >
-     <PageCanvas
-  pdf={pdf}
-  pageNumber={pageNum}
-  zoom={zoom}
-  onReady={(height) => handlePageReady(pageNum, height)}
-  flashRect={
-    flashRect?.pageNumber === pageNum
-      ? { x: flashRect.x, y: flashRect.y, w: flashRect.w, h: flashRect.h }
-      : null
-  }
-  selectedRect={
-    selectedRect?.pageNumber === pageNum
-      ? { x: selectedRect.x, y: selectedRect.y, w: selectedRect.w, h: selectedRect.h }
-      : null
-  }
-/>
-
-
-
-      {highlightPageNumber === pageNum && searchHighlights.map((h, idx) => (
-        <div
-          key={`highlight-${idx}`}
-          style={{
-            position: 'absolute',
-            left: h.x * zoom,
-            top: h.y * zoom,
-            width: h.width * zoom,
-            height: h.height * zoom,
-            background: 'rgba(255, 235, 59, 0.4)',
-            border: '1px solid rgba(255, 193, 7, 0.8)',
-            pointerEvents: 'none',
-            zIndex: 100
-          }}
-        />
-      ))}
-    </div>
-  ))}
-</div>
-
-      </div>
-
-      {/* Keep Input Panel OUTSIDE the scroll area */}
-      <div className="input-panel-section">
-        <InputPanel
-          currentMark={marks[currentMarkIndex] ?? null}
-          currentIndex={currentMarkIndex}
+      <div className="main-content">
+        {/* ✅ Floating HUD (desktop) */}
+        <FloatingHUD
+          sidebarOpen={sidebarOpen}
+          onSidebarToggle={() => setSidebarOpen(!sidebarOpen)}
+          currentMarkIndex={currentMarkIndex}
           totalMarks={marks.length}
-          value={(marks[currentMarkIndex]?.mark_id && entries[marks[currentMarkIndex]!.mark_id!]) || ''}
-          onChange={handleEntryChange}
-          onNext={nextMark}
-          onPrev={prevMark}
-          canPrev={currentMarkIndex > 0}
-          canNext={currentMarkIndex < marks.length - 1}
+          onZoomIn={zoomIn}
+          onZoomOut={zoomOut}
+        />
+
+
+
+        <div className="pdf-surface-wrap" ref={containerRef} style={{ touchAction: 'none' }}>
+          <div className="pdf-surface">
+            {Array.from({ length: numPages }, (_, i) => i + 1).map((pageNum) => (
+              <div
+                key={pageNum}
+                style={{ position: 'relative' }}
+                ref={(el) => { pageElsRef.current[pageNum - 1] = el; }}
+              >
+                <PageCanvas
+                  pdf={pdf}
+                  pageNumber={pageNum}
+                  zoom={zoom}
+                  onReady={(height) => handlePageReady(pageNum, height)}
+                  flashRect={
+                    flashRect?.pageNumber === pageNum
+                      ? { x: flashRect.x, y: flashRect.y, w: flashRect.w, h: flashRect.h }
+                      : null
+                  }
+                  selectedRect={
+                    selectedRect?.pageNumber === pageNum
+                      ? { x: selectedRect.x, y: selectedRect.y, w: selectedRect.w, h: selectedRect.h }
+                      : null
+                  }
+                />
+
+
+
+                {highlightPageNumber === pageNum && searchHighlights.map((h, idx) => (
+                  <div
+                    key={`highlight-${idx}`}
+                    style={{
+                      position: 'absolute',
+                      left: h.x * zoom,
+                      top: h.y * zoom,
+                      width: h.width * zoom,
+                      height: h.height * zoom,
+                      background: 'rgba(255, 235, 59, 0.4)',
+                      border: '1px solid rgba(255, 193, 7, 0.8)',
+                      pointerEvents: 'none',
+                      zIndex: 100
+                    }}
+                  />
+                ))}
+              </div>
+            ))}
+          </div>
+
+        </div>
+
+        {/* Keep Input Panel OUTSIDE the scroll area */}
+        <div className="input-panel-section">
+          <InputPanel
+            currentMark={marks[currentMarkIndex] ?? null}
+            currentIndex={currentMarkIndex}
+            totalMarks={marks.length}
+            value={(marks[currentMarkIndex]?.mark_id && entries[marks[currentMarkIndex]!.mark_id!]) || ''}
+            onChange={handleEntryChange}
+            onNext={nextMark}
+            onPrev={prevMark}
+            canPrev={currentMarkIndex > 0}
+            canNext={currentMarkIndex < marks.length - 1}
+          />
+        </div>
+
+        {/* PDFSearch should stay inside main-content, after the viewer area */}
+        <PDFSearch
+          pdf={pdf}
+          isOpen={showSearch}
+          onClose={() => setShowSearch(false)}
+          onResultFound={handleSearchResult}
         />
       </div>
-
-      {/* PDFSearch should stay inside main-content, after the viewer area */}
-      <PDFSearch
-        pdf={pdf}
-        isOpen={showSearch}
-        onClose={() => setShowSearch(false)}
-        onResultFound={handleSearchResult}
-      />
     </div>
-  </div>
-);
+  );
 
 }
 
