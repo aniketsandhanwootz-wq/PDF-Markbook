@@ -675,13 +675,14 @@ setIsMobileInputMode(isMobile);
   }, [markSetId, isDemo, showSetup, apiBase]);
   // Auto-navigate to first mark when marks load
 useEffect(() => {
-  if (marks.length > 0 && pdf && currentMarkIndex === 0) {
+  if (marks.length > 0 && pdf) {
     const timer = setTimeout(() => {
-      navigateToMark(0);
+      navigateToMark(currentMarkIndex);
     }, 800);
     return () => clearTimeout(timer);
   }
-}, [marks, pdf, currentMarkIndex]);
+}, [marks, pdf]);
+
 // Set initial sidebar state based on screen size
 useEffect(() => {
   setSidebarOpen(window.innerWidth > 768);
@@ -955,6 +956,14 @@ const handleSubmit = useCallback(async () => {
   }
 
   setIsSubmitting(true);
+  // ✅ Fill any missing entries with "NA"
+const finalEntries: Record<string, string> = { ...entries };
+marks.forEach((mark) => {
+  if (mark.mark_id && !finalEntries[mark.mark_id]?.trim()) {
+    finalEntries[mark.mark_id] = 'NA';
+  }
+});
+
 
   try {
     // ✅ FIX: Get actual email from query params (user_mail)
@@ -973,7 +982,7 @@ const handleSubmit = useCallback(async () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         mark_set_id: markSetId,
-        entries,
+        entries: finalEntries,
         pdf_url: rawPdfUrl,
         user_email: userEmail,  // ✅ Now sends actual email or null
         padding_pct: 0.25,

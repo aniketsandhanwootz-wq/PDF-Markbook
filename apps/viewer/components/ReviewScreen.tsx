@@ -238,7 +238,7 @@ export default function ReviewScreen({
         </button>
         <button
           onClick={onSubmit}
-          disabled={!allFilled || isSubmitting}
+          disabled={isSubmitting}
           style={{
             flex: 1,
             padding: '14px',
