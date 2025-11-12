@@ -952,23 +952,33 @@ useEffect(() => {
   setSelectedRect(keepAliveRect);
   setTimeout(() => setSelectedRect(keepAliveRect), 1250);
 
-  // Center after next frame (ensures CSS sizes applied)
-  requestAnimationFrame(() => {
-    const containerRect = container.getBoundingClientRect();
-    const pageRect = pageEl.getBoundingClientRect();
+ // Center after next frame, but ensure the canvas layout has settled (important for far jumps)
+requestAnimationFrame(async () => {
+  const base = basePageSizeRef.current[mark.page_index];
+  const expectedW = base.w * qZoom;
+  const expectedH = base.h * qZoom;
 
-    const pageOffsetLeft = container.scrollLeft + (pageRect.left - containerRect.left);
-    const pageOffsetTop  = container.scrollTop  + (pageRect.top  - containerRect.top);
+  // ✅ wait for canvas to actually reach expected dimensions
+  await waitForCanvasLayout(pageEl, expectedW, expectedH, 1500);
 
-    const markCenterX = pageOffsetLeft + rectAtZ.x + rectAtZ.w / 2;
-    const markCenterY = pageOffsetTop  + rectAtZ.y + rectAtZ.h / 2;
+  const containerRect = container.getBoundingClientRect();
+  const pageRect = pageEl.getBoundingClientRect();
 
-    const targetScrollLeft = markCenterX - containerW / 2;
-    const targetScrollTop  = markCenterY - containerH / 2;
+  const pageOffsetLeft = container.scrollLeft + (pageRect.left - containerRect.left);
+  const pageOffsetTop  = container.scrollTop  + (pageRect.top  - containerRect.top);
 
-    const { left: clampedL, top: clampedT } = clampScroll(container, targetScrollLeft, targetScrollTop);
-    container.scrollTo({ left: clampedL, top: clampedT, behavior: 'smooth' });
-  });
+  const markCenterX = pageOffsetLeft + rectAtZ.x + rectAtZ.w / 2;
+  const markCenterY = pageOffsetTop  + rectAtZ.y + rectAtZ.h / 2;
+
+  const targetScrollLeft = markCenterX - containerW / 2;
+  const targetScrollTop  = markCenterY - containerH / 2;
+
+  const { left: clampedL, top: clampedT } = clampScroll(container, targetScrollLeft, targetScrollTop);
+
+  // ✅ do a guaranteed smooth scroll now that layout is stable
+  container.scrollTo({ left: clampedL, top: clampedT, behavior: 'smooth' });
+});
+
 
     },
     [marks, pdf]
