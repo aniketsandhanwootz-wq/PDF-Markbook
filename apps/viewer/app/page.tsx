@@ -904,105 +904,77 @@ useEffect(() => {
   updateVisibleRange();
 }, [zoom, recomputePrefix]);
 
-// ⬇️ REPLACE your existing navigateToMark with this one
-const navigateToMark = useCallback(
-  async (index: number) => {
-    if (!pdf || index < 0 || index >= marks.length) return;
+  const navigateToMark = useCallback(
+    async (index: number) => {
+        if (!pdf || index < 0 || index >= marks.length) return;
 
-    const mark = marks[index];
-    setCurrentMarkIndex(index);
+  const mark = marks[index];
+  setCurrentMarkIndex(index);
 
-    const container = containerRef.current;
-    if (!container) return;
+  const pageNumber = mark.page_index + 1;
+  const container = containerRef.current;
+  const pageEl = pageElsRef.current[mark.page_index];
+  if (!container || !pageEl) return;
 
-    // Use precomputed base size (scale=1)
-    const base = basePageSizeRef.current[mark.page_index];
-    if (!base) return;
+  // Use precomputed base size (scale=1) — no getPage here
+  const base = basePageSizeRef.current[mark.page_index];
+  if (!base) return;
 
-    // Rect at scale=1
-    const rectAt1 = {
-      x: mark.nx * base.w,
-      y: mark.ny * base.h,
-      w: mark.nw * base.w,
-      h: mark.nh * base.h,
-    };
+  // Rect at scale=1
+  const rectAt1 = {
+    x: mark.nx * base.w,
+    y: mark.ny * base.h,
+    w: mark.nw * base.w,
+    h: mark.nh * base.h,
+  };
 
-    const containerW = container.clientWidth;
-    const containerH = container.clientHeight;
+  const containerW = container.clientWidth;
+  const containerH = container.clientHeight;
 
-    // Compute zoom to comfortably fit the mark
-    let targetZoom = Math.min((containerW * 0.8) / rectAt1.w, (containerH * 0.8) / rectAt1.h);
-    targetZoom = Math.min(targetZoom, 4);
-    if (containerW < 600) targetZoom = Math.min(targetZoom, 3);
+  let targetZoom = Math.min((containerW * 0.8) / rectAt1.w, (containerH * 0.8) / rectAt1.h);
+  targetZoom = Math.min(targetZoom, 4);
+  if (containerW < 600) targetZoom = Math.min(targetZoom, 3);
 
-    const qZoom = setZoomQ(targetZoom, zoomRef);
+  const qZoom = setZoomQ(targetZoom, zoomRef);
 
-    // Rect at qZoom
-    const rectAtZ = {
-      x: mark.nx * base.w * qZoom,
-      y: mark.ny * base.h * qZoom,
-      w: mark.nw * base.w * qZoom,
-      h: mark.nh * base.h * qZoom,
-    };
+  // Rect directly at qZoom (no layout wait)
+  const rectAtZ = {
+    x: mark.nx * base.w * qZoom,
+    y: mark.ny * base.h * qZoom,
+    w: mark.nw * base.w * qZoom,
+    h: mark.nh * base.h * qZoom,
+  };
 
-    // Flash + persistent outline
-    const pageNumber = mark.page_index + 1;
-    setFlashRect({ pageNumber, ...rectAtZ });
-    setTimeout(() => setFlashRect(null), 1200);
-    const keepAliveRect = { pageNumber, ...rectAtZ };
-    setSelectedRect(keepAliveRect);
-    setTimeout(() => setSelectedRect(keepAliveRect), 1250);
+  // Flash + persistent outline
+  setFlashRect({ pageNumber, ...rectAtZ });
+  setTimeout(() => setFlashRect(null), 1200);
+  const keepAliveRect = { pageNumber, ...rectAtZ };
+  setSelectedRect(keepAliveRect);
+  setTimeout(() => setSelectedRect(keepAliveRect), 1250);
 
-    // ---------- FIRST PASS (works even if page isn't mounted) ----------
-    // Use prefix heights to jump directly near the mark's vertical position
-    const pageTop = prefixHeightsRef.current[mark.page_index] || 0; // CSS top of that page at current zoom
-    const markCenterY = pageTop + rectAtZ.y + rectAtZ.h / 2;
-    const targetTop = markCenterY - containerH / 2;
+  // Center after next frame (ensures CSS sizes applied)
+  requestAnimationFrame(() => {
+    const containerRect = container.getBoundingClientRect();
+    const pageRect = pageEl.getBoundingClientRect();
 
-    const { top: clampedTop } = clampScroll(container, container.scrollLeft, targetTop);
-    // Jump immediately so the windowing system mounts the target page
-    container.scrollTop = clampedTop;
+    const pageOffsetLeft = container.scrollLeft + (pageRect.left - containerRect.left);
+    const pageOffsetTop  = container.scrollTop  + (pageRect.top  - containerRect.top);
 
-    // ---------- SECOND PASS (fine tune once page DOM is there) ----------
-    // After the page mounts (next frame or two), do a precise center using DOM rects
-    const fineTune = () => {
-      const pageEl = pageElsRef.current[mark.page_index];
-      if (!pageEl) {
-        // Try one more time shortly after; if still not there, we already did the best jump
-        setTimeout(() => {
-          const pageEl2 = pageElsRef.current[mark.page_index];
-          if (!pageEl2) return;
+    const markCenterX = pageOffsetLeft + rectAtZ.x + rectAtZ.w / 2;
+    const markCenterY = pageOffsetTop  + rectAtZ.y + rectAtZ.h / 2;
 
-          const containerRect2 = container.getBoundingClientRect();
-          const pageRect2 = pageEl2.getBoundingClientRect();
+    const targetScrollLeft = markCenterX - containerW / 2;
+    const targetScrollTop  = markCenterY - containerH / 2;
 
-          const pageOffsetTop2 = container.scrollTop + (pageRect2.top - containerRect2.top);
-          const markCenterY2 = pageOffsetTop2 + rectAtZ.y + rectAtZ.h / 2;
-          const targetTop2 = markCenterY2 - containerH / 2;
+    const { left: clampedL, top: clampedT } = clampScroll(container, targetScrollLeft, targetScrollTop);
+    container.scrollTo({ left: clampedL, top: clampedT, behavior: 'smooth' });
+  });
 
-          const { top: clampedTop2 } = clampScroll(container, container.scrollLeft, targetTop2);
-          container.scrollTo({ top: clampedTop2, behavior: 'smooth' });
-        }, 60);
-        return;
-      }
+    },
+    [marks, pdf]
+  );
 
-      const containerRect = container.getBoundingClientRect();
-      const pageRect = pageEl.getBoundingClientRect();
-
-      const pageOffsetTop = container.scrollTop + (pageRect.top - containerRect.top);
-      const markCenterYDom = pageOffsetTop + rectAtZ.y + rectAtZ.h / 2;
-      const targetTopDom = markCenterYDom - containerH / 2;
-
-      const { top: clampedTopDom } = clampScroll(container, container.scrollLeft, targetTopDom);
-      container.scrollTo({ top: clampedTopDom, behavior: 'smooth' });
-    };
-
-    // schedule fine-tune after layout / mounting
-    requestAnimationFrame(fineTune);
-  },
-  [marks, pdf]
-);
-
+ 
   useEffect(() => {
   if (marks.length === 0) return;
   if (isZoomAnimatingRef.current) return;
