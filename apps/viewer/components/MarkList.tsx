@@ -46,15 +46,15 @@ export default function MarkList({ marks, currentIndex, onSelect, entries }: Mar
 
   return (
     <div className="mark-list" ref={listRef}>
-          {/* Fixed search header inside the sidebar body */}
+          {/* Sticky search directly under the sidebar header (no top gap) */}
       <div
         style={{
           position: 'sticky',
-          top: 0,                 // stick to the very top of the scroll area
-          zIndex: 3,              // above list items
-          padding: '10px 12px 8px',
+          top: 0,                 // sits at the very top of the scroll area
+          zIndex: 3,
+          padding: '0 12px 8px',  // 👈 top padding = 0 so it touches the header
           borderBottom: '1px solid #eee',
-          background: '#fff',     // solid background so the list doesn't bleed behind
+          background: '#fff',
         }}
       >
         <div style={{ position: 'relative' }}>
@@ -113,6 +113,7 @@ export default function MarkList({ marks, currentIndex, onSelect, entries }: Mar
           )}
         </div>
       </div>
+
 
       {/* Mark List */}
       <div className="mark-list-items">
