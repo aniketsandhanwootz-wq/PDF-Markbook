@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 
 type Mark = {
   mark_id?: string;
@@ -28,8 +28,7 @@ type InputPanelProps = {
 };
 
 function indexToLabel(idx: number): string {
-  let n = idx + 1;
-  let s = '';
+  let n = idx + 1, s = '';
   while (n > 0) {
     const rem = (n - 1) % 26;
     s = String.fromCharCode(65 + rem) + s;
@@ -50,23 +49,20 @@ export default function InputPanel({
   canPrev,
 }: InputPanelProps) {
   // --- Keyboard overlap handling (mobile) ------------------------------
-  const [kbOverlap, setKbOverlap] = useState(0); // pixels to lift the panel
+  const [kbOverlap, setKbOverlap] = useState(0);    // pixels to lift the panel
   const [vvSupported, setVvSupported] = useState(false);
 
+  // NEW: float only when OUR input is focused (prevents sidebar search from triggering it)
+  const [selfFocused, setSelfFocused] = useState(false);
+
   useEffect(() => {
-    // Use VisualViewport when available (iOS Safari, Chrome Android)
     const vv = typeof window !== 'undefined' ? (window as any).visualViewport : null;
     if (!vv) return;
-
     setVvSupported(true);
 
     const update = () => {
-      // Amount of screen hidden by the soft keyboard = innerHeight - (vv.height + vv.offsetTop)
       const hidden = Math.max(0, window.innerHeight - (vv.height + vv.offsetTop));
-      // Keep a tiny cushion for the gesture bar
-      const safe = (window as any).CSS?.supports?.('padding', 'env(safe-area-inset-bottom)')
-        ? 0
-        : 8;
+      const safe = (window as any).CSS?.supports?.('padding', 'env(safe-area-inset-bottom)') ? 0 : 8;
       setKbOverlap(hidden + safe);
     };
 
@@ -79,8 +75,8 @@ export default function InputPanel({
     };
   }, []);
 
-  // When visualViewport is absent, keep normal layout (desktop/tablet without VK)
-  const floating = vvSupported && kbOverlap > 0;
+  // Float ONLY when our own input has focus
+  const floating = vvSupported && kbOverlap > 0 && selfFocused;
 
   if (!currentMark) {
     return (
@@ -104,7 +100,6 @@ export default function InputPanel({
   return (
     <div
       style={{
-        // Normal card look
         height: 'auto',
         minHeight: 160,
         maxHeight: '32vh',
@@ -116,27 +111,24 @@ export default function InputPanel({
         borderTopRightRadius: 12,
         overflow: 'hidden',
         boxShadow: '0 -2px 10px rgba(0,0,0,0.08)',
-        // 💡 Float above the keyboard when it’s visible
         position: floating ? 'fixed' as const : 'static',
         left: floating ? 0 : undefined,
         right: floating ? 0 : undefined,
         bottom: floating ? kbOverlap : undefined,
         zIndex: floating ? 9999 : undefined,
-        // Keep a small side gutter so it doesn’t slam edge-to-edge on tiny phones
         marginLeft: floating ? 6 : undefined,
         marginRight: floating ? 6 : undefined,
-        // Improve compositing when floating
         transform: floating ? 'translateZ(0)' : undefined,
       }}
     >
-      {/* Header with circle label + wrapping title + progress */}
+      {/* Header */}
       <div
         style={{
           padding: '10px 14px',
           background: '#1976d2',
           color: 'white',
           display: 'grid',
-          gridTemplateColumns: 'auto 1fr auto', // label | title | progress
+          gridTemplateColumns: 'auto 1fr auto',
           columnGap: 10,
           rowGap: 4,
           alignItems: 'center',
@@ -145,7 +137,6 @@ export default function InputPanel({
           borderTopRightRadius: 12,
         }}
       >
-        {/* Label Circle */}
         <div
           style={{
             minWidth: 28,
@@ -164,7 +155,6 @@ export default function InputPanel({
           {displayLabel}
         </div>
 
-        {/* Mark Name */}
         <div
           style={{
             fontSize: 14,
@@ -179,20 +169,18 @@ export default function InputPanel({
           {currentMark.name}
         </div>
 
-        {/* Progress */}
         <div style={{ fontSize: 12, opacity: 0.9, whiteSpace: 'nowrap', justifySelf: 'end' }}>
           {Math.round(((currentIndex + 1) / totalMarks) * 100)}%
         </div>
       </div>
 
-      {/* Compact Input Field */}
+      {/* Input */}
       <div style={{ padding: '4px 10px', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
         <input
-          // Keep type text to avoid spinners; force numeric keyboard on mobile:
           type="text"
-          inputMode="decimal"          // ← opens number keypad (with decimal)
-          enterKeyHint="next"          // ← “Next” key label on mobile
-          pattern="[0-9]*[.,]?[0-9]*"  // ← hints numeric + optional decimal
+          inputMode="decimal"          // numeric keypad (with decimal) on mobile
+          enterKeyHint="next"
+          pattern="[0-9]*[.,]?[0-9]*"
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder="Type value here..."
@@ -207,15 +195,17 @@ export default function InputPanel({
             height: 44,
           }}
           onFocus={(e) => {
+            setSelfFocused(true);            // key line
             e.target.style.borderColor = '#1976d2';
           }}
           onBlur={(e) => {
+            setSelfFocused(false);           // key line
             e.target.style.borderColor = '#ddd';
           }}
         />
       </div>
 
-      {/* Navigation Buttons */}
+      {/* Nav */}
       <div
         style={{
           padding: '4px 10px',
@@ -224,7 +214,6 @@ export default function InputPanel({
           display: 'flex',
           gap: 6,
           flexShrink: 0,
-          // keep a bit of breathing room when floating
           paddingBottom: floating ? 6 : 'env(safe-area-inset-bottom, 6px)',
         }}
       >

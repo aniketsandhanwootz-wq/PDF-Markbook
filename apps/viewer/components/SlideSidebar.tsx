@@ -1,6 +1,6 @@
 'use client';
 
-import { ReactNode } from 'react';
+import { ReactNode, useEffect } from 'react';
 
 type SlideSidebarProps = {
   open: boolean;
@@ -17,37 +17,96 @@ export default function SlideSidebar({
   width = 280,
   children,
 }: SlideSidebarProps) {
+  // optional: lock background scroll while open
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, [open]);
+
   return (
     <>
       {/* Scrim */}
       <div
-        className={`slide-scrim ${open ? 'show' : ''}`}
         onClick={onClose}
         aria-hidden="true"
+        style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(0,0,0,0.25)',
+          opacity: open ? 1 : 0,
+          pointerEvents: open ? 'auto' : 'none',
+          transition: 'opacity 150ms ease',
+          zIndex: 9997,
+        }}
       />
 
       {/* Slide-over panel */}
       <aside
-        className={`slide-sidebar ${open ? 'open' : ''}`}
-        style={{ width }}
         role="dialog"
         aria-modal="true"
         aria-label={title}
+        style={{
+          position: 'fixed',
+          top: 0,
+          bottom: 0,
+          left: 0,
+          width,
+          maxWidth: '86vw',
+          background: '#fff',
+          boxShadow: '2px 0 18px rgba(0,0,0,0.2)',
+          transform: open ? 'translateX(0)' : 'translateX(-105%)',
+          transition: 'transform 200ms ease',
+          display: 'flex',
+          flexDirection: 'column',
+          zIndex: 9998,
+        }}
       >
-        <div className="slide-sidebar__header">
+        {/* Header (sticky) */}
+        <div
+          style={{
+            position: 'sticky',
+            top: 0,
+            zIndex: 1,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
+            padding: '12px 16px',     // header padding
+            background: '#fff',
+            borderBottom: '1px solid #eee',
+          }}
+        >
           <button
             onClick={onClose}
-            className="hud-btn hud-sidebar-btn"
             title="Close"
             aria-label="Close"
+            style={{
+              width: 44,
+              height: 36,
+              borderRadius: 12,
+              border: '1px solid #e5e5e5',
+              background: '#f8f8f8',
+              fontSize: 18,
+              lineHeight: 1,
+            }}
           >
             <span style={{ display: 'inline-block', transform: 'rotate(90deg)' }}>☰</span>
           </button>
-          <h3 className="slide-sidebar__title">{title}</h3>
+          <h3 style={{ margin: 0, fontSize: 18 }}>{title}</h3>
         </div>
 
-        <div className="slide-sidebar__body">
-          {children}
+        {/* Body — NO TOP PADDING so search sits flush, and kill first-child margins */}
+        <div
+          style={{
+            flex: 1,
+            overflowY: 'auto',
+            padding: '0 12px 12px',   // top padding = 0 → removes the visible gap
+            WebkitOverflowScrolling: 'touch',
+          }}
+        >
+          {/* Wrapper prevents margin-collapsing of the first child (e.g., search box) */}
+          <div style={{ marginTop: 0 }}>{children}</div>
         </div>
       </aside>
     </>

@@ -432,16 +432,16 @@ function ViewerContent() {
   const [marks, setMarks] = useState<Mark[]>([]);
   const [currentMarkIndex, setCurrentMarkIndex] = useState(0);
   const [zoom, setZoom] = useState(1.0);
-    // Quantized zoom setter (must live at component top-level)
+  // Quantized zoom setter (must live at component top-level)
   const setZoomQ = useCallback(
-  (z: number, ref?: MutableRefObject<number>) => {
-    const q = quantize(z);
-    setZoom(q);
-    if (ref) ref.current = q;
-    return q;
-  },
-  []
-);
+    (z: number, ref?: MutableRefObject<number>) => {
+      const q = quantize(z);
+      setZoom(q);
+      if (ref) ref.current = q;
+      return q;
+    },
+    []
+  );
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -473,120 +473,120 @@ function ViewerContent() {
   const animRafRef = useRef<number | null>(null);
   const isZoomAnimatingRef = useRef(false);
   // ===== Windowing + prefix sums =====
-const GUTTER = 16; // vertical gap between pages
-const prefixHeightsRef = useRef<number[]>([]);   // top offsets of each page at current zoom
-const totalHeightRef = useRef<number>(0);
-const [visibleRange, setVisibleRange] = useState<[number, number]>([1, 3]); // 1-based inclusive
+  const GUTTER = 16; // vertical gap between pages
+  const prefixHeightsRef = useRef<number[]>([]);   // top offsets of each page at current zoom
+  const totalHeightRef = useRef<number>(0);
+  const [visibleRange, setVisibleRange] = useState<[number, number]>([1, 3]); // 1-based inclusive
 
-function lowerBound(a: number[], x: number) { // first idx with a[idx] >= x
-  let l = 0, r = a.length; 
-  while (l < r) { const m = (l + r) >> 1; a[m] < x ? (l = m + 1) : (r = m); }
-  return l;
-}
-function upperBound(a: number[], x: number) { // first idx with a[idx] > x
-  let l = 0, r = a.length;
-  while (l < r) { const m = (l + r) >> 1; a[m] <= x ? (l = m + 1) : (r = m); }
-  return l;
-}
-
-/** Recompute prefix tops from *base* page sizes (scale=1) and the current zoom. */
-const recomputePrefix = useCallback(() => {
-  const base = basePageSizeRef.current; // [{w,h}] at scale=1, already filled elsewhere
-  if (!base || base.length === 0) return;
-  const n = base.length;
-  const pref = new Array(n);
-  let run = 0;
-  for (let i = 0; i < n; i++) {
-    pref[i] = run;
-    run += base[i].h * zoomRef.current + GUTTER;
+  function lowerBound(a: number[], x: number) { // first idx with a[idx] >= x
+    let l = 0, r = a.length;
+    while (l < r) { const m = (l + r) >> 1; a[m] < x ? (l = m + 1) : (r = m); }
+    return l;
   }
-  prefixHeightsRef.current = pref;           // pref[i] = CSS top of page i (0-based)
-  totalHeightRef.current = run - GUTTER;     // overall scrollable height
-}, []);
+  function upperBound(a: number[], x: number) { // first idx with a[idx] > x
+    let l = 0, r = a.length;
+    while (l < r) { const m = (l + r) >> 1; a[m] <= x ? (l = m + 1) : (r = m); }
+    return l;
+  }
 
-// ===== Windowing range calc (uses prefixHeights) =====
-const VBUF = 1; // render ±1 page buffer around viewport
-
-const updateVisibleRange = useCallback(() => {
-  const cont = containerRef.current;
-  const pref = prefixHeightsRef.current;
-  if (!cont || pref.length === 0) return;
-
-  const viewTop = cont.scrollTop;
-  const viewBot = viewTop + cont.clientHeight;
-
-  const lower = lowerBound(pref, viewTop);
-  const upper = Math.max(lower, upperBound(pref, viewBot));
-
-  const start = Math.max(1, lower + 1 - VBUF);                // 1-based
-  const end   = Math.min(numPages, upper + 1 + VBUF);
-  setVisibleRange([start, end]);
-
-  // Set current page near the viewport midpoint
-  const mid = viewTop + cont.clientHeight / 2;
-  const idx = Math.min(pref.length - 1, lowerBound(pref, mid));
-  setCurrentPage(idx + 1);
-}, [numPages]);
-
-// Bind scroll + rAF-throttled resize
-useEffect(() => {
-  const el = containerRef.current;
-  if (!el) return;
-
-  const onScroll = () => updateVisibleRange();
-
-  let raf: number | null = null;
-  const onResize = () => {
-    if (raf) cancelAnimationFrame(raf);
-    raf = requestAnimationFrame(() => {
-      recomputePrefix();
-      updateVisibleRange();
-      raf = null;
-    });
-  };
-
-  el.addEventListener('scroll', onScroll, { passive: true });
-  window.addEventListener('resize', onResize, { passive: true });
-
-  // initial compute
-  updateVisibleRange();
-
-  return () => {
-    el.removeEventListener('scroll', onScroll);
-    window.removeEventListener('resize', onResize as any);
-    if (raf) cancelAnimationFrame(raf);
-  };
-}, [updateVisibleRange, recomputePrefix]);
-
-// ===== IntersectionObserver prefetch (tiny, gated) =====
-useEffect(() => {
-  const conn = (navigator as any).connection;
-  const ok = conn?.effectiveType ? (conn.effectiveType === '4g') : true; // default allow on desktops
-  if (!ok || !pdf) return;
-
-  const root = containerRef.current;
-  if (!root) return;
-
-  const io = new IntersectionObserver((entries) => {
-    for (const e of entries) {
-      if (!e.isIntersecting) continue;
-      const page = Number((e.target as HTMLElement).dataset.page || '0');
-      // prefetch next/prev once
-      if (page + 1 <= numPages) pdf.getPage(page + 1).catch(()=>{});
-      if (page - 1 >= 1)        pdf.getPage(page - 1).catch(()=>{});
+  /** Recompute prefix tops from *base* page sizes (scale=1) and the current zoom. */
+  const recomputePrefix = useCallback(() => {
+    const base = basePageSizeRef.current; // [{w,h}] at scale=1, already filled elsewhere
+    if (!base || base.length === 0) return;
+    const n = base.length;
+    const pref = new Array(n);
+    let run = 0;
+    for (let i = 0; i < n; i++) {
+      pref[i] = run;
+      run += base[i].h * zoomRef.current + GUTTER;
     }
-  }, { root, rootMargin: '600px 0px' });
+    prefixHeightsRef.current = pref;           // pref[i] = CSS top of page i (0-based)
+    totalHeightRef.current = run - GUTTER;     // overall scrollable height
+  }, []);
 
-  // Observe currently visible page nodes
-  const nodes = pageElsRef.current;
-  nodes.forEach((node, idx) => {
-    if (!node) return;
-    node.dataset.page = String(idx + 1);
-    io.observe(node);
-  });
+  // ===== Windowing range calc (uses prefixHeights) =====
+  const VBUF = 1; // render ±1 page buffer around viewport
 
-  return () => { io.disconnect(); };
-}, [pdf, numPages, visibleRange]);
+  const updateVisibleRange = useCallback(() => {
+    const cont = containerRef.current;
+    const pref = prefixHeightsRef.current;
+    if (!cont || pref.length === 0) return;
+
+    const viewTop = cont.scrollTop;
+    const viewBot = viewTop + cont.clientHeight;
+
+    const lower = lowerBound(pref, viewTop);
+    const upper = Math.max(lower, upperBound(pref, viewBot));
+
+    const start = Math.max(1, lower + 1 - VBUF);                // 1-based
+    const end = Math.min(numPages, upper + 1 + VBUF);
+    setVisibleRange([start, end]);
+
+    // Set current page near the viewport midpoint
+    const mid = viewTop + cont.clientHeight / 2;
+    const idx = Math.min(pref.length - 1, lowerBound(pref, mid));
+    setCurrentPage(idx + 1);
+  }, [numPages]);
+
+  // Bind scroll + rAF-throttled resize
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const onScroll = () => updateVisibleRange();
+
+    let raf: number | null = null;
+    const onResize = () => {
+      if (raf) cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        recomputePrefix();
+        updateVisibleRange();
+        raf = null;
+      });
+    };
+
+    el.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onResize, { passive: true });
+
+    // initial compute
+    updateVisibleRange();
+
+    return () => {
+      el.removeEventListener('scroll', onScroll);
+      window.removeEventListener('resize', onResize as any);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [updateVisibleRange, recomputePrefix]);
+
+  // ===== IntersectionObserver prefetch (tiny, gated) =====
+  useEffect(() => {
+    const conn = (navigator as any).connection;
+    const ok = conn?.effectiveType ? (conn.effectiveType === '4g') : true; // default allow on desktops
+    if (!ok || !pdf) return;
+
+    const root = containerRef.current;
+    if (!root) return;
+
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        if (!e.isIntersecting) continue;
+        const page = Number((e.target as HTMLElement).dataset.page || '0');
+        // prefetch next/prev once
+        if (page + 1 <= numPages) pdf.getPage(page + 1).catch(() => { });
+        if (page - 1 >= 1) pdf.getPage(page - 1).catch(() => { });
+      }
+    }, { root, rootMargin: '600px 0px' });
+
+    // Observe currently visible page nodes
+    const nodes = pageElsRef.current;
+    nodes.forEach((node, idx) => {
+      if (!node) return;
+      node.dataset.page = String(idx + 1);
+      io.observe(node);
+    });
+
+    return () => { io.disconnect(); };
+  }, [pdf, numPages, visibleRange]);
 
 
   // Smooth animated zoom that keeps the same focal point centered
@@ -625,7 +625,7 @@ useEffect(() => {
 
         // 1) apply zoom (triggers canvas resize/layout)
         setZoomQ(z, zoomRef);
-      
+
 
         // 2) keep focal point centered (clamped)
         const targetLeft = contentX * k - anchorX;
@@ -660,44 +660,44 @@ useEffect(() => {
     // deps: include things we read directly
     [marks, currentMarkIndex, clampZoom]
   );
-// PATCH[page.tsx] — add focal-point zoom helper
-const zoomAt = useCallback(
-  (nextZoomRaw: number, clientX: number, clientY: number) => {
-    const container = containerRef.current;
-    if (!container) return;
+  // PATCH[page.tsx] — add focal-point zoom helper
+  const zoomAt = useCallback(
+    (nextZoomRaw: number, clientX: number, clientY: number) => {
+      const container = containerRef.current;
+      if (!container) return;
 
-    const nextZoom = clampZoom(nextZoomRaw);
-    const prevZoom = zoomRef.current;
-    if (Math.abs(nextZoom - prevZoom) < 1e-4) return;
+      const nextZoom = clampZoom(nextZoomRaw);
+      const prevZoom = zoomRef.current;
+      if (Math.abs(nextZoom - prevZoom) < 1e-4) return;
 
-    // Anchor at the given screen point (mouse or gesture center)
-    const rect = container.getBoundingClientRect();
-    const anchorX = clientX - rect.left;
-    const anchorY = clientY - rect.top;
+      // Anchor at the given screen point (mouse or gesture center)
+      const rect = container.getBoundingClientRect();
+      const anchorX = clientX - rect.left;
+      const anchorY = clientY - rect.top;
 
-    // Content coords under anchor at previous zoom
-    const contentX = container.scrollLeft + anchorX;
-    const contentY = container.scrollTop + anchorY;
+      // Content coords under anchor at previous zoom
+      const contentX = container.scrollLeft + anchorX;
+      const contentY = container.scrollTop + anchorY;
 
-    const scale = nextZoom / prevZoom;
+      const scale = nextZoom / prevZoom;
 
-    // 1) set zoom state quickly (no extra animations here)
-    setZoomQ(nextZoom, zoomRef);
+      // 1) set zoom state quickly (no extra animations here)
+      setZoomQ(nextZoom, zoomRef);
 
 
-    // 2) keep the same content point under the anchor
-    const targetLeft = contentX * scale - anchorX;
-    const targetTop  = contentY * scale - anchorY;
+      // 2) keep the same content point under the anchor
+      const targetLeft = contentX * scale - anchorX;
+      const targetTop = contentY * scale - anchorY;
 
-    const { left, top } = clampScroll(container, targetLeft, targetTop);
-    // rAF prevents layout thrash during trackpad zooming
-    requestAnimationFrame(() => {
-      container.scrollLeft = left;
-      container.scrollTop  = top;
-    });
-  },
-  [clampZoom]
-);
+      const { left, top } = clampScroll(container, targetLeft, targetTop);
+      // rAF prevents layout thrash during trackpad zooming
+      requestAnimationFrame(() => {
+        container.scrollLeft = left;
+        container.scrollTop = top;
+      });
+    },
+    [clampZoom]
+  );
 
 
   const isDemo = searchParams?.get('demo') === '1';
@@ -874,139 +874,138 @@ const zoomAt = useCallback(
   }, [marks.length]);
 
 
- // ===== Precompute base page sizes (scale=1) and then prefix sums =====
-useEffect(() => {
-  if (!pdf) return;
-  let cancelled = false;
+  // ===== Precompute base page sizes (scale=1) and then prefix sums =====
+  useEffect(() => {
+    if (!pdf) return;
+    let cancelled = false;
 
-  (async () => {
-    const n = pdf.numPages;
-    const sizes: Array<{ w: number; h: number }> = new Array(n);
-    for (let i = 1; i <= n; i++) {
-      const page = await pdf.getPage(i);
-      if (cancelled) return;
-      const vp = page.getViewport({ scale: 1 });
-      sizes[i - 1] = { w: vp.width, h: vp.height };
-    }
-    basePageSizeRef.current = sizes;
-    recomputePrefix();              // 👈 build prefix tops right away
-    // Initial visible range after sizes land
-    requestAnimationFrame(() => updateVisibleRange());
-  })();
+    (async () => {
+      const n = pdf.numPages;
+      const sizes: Array<{ w: number; h: number }> = new Array(n);
+      for (let i = 1; i <= n; i++) {
+        const page = await pdf.getPage(i);
+        if (cancelled) return;
+        const vp = page.getViewport({ scale: 1 });
+        sizes[i - 1] = { w: vp.width, h: vp.height };
+      }
+      basePageSizeRef.current = sizes;
+      recomputePrefix();              // 👈 build prefix tops right away
+      // Initial visible range after sizes land
+      requestAnimationFrame(() => updateVisibleRange());
+    })();
 
-  return () => { cancelled = true; };
-}, [pdf, recomputePrefix]);
+    return () => { cancelled = true; };
+  }, [pdf, recomputePrefix]);
 
-// Recompute prefix on zoom change without re-measuring
-useEffect(() => {
-  recomputePrefix();
-  // keep visible range in sync
-  updateVisibleRange();
-}, [zoom, recomputePrefix]);
+  // Recompute prefix on zoom change without re-measuring
+  useEffect(() => {
+    recomputePrefix();
+    // keep visible range in sync
+    updateVisibleRange();
+  }, [zoom, recomputePrefix]);
 
   const navigateToMark = useCallback(
     async (index: number) => {
-        if (!pdf || index < 0 || index >= marks.length) return;
+      if (!pdf || index < 0 || index >= marks.length) return;
 
-  const mark = marks[index];
-  setCurrentMarkIndex(index);
+      const mark = marks[index];
+      setCurrentMarkIndex(index);
 
-  const pageNumber = mark.page_index + 1;
-  const container = containerRef.current;
-  const pageEl = pageElsRef.current[mark.page_index];
-  if (!container || !pageEl) return;
+      const pageNumber = mark.page_index + 1;
+      const container = containerRef.current;
+      const pageEl = pageElsRef.current[mark.page_index];
+      if (!container || !pageEl) return;
 
-  // Use precomputed base size (scale=1) — no getPage here
-  const base = basePageSizeRef.current[mark.page_index];
-  if (!base) return;
+      // Use precomputed base size (scale=1) — no getPage here
+      const base = basePageSizeRef.current[mark.page_index];
+      if (!base) return;
 
-  // Rect at scale=1
-  const rectAt1 = {
-    x: mark.nx * base.w,
-    y: mark.ny * base.h,
-    w: mark.nw * base.w,
-    h: mark.nh * base.h,
-  };
+      // Rect at scale=1
+      const rectAt1 = {
+        x: mark.nx * base.w,
+        y: mark.ny * base.h,
+        w: mark.nw * base.w,
+        h: mark.nh * base.h,
+      };
 
-  const containerW = container.clientWidth;
-  const containerH = container.clientHeight;
+      const containerW = container.clientWidth;
+      const containerH = container.clientHeight;
 
-  let targetZoom = Math.min((containerW * 0.8) / rectAt1.w, (containerH * 0.8) / rectAt1.h);
-  targetZoom = Math.min(targetZoom, 4);
-  if (containerW < 600) targetZoom = Math.min(targetZoom, 3);
+      let targetZoom = Math.min((containerW * 0.8) / rectAt1.w, (containerH * 0.8) / rectAt1.h);
+      targetZoom = Math.min(targetZoom, 4);
+      if (containerW < 600) targetZoom = Math.min(targetZoom, 3);
 
-  const qZoom = setZoomQ(targetZoom, zoomRef);
+      const qZoom = setZoomQ(targetZoom, zoomRef);
 
-  // Rect directly at qZoom (no layout wait)
-  const rectAtZ = {
-    x: mark.nx * base.w * qZoom,
-    y: mark.ny * base.h * qZoom,
-    w: mark.nw * base.w * qZoom,
-    h: mark.nh * base.h * qZoom,
-  };
+      // Rect directly at qZoom (no layout wait)
+      const rectAtZ = {
+        x: mark.nx * base.w * qZoom,
+        y: mark.ny * base.h * qZoom,
+        w: mark.nw * base.w * qZoom,
+        h: mark.nh * base.h * qZoom,
+      };
 
-  // Flash + persistent outline
-  setFlashRect({ pageNumber, ...rectAtZ });
-  setTimeout(() => setFlashRect(null), 1200);
-  const keepAliveRect = { pageNumber, ...rectAtZ };
-  setSelectedRect(keepAliveRect);
-  setTimeout(() => setSelectedRect(keepAliveRect), 1250);
+      // Flash + persistent outline
+      setFlashRect({ pageNumber, ...rectAtZ });
+      setTimeout(() => setFlashRect(null), 1200);
+      const keepAliveRect = { pageNumber, ...rectAtZ };
+      setSelectedRect(keepAliveRect);
+      setTimeout(() => setSelectedRect(keepAliveRect), 1250);
 
- // Center after next frame, but ensure the canvas layout has settled (important for far jumps)
-requestAnimationFrame(async () => {
-  const base = basePageSizeRef.current[mark.page_index];
-  const expectedW = base.w * qZoom;
-  const expectedH = base.h * qZoom;
+      // Center after next frame, but ensure the canvas layout has settled (important for far jumps)
+      requestAnimationFrame(async () => {
+        const base = basePageSizeRef.current[mark.page_index];
+        const expectedW = base.w * qZoom;
+        const expectedH = base.h * qZoom;
 
-  // ✅ wait for canvas to actually reach expected dimensions
-  await waitForCanvasLayout(pageEl, expectedW, expectedH, 1500);
+        // ✅ wait for canvas to actually reach expected dimensions
+        await waitForCanvasLayout(pageEl, expectedW, expectedH, 1500);
 
-  const containerRect = container.getBoundingClientRect();
-  const pageRect = pageEl.getBoundingClientRect();
+        const containerRect = container.getBoundingClientRect();
+        const pageRect = pageEl.getBoundingClientRect();
 
-  const pageOffsetLeft = container.scrollLeft + (pageRect.left - containerRect.left);
-  const pageOffsetTop  = container.scrollTop  + (pageRect.top  - containerRect.top);
+        const pageOffsetLeft = container.scrollLeft + (pageRect.left - containerRect.left);
+        const pageOffsetTop = container.scrollTop + (pageRect.top - containerRect.top);
 
-  const markCenterX = pageOffsetLeft + rectAtZ.x + rectAtZ.w / 2;
-  const markCenterY = pageOffsetTop  + rectAtZ.y + rectAtZ.h / 2;
+        const markCenterX = pageOffsetLeft + rectAtZ.x + rectAtZ.w / 2;
+        const markCenterY = pageOffsetTop + rectAtZ.y + rectAtZ.h / 2;
 
-  const targetScrollLeft = markCenterX - containerW / 2;
-  const targetScrollTop  = markCenterY - containerH / 2;
+        const targetScrollLeft = markCenterX - containerW / 2;
+        const targetScrollTop = markCenterY - containerH / 2;
 
-  const { left: clampedL, top: clampedT } = clampScroll(container, targetScrollLeft, targetScrollTop);
+        const { left: clampedL, top: clampedT } = clampScroll(container, targetScrollLeft, targetScrollTop);
 
-  // ✅ do a guaranteed smooth scroll now that layout is stable
-  container.scrollTo({ left: clampedL, top: clampedT, behavior: 'smooth' });
-});
-
+        // ✅ do a guaranteed smooth scroll now that layout is stable
+        container.scrollTo({ left: clampedL, top: clampedT, behavior: 'smooth' });
+      });
 
     },
     [marks, pdf]
   );
 
- 
+
   useEffect(() => {
-  if (marks.length === 0) return;
-  if (isZoomAnimatingRef.current) return;
+    if (marks.length === 0) return;
+    if (isZoomAnimatingRef.current) return;
 
-  const mark = marks[currentMarkIndex];
-  if (!mark) return;
+    const mark = marks[currentMarkIndex];
+    if (!mark) return;
 
-  const base = basePageSizeRef.current[mark.page_index];
-  if (!base) return;
+    const base = basePageSizeRef.current[mark.page_index];
+    if (!base) return;
 
-  const rectAtZ = {
-    x: mark.nx * base.w * zoom,
-    y: mark.ny * base.h * zoom,
-    w: mark.nw * base.w * zoom,
-    h: mark.nh * base.h * zoom,
-  };
+    const rectAtZ = {
+      x: mark.nx * base.w * zoom,
+      y: mark.ny * base.h * zoom,
+      w: mark.nw * base.w * zoom,
+      h: mark.nh * base.h * zoom,
+    };
 
-  setSelectedRect({
-    pageNumber: mark.page_index + 1,
-    ...rectAtZ,
-  });
-}, [zoom, currentMarkIndex, marks]);
+    setSelectedRect({
+      pageNumber: mark.page_index + 1,
+      ...rectAtZ,
+    });
+  }, [zoom, currentMarkIndex, marks]);
 
   const prevMark = useCallback(() => {
     if (currentMarkIndex > 0) {
@@ -1193,22 +1192,22 @@ requestAnimationFrame(async () => {
     swipeDuration: 500, // Must swipe within 500ms
   });
 
-// PATCH: HUD zoom anchored at viewer center (consistent with wheel/pinch)
-const zoomIn = useCallback(() => {
-  const container = containerRef.current;
-  if (!container) return;
-  const rect = container.getBoundingClientRect();
-  const next = clampZoom(zoomRef.current * 1.2);
-  zoomAt(next, rect.left + rect.width / 2, rect.top + rect.height / 2);
-}, [zoomAt, clampZoom]);
+  // PATCH: HUD zoom anchored at viewer center (consistent with wheel/pinch)
+  const zoomIn = useCallback(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const next = clampZoom(zoomRef.current * 1.2);
+    zoomAt(next, rect.left + rect.width / 2, rect.top + rect.height / 2);
+  }, [zoomAt, clampZoom]);
 
-const zoomOut = useCallback(() => {
-  const container = containerRef.current;
-  if (!container) return;
-  const rect = container.getBoundingClientRect();
-  const next = clampZoom(zoomRef.current / 1.2);
-  zoomAt(next, rect.left + rect.width / 2, rect.top + rect.height / 2);
-}, [zoomAt, clampZoom]);
+  const zoomOut = useCallback(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const next = clampZoom(zoomRef.current / 1.2);
+    zoomAt(next, rect.left + rect.width / 2, rect.top + rect.height / 2);
+  }, [zoomAt, clampZoom]);
 
 
   // (optional) make reset smooth as well:
@@ -1228,155 +1227,155 @@ const zoomOut = useCallback(() => {
   }, [pdf]);
 
   // PATCH: desktop wheel/trackpad zoom anchored at cursor, scoped to container
-useEffect(() => {
-  const container = containerRef.current;
-  if (!container) return;
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
 
-  let raf: number | null = null;
+    let raf: number | null = null;
 
-  const onWheel = (e: WheelEvent) => {
-    // Zoom only when ctrl/cmd is held (Mac trackpad pinch sets ctrlKey)
-    if (!e.ctrlKey && !e.metaKey) return;
-    if (!container.contains(e.target as Node)) return;
+    const onWheel = (e: WheelEvent) => {
+      // Zoom only when ctrl/cmd is held (Mac trackpad pinch sets ctrlKey)
+      if (!e.ctrlKey && !e.metaKey) return;
+      if (!container.contains(e.target as Node)) return;
 
-    e.preventDefault();
-    e.stopPropagation();
+      e.preventDefault();
+      e.stopPropagation();
 
-    const factor = e.deltaY > 0 ? 0.95 : 1.05;
+      const factor = e.deltaY > 0 ? 0.95 : 1.05;
 
-    // Throttle to one update per frame
-    if (raf) cancelAnimationFrame(raf);
-    raf = requestAnimationFrame(() => {
-      const next = clampZoom(zoomRef.current * factor);
-      zoomAt(next, e.clientX, e.clientY);
-      raf = null;
-    });
-  };
-
-  container.addEventListener('wheel', onWheel, { passive: false });
-  return () => {
-    container.removeEventListener('wheel', onWheel as any);
-    if (raf) cancelAnimationFrame(raf);
-  };
-}, [zoomAt, clampZoom]);
-
-// PATCH: touch pan (1 finger) + pinch-zoom (2 fingers) on the container
-useEffect(() => {
-  if (!TOUCH_GESTURES_ENABLED) return; // ➜ disable custom gestures; let native scrolling handle pan
-  const el = containerRef.current;
-  if (!el) return;
-
-  // Tracking pointers
-  const pts = new Map<number, { x: number; y: number }>();
-  let dragging = false;
-  let pinch = false;
-
-  // For drag
-  let dragStartX = 0;
-  let dragStartY = 0;
-  let startScrollLeft = 0;
-  let startScrollTop = 0;
-
-  // For pinch
-  let lastMidX = 0;
-  let lastMidY = 0;
-  let lastDist = 0;
-
-  const getTwo = () => {
-    const arr = Array.from(pts.values());
-    return [arr[0], arr[1]] as const;
-  };
-
-  const onPointerDown = (e: PointerEvent) => {
-    if (!el.contains(e.target as Node)) return;
-    el.setPointerCapture?.(e.pointerId);
-    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
-
-    if (pts.size === 1) {
-      // Start drag
-      dragging = true;
-      pinch = false;
-      dragStartX = e.clientX;
-      dragStartY = e.clientY;
-      startScrollLeft = el.scrollLeft;
-      startScrollTop = el.scrollTop;
-    } else if (pts.size === 2) {
-      // Start pinch
-      dragging = false;
-      pinch = true;
-      const [p0, p1] = getTwo();
-      lastMidX = (p0.x + p1.x) / 2;
-      lastMidY = (p0.y + p1.y) / 2;
-      lastDist = Math.hypot(p0.x - p1.x, p0.y - p1.y);
-    }
-  };
-
-  const onPointerMove = (e: PointerEvent) => {
-    if (!pts.has(e.pointerId)) return;
-    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
-
-    if (pinch && pts.size >= 2) {
-      // Pinch: zoom at gesture midpoint + translate by midpoint drift
-      const [p0, p1] = getTwo();
-      const midX = (p0.x + p1.x) / 2;
-      const midY = (p0.y + p1.y) / 2;
-      const dist = Math.hypot(p0.x - p1.x, p0.y - p1.y);
-
-      if (lastDist > 0) {
-        const factor = dist / lastDist;
+      // Throttle to one update per frame
+      if (raf) cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
         const next = clampZoom(zoomRef.current * factor);
-        // Zoom around gesture center
-        zoomAt(next, midX, midY);
+        zoomAt(next, e.clientX, e.clientY);
+        raf = null;
+      });
+    };
 
-        // Also pan by the midpoint drift so the content stays under fingers
-        el.scrollLeft -= (midX - lastMidX);
-        el.scrollTop  -= (midY - lastMidY);
+    container.addEventListener('wheel', onWheel, { passive: false });
+    return () => {
+      container.removeEventListener('wheel', onWheel as any);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [zoomAt, clampZoom]);
+
+  // PATCH: touch pan (1 finger) + pinch-zoom (2 fingers) on the container
+  useEffect(() => {
+    if (!TOUCH_GESTURES_ENABLED) return; // ➜ disable custom gestures; let native scrolling handle pan
+    const el = containerRef.current;
+    if (!el) return;
+
+    // Tracking pointers
+    const pts = new Map<number, { x: number; y: number }>();
+    let dragging = false;
+    let pinch = false;
+
+    // For drag
+    let dragStartX = 0;
+    let dragStartY = 0;
+    let startScrollLeft = 0;
+    let startScrollTop = 0;
+
+    // For pinch
+    let lastMidX = 0;
+    let lastMidY = 0;
+    let lastDist = 0;
+
+    const getTwo = () => {
+      const arr = Array.from(pts.values());
+      return [arr[0], arr[1]] as const;
+    };
+
+    const onPointerDown = (e: PointerEvent) => {
+      if (!el.contains(e.target as Node)) return;
+      el.setPointerCapture?.(e.pointerId);
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+      if (pts.size === 1) {
+        // Start drag
+        dragging = true;
+        pinch = false;
+        dragStartX = e.clientX;
+        dragStartY = e.clientY;
+        startScrollLeft = el.scrollLeft;
+        startScrollTop = el.scrollTop;
+      } else if (pts.size === 2) {
+        // Start pinch
+        dragging = false;
+        pinch = true;
+        const [p0, p1] = getTwo();
+        lastMidX = (p0.x + p1.x) / 2;
+        lastMidY = (p0.y + p1.y) / 2;
+        lastDist = Math.hypot(p0.x - p1.x, p0.y - p1.y);
       }
+    };
 
-      lastMidX = midX;
-      lastMidY = midY;
-      lastDist = dist;
+    const onPointerMove = (e: PointerEvent) => {
+      if (!pts.has(e.pointerId)) return;
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
-      e.preventDefault();
-      e.stopPropagation();
-    } else if (dragging && pts.size === 1) {
-      // One-finger pan (works when zoomed)
-      const dx = e.clientX - dragStartX;
-      const dy = e.clientY - dragStartY;
-      el.scrollLeft = startScrollLeft - dx;
-      el.scrollTop  = startScrollTop  - dy;
+      if (pinch && pts.size >= 2) {
+        // Pinch: zoom at gesture midpoint + translate by midpoint drift
+        const [p0, p1] = getTwo();
+        const midX = (p0.x + p1.x) / 2;
+        const midY = (p0.y + p1.y) / 2;
+        const dist = Math.hypot(p0.x - p1.x, p0.y - p1.y);
 
-      e.preventDefault();
-      e.stopPropagation();
-    }
-  };
+        if (lastDist > 0) {
+          const factor = dist / lastDist;
+          const next = clampZoom(zoomRef.current * factor);
+          // Zoom around gesture center
+          zoomAt(next, midX, midY);
 
-  const end = (e: PointerEvent) => {
-    pts.delete(e.pointerId);
-    if (pts.size < 2) {
-      pinch = false;
-      lastDist = 0;
-    }
-    if (pts.size === 0) {
-      dragging = false;
-    }
-    el.releasePointerCapture?.(e.pointerId);
-  };
+          // Also pan by the midpoint drift so the content stays under fingers
+          el.scrollLeft -= (midX - lastMidX);
+          el.scrollTop -= (midY - lastMidY);
+        }
 
-  el.addEventListener('pointerdown', onPointerDown, { passive: false });
-  el.addEventListener('pointermove', onPointerMove, { passive: false });
-  el.addEventListener('pointerup', end, { passive: true });
-  el.addEventListener('pointercancel', end, { passive: true });
-  el.addEventListener('pointerleave', end, { passive: true });
+        lastMidX = midX;
+        lastMidY = midY;
+        lastDist = dist;
 
-  return () => {
-    el.removeEventListener('pointerdown', onPointerDown as any);
-    el.removeEventListener('pointermove', onPointerMove as any);
-    el.removeEventListener('pointerup', end as any);
-    el.removeEventListener('pointercancel', end as any);
-    el.removeEventListener('pointerleave', end as any);
-  };
-}, [zoomAt, clampZoom]);
+        e.preventDefault();
+        e.stopPropagation();
+      } else if (dragging && pts.size === 1) {
+        // One-finger pan (works when zoomed)
+        const dx = e.clientX - dragStartX;
+        const dy = e.clientY - dragStartY;
+        el.scrollLeft = startScrollLeft - dx;
+        el.scrollTop = startScrollTop - dy;
+
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+
+    const end = (e: PointerEvent) => {
+      pts.delete(e.pointerId);
+      if (pts.size < 2) {
+        pinch = false;
+        lastDist = 0;
+      }
+      if (pts.size === 0) {
+        dragging = false;
+      }
+      el.releasePointerCapture?.(e.pointerId);
+    };
+
+    el.addEventListener('pointerdown', onPointerDown, { passive: false });
+    el.addEventListener('pointermove', onPointerMove, { passive: false });
+    el.addEventListener('pointerup', end, { passive: true });
+    el.addEventListener('pointercancel', end, { passive: true });
+    el.addEventListener('pointerleave', end, { passive: true });
+
+    return () => {
+      el.removeEventListener('pointerdown', onPointerDown as any);
+      el.removeEventListener('pointermove', onPointerMove as any);
+      el.removeEventListener('pointerup', end as any);
+      el.removeEventListener('pointercancel', end as any);
+      el.removeEventListener('pointerleave', end as any);
+    };
+  }, [zoomAt, clampZoom]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -1480,7 +1479,7 @@ useEffect(() => {
             <MarkList
               marks={marks}
               currentIndex={currentMarkIndex}
-              entries={entries}                
+              entries={entries}
               onSelect={(index) => {
                 setCurrentMarkIndex(index);
                 setSidebarOpen(false);
@@ -1529,64 +1528,64 @@ useEffect(() => {
             >
 
 
-  <div className="pdf-surface" style={{ position: 'relative', height: totalHeightRef.current }}>
-  {Array.from({ length: visibleRange[1] - visibleRange[0] + 1 }, (_, i) => visibleRange[0] + i).map((pageNum) => {
-    const top = prefixHeightsRef.current[pageNum - 1] || 0;
-    return (
-      <div
-        key={pageNum}
-        style={{ position: 'absolute', top, left: 0, right: 0 }}
-        ref={(el) => { pageElsRef.current[pageNum - 1] = el; }}
-      >
-        <PageCanvas
-  pdf={pdf}
-  pageNumber={pageNum}
-  zoom={zoom}
-  flashRect={
-    flashRect?.pageNumber === pageNum
-      ? { x: flashRect.x, y: flashRect.y, w: flashRect.w, h: flashRect.h }
-      : null
-  }
-  selectedRect={
-    selectedRect?.pageNumber === pageNum
-      ? { x: selectedRect.x, y: selectedRect.y, w: selectedRect.w, h: selectedRect.h }
-      : null
-  }
-/>
+              <div className="pdf-surface" style={{ position: 'relative', height: totalHeightRef.current }}>
+                {Array.from({ length: visibleRange[1] - visibleRange[0] + 1 }, (_, i) => visibleRange[0] + i).map((pageNum) => {
+                  const top = prefixHeightsRef.current[pageNum - 1] || 0;
+                  return (
+                    <div
+                      key={pageNum}
+                      style={{ position: 'absolute', top, left: 0, right: 0 }}
+                      ref={(el) => { pageElsRef.current[pageNum - 1] = el; }}
+                    >
+                      <PageCanvas
+                        pdf={pdf}
+                        pageNumber={pageNum}
+                        zoom={zoom}
+                        flashRect={
+                          flashRect?.pageNumber === pageNum
+                            ? { x: flashRect.x, y: flashRect.y, w: flashRect.w, h: flashRect.h }
+                            : null
+                        }
+                        selectedRect={
+                          selectedRect?.pageNumber === pageNum
+                            ? { x: selectedRect.x, y: selectedRect.y, w: selectedRect.w, h: selectedRect.h }
+                            : null
+                        }
+                      />
 
 
-        {/* Scaled single-layer search overlay */}
-        {highlightPageNumber === pageNum && (
-          <div
-            style={{
-              position: 'absolute',
-              inset: 0,
-              transform: `scale(${zoom})`,
-              transformOrigin: 'top left',
-              pointerEvents: 'none',
-              zIndex: 100
-            }}
-          >
-            {searchHighlights.map((h, idx) => (
-              <div
-                key={`hl-${idx}`}
-                style={{
-                  position: 'absolute',
-                  left: h.x,
-                  top: h.y,
-                  width: h.width,
-                  height: h.height,
-                  background: 'rgba(255, 235, 59, 0.35)',
-                  border: '1px solid rgba(255, 193, 7, 0.85)'
-                }}
-              />
-            ))}
-          </div>
-        )}
-      </div>
-    );
-  })}
-</div>
+                      {/* Scaled single-layer search overlay */}
+                      {highlightPageNumber === pageNum && (
+                        <div
+                          style={{
+                            position: 'absolute',
+                            inset: 0,
+                            transform: `scale(${zoom})`,
+                            transformOrigin: 'top left',
+                            pointerEvents: 'none',
+                            zIndex: 100
+                          }}
+                        >
+                          {searchHighlights.map((h, idx) => (
+                            <div
+                              key={`hl-${idx}`}
+                              style={{
+                                position: 'absolute',
+                                left: h.x,
+                                top: h.y,
+                                width: h.width,
+                                height: h.height,
+                                background: 'rgba(255, 235, 59, 0.35)',
+                                border: '1px solid rgba(255, 193, 7, 0.85)'
+                              }}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
 
 
             </div>
@@ -1622,7 +1621,7 @@ useEffect(() => {
           <MarkList
             marks={marks}
             currentIndex={currentMarkIndex}
-            entries={entries}            
+            entries={entries}
             onSelect={(index) => {
               setCurrentMarkIndex(index);
               setSidebarOpen(false);
@@ -1646,91 +1645,91 @@ useEffect(() => {
 
 
 
- <div className="pdf-surface" style={{ position: 'relative', height: totalHeightRef.current }}>
-  {Array.from({ length: visibleRange[1] - visibleRange[0] + 1 }, (_, i) => visibleRange[0] + i).map((pageNum) => {
-    const top = prefixHeightsRef.current[pageNum - 1] || 0;
-    return (
-      <div
-        key={pageNum}
-        style={{ position: 'absolute', top, left: 0, right: 0 }}
-        ref={(el) => { pageElsRef.current[pageNum - 1] = el; }}
-      >
-    <PageCanvas
-  pdf={pdf}
-  pageNumber={pageNum}
-  zoom={zoom}
-  flashRect={
-    flashRect?.pageNumber === pageNum
-      ? { x: flashRect.x, y: flashRect.y, w: flashRect.w, h: flashRect.h }
-      : null
-  }
-  selectedRect={
-    selectedRect?.pageNumber === pageNum
-      ? { x: selectedRect.x, y: selectedRect.y, w: selectedRect.w, h: selectedRect.h }
-      : null
-  }
-/>
-
-
-        {/* Scaled single-layer search overlay */}
-        {highlightPageNumber === pageNum && (
-          <div
-            style={{
-              position: 'absolute',
-              inset: 0,
-              transform: `scale(${zoom})`,
-              transformOrigin: 'top left',
-              pointerEvents: 'none',
-              zIndex: 100
-            }}
-          >
-            {searchHighlights.map((h, idx) => (
+        <div className="pdf-surface" style={{ position: 'relative', height: totalHeightRef.current }}>
+          {Array.from({ length: visibleRange[1] - visibleRange[0] + 1 }, (_, i) => visibleRange[0] + i).map((pageNum) => {
+            const top = prefixHeightsRef.current[pageNum - 1] || 0;
+            return (
               <div
-                key={`hl-${idx}`}
-                style={{
-                  position: 'absolute',
-                  left: h.x,
-                  top: h.y,
-                  width: h.width,
-                  height: h.height,
-                  background: 'rgba(255, 235, 59, 0.35)',
-                  border: '1px solid rgba(255, 193, 7, 0.85)'
-                }}
-              />
-            ))}
-          </div>
-        )}
+                key={pageNum}
+                style={{ position: 'absolute', top, left: 0, right: 0 }}
+                ref={(el) => { pageElsRef.current[pageNum - 1] = el; }}
+              >
+                <PageCanvas
+                  pdf={pdf}
+                  pageNumber={pageNum}
+                  zoom={zoom}
+                  flashRect={
+                    flashRect?.pageNumber === pageNum
+                      ? { x: flashRect.x, y: flashRect.y, w: flashRect.w, h: flashRect.h }
+                      : null
+                  }
+                  selectedRect={
+                    selectedRect?.pageNumber === pageNum
+                      ? { x: selectedRect.x, y: selectedRect.y, w: selectedRect.w, h: selectedRect.h }
+                      : null
+                  }
+                />
+
+
+                {/* Scaled single-layer search overlay */}
+                {highlightPageNumber === pageNum && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      transform: `scale(${zoom})`,
+                      transformOrigin: 'top left',
+                      pointerEvents: 'none',
+                      zIndex: 100
+                    }}
+                  >
+                    {searchHighlights.map((h, idx) => (
+                      <div
+                        key={`hl-${idx}`}
+                        style={{
+                          position: 'absolute',
+                          left: h.x,
+                          top: h.y,
+                          width: h.width,
+                          height: h.height,
+                          background: 'rgba(255, 235, 59, 0.35)',
+                          border: '1px solid rgba(255, 193, 7, 0.85)'
+                        }}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+
       </div>
-    );
-  })}
-</div>
 
-
-        </div>
-
-        {/* Keep Input Panel OUTSIDE the scroll area */}
-        <div className="input-panel-section">
-          <InputPanel
-            currentMark={marks[currentMarkIndex] ?? null}
-            currentIndex={currentMarkIndex}
-            totalMarks={marks.length}
-            value={(marks[currentMarkIndex]?.mark_id && entries[marks[currentMarkIndex]!.mark_id!]) || ''}
-            onChange={handleEntryChange}
-            onNext={nextMark}
-            onPrev={prevMark}
-            canPrev={currentMarkIndex > 0}
-            canNext={currentMarkIndex < marks.length - 1}
-          />
-        </div>
-
-        {/* PDFSearch should stay inside main-content, after the viewer area */}
-        <PDFSearch
-          pdf={pdf}
-          isOpen={showSearch}
-          onClose={() => setShowSearch(false)}
-          onResultFound={handleSearchResult}
+      {/* Keep Input Panel OUTSIDE the scroll area */}
+      <div className="input-panel-section">
+        <InputPanel
+          currentMark={marks[currentMarkIndex] ?? null}
+          currentIndex={currentMarkIndex}
+          totalMarks={marks.length}
+          value={(marks[currentMarkIndex]?.mark_id && entries[marks[currentMarkIndex]!.mark_id!]) || ''}
+          onChange={handleEntryChange}
+          onNext={nextMark}
+          onPrev={prevMark}
+          canPrev={currentMarkIndex > 0}
+          canNext={currentMarkIndex < marks.length - 1}
         />
       </div>
+
+      {/* PDFSearch should stay inside main-content, after the viewer area */}
+      <PDFSearch
+        pdf={pdf}
+        isOpen={showSearch}
+        onClose={() => setShowSearch(false)}
+        onResultFound={handleSearchResult}
+      />
+    </div>
   );
 
 }
