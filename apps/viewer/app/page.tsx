@@ -184,12 +184,6 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string>('');
 
-  // Create markset modal state
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [newLabel, setNewLabel] = useState('');
-  const [newIsMaster, setNewIsMaster] = useState(false);
-  const [creating, setCreating] = useState(false);
-
   const hasBootstrapKeys =
     projectName.trim() && extId.trim() && partNumber.trim() && assemblyDrawing.trim();
 
@@ -232,45 +226,6 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
       return;
     }
     onStart(boot.document.pdf_url, markSetId);
-  };
-
-  const handleCreateMarkset = async () => {
-    if (!newLabel.trim()) {
-      alert('Please enter a label');
-      return;
-    }
-    if (!boot?.document?.doc_id) return;
-
-    setCreating(true);
-    setErr('');
-
-    try {
-      const res = await fetch(`${apiBase}/documents/mark-sets`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          project_name: projectName,
-          id: extId,
-          part_number: partNumber,
-          label: newLabel,
-          created_by: userMail || null,
-          is_master: newIsMaster,
-        }),
-      });
-
-      if (!res.ok) throw new Error(await res.text());
-
-      // Refresh boot data
-      await runBootstrap();
-      setShowCreateModal(false);
-      setNewLabel('');
-      setNewIsMaster(false);
-    } catch (e: any) {
-      console.error(e);
-      setErr('Failed to create mark set.');
-    } finally {
-      setCreating(false);
-    }
   };
 
   const masterMarkset = boot?.mark_sets.find(ms => ms.is_master);
@@ -316,8 +271,6 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
 
         {boot && (
           <>
-
-
             {err && <div style={{ background: '#ffebee', color: '#c62828', padding: 10, borderRadius: 4, marginTop: 12 }}>{err}</div>}
 
             {/* Master Mark Set (Pinned) */}
@@ -327,7 +280,6 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
                   <div style={{ fontWeight: 600 }}>⭐ Master Mark Set</div>
                 </div>
                 <div style={{ border: '2px solid #ffc107', borderRadius: 6, padding: 12, background: '#fffde7' }}>
-                  {/* ...rest stays same... */}
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <div>
                       <div style={{ fontWeight: 700, fontSize: 16, color: '#333' }}>{masterMarkset.label}</div>
@@ -346,11 +298,6 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
               <div style={{ marginTop: 16 }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
                   <div style={{ fontWeight: 600 }}>Other Mark Sets</div>
-                  {!masterMarkset && (
-                    <button onClick={() => setShowCreateModal(true)} style={{ ...btn, borderColor: '#4caf50', color: '#4caf50', fontWeight: 600 }}>
-                      + Create New
-                    </button>
-                  )}
                 </div>
                 <div style={{ display: 'grid', gap: 8, maxHeight: 320, overflowY: 'auto' }}>
                   {otherMarksets.map(ms => (
@@ -368,56 +315,19 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
               </div>
             )}
 
-            {boot.mark_sets.length === 0 && (
-              <div style={{ marginTop: 16, textAlign: 'center' }}>
-                <div style={{ color: '#666', fontSize: 13, marginBottom: 12 }}>No mark sets yet.</div>
-                <button onClick={() => setShowCreateModal(true)} style={btnPrimary}>
-                  + Create First Mark Set
-                </button>
+            {/* No mark sets at all */}
+            {!masterMarkset && otherMarksets.length === 0 && (
+              <div style={{ marginTop: 16, textAlign: 'center', color: '#666' }}>
+                No mark sets yet.
               </div>
             )}
           </>
-        )}
-
-        {/* Create Modal */}
-        {showCreateModal && (
-          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
-            <div style={{ background: '#fff', borderRadius: 8, padding: 24, width: '90%', maxWidth: 460, boxShadow: '0 4px 24px rgba(0,0,0,0.2)' }}>
-              <h3 style={{ margin: '0 0 16px 0', fontSize: 18, fontWeight: 700 }}>Create New Mark Set</h3>
-
-              <input
-                placeholder="Enter label (e.g., Heating System)"
-                value={newLabel}
-                onChange={e => setNewLabel(e.target.value)}
-                style={{ ...inp, width: '100%', marginBottom: 12 }}
-                autoFocus
-              />
-
-              <label style={{ display: 'flex', alignItems: 'center', marginBottom: 16, cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  checked={newIsMaster}
-                  onChange={e => setNewIsMaster(e.target.checked)}
-                  style={{ marginRight: 8, width: 18, height: 18 }}
-                />
-                <span style={{ fontSize: 14 }}>Set as Master Mark Set</span>
-              </label>
-
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button onClick={() => setShowCreateModal(false)} disabled={creating} style={{ ...btn, flex: 1 }}>
-                  Cancel
-                </button>
-                <button onClick={handleCreateMarkset} disabled={creating} style={{ ...btnPrimary, flex: 1, background: '#4caf50', borderColor: '#4caf50', color: '#fff' }}>
-                  {creating ? 'Creating...' : 'Create'}
-                </button>
-              </div>
-            </div>
-          </div>
         )}
       </div>
     </div>
   );
 }
+
 // small styles for setup
 const inp: CSSProperties = { padding: '10px 12px', border: '1px solid #ddd', borderRadius: 4, fontSize: 14, outline: 'none' };
 const btn: CSSProperties = { padding: '8px 14px', border: '1px solid #ccc', borderRadius: 6, background: '#fff', cursor: 'pointer' };
