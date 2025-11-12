@@ -97,11 +97,14 @@ export default function SlideSidebar({
         </div>
 
         {/* Body — NO TOP PADDING so search sits flush, and kill first-child margins */}
-        <div
+                <div
           style={{
             flex: 1,
             overflowY: 'auto',
-            padding: '0 12px 12px',   // top padding = 0 → removes the visible gap
+            paddingTop: 0,                 // no gap under the header
+            paddingBottom: 12,
+            paddingLeft: 12,
+            paddingRight: 12,
             WebkitOverflowScrolling: 'touch',
           }}
         >

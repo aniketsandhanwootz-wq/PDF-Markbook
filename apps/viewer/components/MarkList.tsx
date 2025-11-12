@@ -46,15 +46,32 @@ export default function MarkList({ marks, currentIndex, onSelect, entries }: Mar
 
   return (
     <div className="mark-list" ref={listRef}>
-      {/* Sticky search header */}
-      <div style={{ position: 'sticky', top: 0, zIndex: 2, padding: '12px', borderBottom: '1px solid #eee', background: '#fafafa' }}>
+          {/* Fixed search header inside the sidebar body */}
+      <div
+        style={{
+          position: 'sticky',
+          top: 0,                 // stick to the very top of the scroll area
+          zIndex: 3,              // above list items
+          padding: '10px 12px 8px',
+          borderBottom: '1px solid #eee',
+          background: '#fff',     // solid background so the list doesn't bleed behind
+        }}
+      >
         <div style={{ position: 'relative' }}>
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Search marks..."
-            style={{ width: '100%', padding: '8px 32px 8px 12px', border: '1px solid #ddd', borderRadius: 4, fontSize: 14, outline: 'none' }}
+            style={{
+              width: '100%',
+              padding: '8px 32px 8px 12px',
+              border: '1px solid #ddd',
+              borderRadius: 8,
+              fontSize: 14,
+              outline: 'none',
+              background: '#fff',
+            }}
             onFocus={(e) => { e.currentTarget.style.borderColor = '#1976d2'; }}
             onBlur={(e) => { e.currentTarget.style.borderColor = '#ddd'; }}
           />
@@ -62,9 +79,22 @@ export default function MarkList({ marks, currentIndex, onSelect, entries }: Mar
             <button
               onClick={handleClearSearch}
               style={{
-                position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)',
-                border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 16, color: '#999', padding: 4, lineHeight: 1,
-                width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center'
+                position: 'absolute',
+                right: 8,
+                top: '50%',
+                transform: 'translateY(-50%)',
+                border: 'none',
+                background: 'transparent',
+                cursor: 'pointer',
+                fontSize: 16,
+                color: '#999',
+                padding: 4,
+                lineHeight: 1,
+                width: 24,
+                height: 24,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
               }}
               title="Clear search"
             >
@@ -72,8 +102,15 @@ export default function MarkList({ marks, currentIndex, onSelect, entries }: Mar
             </button>
           )}
         </div>
+
         <div style={{ fontSize: 12, color: '#666', marginTop: 8, fontWeight: 500 }}>
-          {searchQuery ? (<><span style={{ color: '#1976d2' }}>{filteredMarks.length}</span> of {marks.length} marks</>) : (<>All Marks ({marks.length})</>)}
+          {searchQuery ? (
+            <>
+              <span style={{ color: '#1976d2' }}>{filteredMarks.length}</span> of {marks.length} marks
+            </>
+          ) : (
+            <>All Marks ({marks.length})</>
+          )}
         </div>
       </div>
 
