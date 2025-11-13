@@ -1,11 +1,19 @@
 # services/api/routers/reports_bundle.py
+
+
+#---------------------------------------------------------------
+#
+#  Warning: This endpoint is DEPRECATED and will be removed in future. Don't use it for new integrations.
+#  But don't delete it yet, as the existing frontend depends on it. Before making any changes here, consult Aniket.
+#  This endpoint used to bundles PDF + Excel generation and emails the results instead of returning files directly.
+#  But due to less availability of time for rewiring the frontend, we are keeping it as-is for now and just modifying the script to send email only.
+#
+#--------------------------------------------------------------
 from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from typing import Dict, Optional
-import io
-import zipfile
 import json
 from datetime import datetime
 import logging
@@ -31,24 +39,17 @@ class BundleGenerateBody(BaseModel):
     # Accept both `user_email` (JSON) and `user_mail` (alias commonly used in query strings)
     user_email: Optional[str] = Field(default=None, alias="user_mail")
     padding_pct: float = 0.25
-    office_variant: str = "o365"  # or "legacy" for older Excel
+    office_variant: str = "o365"  # kept for compatibility
 
-    # Let pydantic populate by field name or alias; ignore extra keys from the client
     model_config = {
         "populate_by_name": True,
         "extra": "allow",
     }
 
 def validate_email(email: str) -> Optional[str]:
-    """
-    Validate email format and return normalized version. Returns None if invalid.
-    """
     if not email or not isinstance(email, str):
         return None
-
     email = email.strip()
-
-    # Basic structure check
     if '@' not in email:
         logger.warning(f"Invalid email format (missing @): {email}")
         return None
@@ -56,15 +57,11 @@ def validate_email(email: str) -> Optional[str]:
     if not local or not domain or '.' not in domain:
         logger.warning(f"Invalid email format (local/domain): {email}")
         return None
-
-    # Basic guard against placeholders
     invalid_patterns = ['viewer_user', 'test@test', 'example', 'placeholder']
     if any(p in email.lower() for p in invalid_patterns):
         logger.warning(f"Placeholder email detected: {email}")
         return None
-
     return email.lower()
-
 
 @router.post("/generate-bundle")
 async def generate_bundle(
@@ -73,14 +70,19 @@ async def generate_bundle(
     storage=Depends(get_storage)
 ):
     """
-    Generate PDF + Excel, return as ZIP, and email both files separately.
+    EMAIL-ONLY MODE:
+    - Persist entries to storage (best-effort).
+    - Generate PDF and Excel in-memory.
+    - Queue an email with both files attached (if SMTP & email are valid).
+    - RETURN JSON (no file/zip download).
+
+    This endpoint name is kept for compatibility with the existing frontend.
     """
     settings = get_settings()
 
-    # Handle percent-encoded emails and accept both user_email and user_mail via alias
     raw_email = body.user_email
     if raw_email:
-        raw_email = unquote(raw_email)  # decode %40 etc.
+        raw_email = unquote(raw_email)
 
     valid_email = validate_email(raw_email) if raw_email else None
     if raw_email and not valid_email:
@@ -104,13 +106,7 @@ async def generate_bundle(
     entries = body.entries or {}
     part_number = doc.get("part_number", "Unknown")
 
-    logger.info(
-        f"Generating bundle for mark_set={body.mark_set_id}, "
-        f"part={part_number}, marks={len(marks)}, entries={len(entries)}, "
-        f"email={(valid_email or 'none')} (raw={raw_email or 'none'})"
-    )
-
-    # Save entries to Sheets (best-effort)
+    # Persist entries (best-effort)
     if entries and hasattr(storage, "create_user_inputs_batch"):
         try:
             storage.create_user_inputs_batch(
@@ -118,9 +114,9 @@ async def generate_bundle(
                 entries=entries,
                 submitted_by=valid_email or "viewer_user"
             )
-            logger.info(f"✓ Saved {len(entries)} entries to Sheets")
+            logger.info(f"✓ Saved {len(entries)} entries to Sheets/DB")
         except Exception as e:
-            logger.error(f"Failed to save entries to Sheets: {e}")
+            logger.error(f"Failed to save entries to Sheets/DB: {e}")
 
     # Generate PDF
     try:
@@ -155,34 +151,18 @@ async def generate_bundle(
         logger.error(f"Excel generation failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Excel generation failed: {str(e)}")
 
-    # Create ZIP
-    zip_buffer = io.BytesIO()
-    try:
-        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
-            pdf_name = f"submission_{body.mark_set_id}.pdf"
-            excel_name = f"submission_{body.mark_set_id}.xlsx"
+    # Build metadata for email body
+    filled = len([v for v in entries.values() if (v or '').strip()])
+    metadata = {
+        "submission_id": body.mark_set_id,
+        "part_number": part_number,
+        "submitted_by": valid_email or "viewer_user",
+        "submitted_at_utc": datetime.utcnow().isoformat() + "Z",
+        "total_marks": len(marks),
+        "filled_marks": filled
+    }
 
-            zf.writestr(pdf_name, pdf_bytes)
-            zf.writestr(excel_name, excel_bytes)
-
-            metadata = {
-                "submission_id": body.mark_set_id,
-                "part_number": part_number,
-                "submitted_by": valid_email or "viewer_user",
-                "submitted_at_utc": datetime.utcnow().isoformat() + "Z",
-                "total_marks": len(marks),
-                "filled_marks": len([v for v in entries.values() if (v or '').strip()])
-            }
-            zf.writestr("metadata.json", json.dumps(metadata, indent=2))
-
-        zip_buffer.seek(0)
-        zip_bytes = zip_buffer.read()
-        logger.info(f"✓ ZIP created: {len(zip_bytes)} bytes")
-    except Exception as e:
-        logger.error(f"ZIP creation failed: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"ZIP creation failed: {str(e)}")
-
-    # Queue email in background (non-blocking)
+    # Queue email
     email_status = "skipped"
     if valid_email and settings.smtp_user and settings.smtp_password:
         background_tasks.add_task(
@@ -203,18 +183,24 @@ async def generate_bundle(
         logger.warning("Email skipped: SMTP not configured")
         email_status = "not_configured"
 
-    # Return ZIP
-    return StreamingResponse(
-        io.BytesIO(zip_bytes),
-        media_type="application/zip",
-        headers={
-            "Content-Disposition": f'attachment; filename="submission_{body.mark_set_id}.zip"',
-            "X-Email-Status": email_status,
-            "X-Report-Size": str(len(zip_bytes)),
-            "X-Files-Included": "pdf,xlsx,metadata"
+    # RETURN JSON (no file download)
+    payload = {
+        "status": "ok",
+        "email_status": email_status,
+        "submission": {
+            "mark_set_id": body.mark_set_id,
+            "part_number": part_number,
+            "submitted_by": metadata["submitted_by"],
+            "submitted_at_utc": metadata["submitted_at_utc"],
+            "total_marks": metadata["total_marks"],
+            "filled_marks": metadata["filled_marks"],
+        },
+        "artifacts": {
+            "pdf_size": len(pdf_bytes),
+            "excel_size": len(excel_bytes)
         }
-    )
-
+    }
+    return JSONResponse(payload, status_code=200)
 
 async def send_report_email(
     to_email: str,
@@ -225,9 +211,7 @@ async def send_report_email(
     metadata: dict,
     settings
 ):
-    """
-    Background task to send email with PDF + Excel attachments.
-    """
+    """Background task to send email with PDF + Excel attachments."""
     try:
         subject = f"Inspection Submission – {part_number} – {mark_set_id}"
         body_html = f"""

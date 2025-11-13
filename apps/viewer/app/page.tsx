@@ -986,14 +986,15 @@ function ViewerContent() {
     }
   }, [currentMarkIndex, marks]);
 
-  const handleSubmit = useCallback(async () => {
+   const handleSubmit = useCallback(async () => {
     if (!markSetId) {
       toast.error('No mark set ID provided');
       return;
     }
 
     setIsSubmitting(true);
-    // ✅ Fill any missing entries with "NA"
+
+    // Fill missing entries as "NA"
     const finalEntries: Record<string, string> = { ...entries };
     marks.forEach((mark) => {
       if (mark.mark_id && !finalEntries[mark.mark_id]?.trim()) {
@@ -1001,19 +1002,13 @@ function ViewerContent() {
       }
     });
 
-
     try {
-      // ✅ FIX: Get actual email from query params (user_mail)
+      // Use actual email from query params if present
       const userEmail = searchParams?.get('user_mail') || qUser || null;
-
-      // Validate email format if provided
       if (userEmail && !userEmail.includes('@')) {
         console.warn('Invalid email format, skipping email send');
       }
 
-      console.log('📧 Submitting with email:', userEmail);
-
-      // Call bundle endpoint (generates PDF + Excel + ZIP)
       const response = await fetch(`${apiBase}/reports/generate-bundle`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1021,68 +1016,49 @@ function ViewerContent() {
           mark_set_id: markSetId,
           entries: finalEntries,
           pdf_url: rawPdfUrl,
-          user_email: userEmail,  // ✅ Now sends actual email or null
+          user_email: userEmail,   // still accepted (alias user_mail also works server-side)
           padding_pct: 0.25,
           office_variant: 'o365',
         }),
       });
 
       if (!response.ok) {
-        const text = await response.text();
-        throw new Error(`Bundle generation failed: ${response.status} ${text}`);
+        const text = await response.text().catch(() => '');
+        throw new Error(`Submit failed: ${response.status} ${text}`);
       }
 
-      // Check email status from header
-      const emailStatus = response.headers.get('X-Email-Status');
+      // ✅ EMAIL-ONLY RESPONSE (JSON)
+      const data = await response.json().catch(() => ({} as any));
+      const emailStatus = data?.email_status;
 
-      // Download ZIP
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `submission_${markSetId}.zip`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
-
-      // Success message based on email status
-      if (emailStatus === 'queued' && userEmail) {
-        toast.success(`✓ Report downloaded! Email sent to ${userEmail}`, {
-          duration: 4000,
-        });
-      } else if (!userEmail) {
-        toast.success('✓ Report downloaded as ZIP!', {
-          duration: 3000,
-        });
+      if (emailStatus === 'queued' && (searchParams?.get('user_mail') || qUser)) {
+        toast.success('✓ Submission received. Email is on the way!', { duration: 4000 });
+      } else if (emailStatus === 'not_configured') {
+        toast.success('✓ Submission saved. Email is not configured on server.', { duration: 4000 });
+      } else if (!searchParams?.get('user_mail') && !qUser) {
+        toast.success('✓ Submission saved. No email provided.', { duration: 3500 });
       } else {
-        toast.success('✓ Report downloaded! (Email may have failed - check logs)', {
-          duration: 3000,
-        });
+        // generic success
+        toast.success('✓ Submission processed.', { duration: 3500 });
       }
 
-      // Return to markset list after delay (always navigate back)
+      // Navigate back to the mark-set chooser (same behavior you had)
       setTimeout(() => {
-        // Prefer the last setup params so we land on the mark-set chooser with autoboot
-        const qs = sessionStorage.getItem('viewerLastSetupParams')
-          || window.location.search.slice(1);
+        const qs = sessionStorage.getItem('viewerLastSetupParams') || window.location.search.slice(1);
         const sp = new URLSearchParams(qs);
         sp.set('autoboot', '1');
-        // optional: clear viewer-only params so it re-opens the chooser cleanly
         sp.delete('pdf_url');
         sp.delete('mark_set_id');
-
         window.location.href = `${window.location.pathname}?${sp.toString()}`;
       }, 1200);
 
-
     } catch (error) {
       console.error('Submit error:', error);
-      toast.error('Failed to generate reports. Please try again.');
+      toast.error('Failed to submit. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
-  }, [markSetId, entries, apiBase, rawPdfUrl, searchParams, qUser]);
+  }, [markSetId, entries, apiBase, rawPdfUrl, searchParams, qUser, marks]);
 
   const swipeHandlers = useSwipeable({
     onSwipedLeft: () => {
