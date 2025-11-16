@@ -19,6 +19,9 @@ type ZoomToolbarProps = {
   // 🔁 was onFinalize; keep the prop name but clarify its purpose at call-site
   onFinalize?: () => void;        // Download PDF
   onSaveSubmit?: () => void;      // Save to backend, go back, show notice
+
+  // ✅ NEW: enter "group draw" mode
+  onCreateGroup?: () => void;
 };
 
 export default function ZoomToolbar({
@@ -36,6 +39,7 @@ export default function ZoomToolbar({
   onPageJump,
   onFinalize,
   onSaveSubmit,
+  onCreateGroup,
 }: ZoomToolbarProps) {
   const [pageInput, setPageInput] = useState('');
 
@@ -113,6 +117,18 @@ export default function ZoomToolbar({
         <button onClick={onFit} className="toolbar-btn" title="Fit to width">
           Fit
         </button>
+
+        {/* ✅ NEW: Create group button
+        {onCreateGroup && (
+          <button
+            onClick={onCreateGroup}
+            className="toolbar-btn"
+            title="Create group: draw a rectangle on the PDF"
+            style={{ marginLeft: 8, borderColor: '#6a1b9a', color: '#6a1b9a', fontWeight: 600 }}
+          >
+            Create Group
+          </button>
+        )} */}
 
         {/* Primary actions on the RIGHT */}
         {onFinalize && (

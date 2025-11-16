@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useRef, useCallback, Suspense } from 'react';
+import React, { useEffect, useState, useRef, useCallback, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import * as pdfjsLib from 'pdfjs-dist';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
@@ -13,47 +13,56 @@ import { clampZoom } from '../lib/pdf';
 import PDFSearch from '../components/PDFSearch';
 import { applyLabels, indexToLabel } from '../lib/labels';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import GroupEditor from '../components/GroupEditor';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 // Clean nested Cloudinary URLs
 // Clean nested Cloudinary URLs - DEBUG VERSION
+// Clean nested Cloudinary / Glide URLs into a real GCS PDF URL
 function cleanPdfUrl(url: string): string {
   console.log('🔍 [cleanPdfUrl] INPUT:', url);
-  
+
   if (!url) {
     console.log('❌ [cleanPdfUrl] Empty URL');
     return url;
   }
-  
-  // Decode URL-encoded string to find nested URLs
+
   let decoded = url;
   try {
-    let prev = '';
-    let iterations = 0;
-    while (decoded !== prev && iterations < 5) {
-      prev = decoded;
-      decoded = decodeURIComponent(decoded);
-      iterations++;
-      console.log(`🔄 [cleanPdfUrl] Decode iteration ${iterations}:`, decoded.substring(0, 100) + '...');
+    // Peel multiple layers of % encoding, but stop if nothing changes
+    for (let i = 0; i < 5; i++) {
+      const next = decodeURIComponent(decoded);
+      if (next === decoded) break;
+      decoded = next;
+      console.log(`🔄 [cleanPdfUrl] decode #${i + 1}:`, decoded.slice(0, 140) + '...');
     }
   } catch (e) {
-    console.warn('⚠️ [cleanPdfUrl] Decode failed, using original');
+    console.warn('⚠️ [cleanPdfUrl] decode failed, using original');
     decoded = url;
   }
-  
-  // Extract Google Storage URL
-  const match = decoded.match(/https:\/\/storage\.googleapis\.com\/[^\s"'<>)]+\.pdf/i);
-  if (match) {
-    const cleaned = match[0].replace(/ /g, '%20');
+
+  // Look for the first occurrence of a storage.googleapis.com PDF
+  const lower = decoded.toLowerCase();
+  const needle = 'https://storage.googleapis.com/';
+  const idx = lower.indexOf(needle);
+  if (idx !== -1) {
+    // Take chars from that index until a whitespace or delimiter
+    const tail = decoded.slice(idx);
+    const end = tail.search(/[\s"'<>)]/);
+    const raw = (end === -1 ? tail : tail.slice(0, end)).trim();
+
+    const cleaned = raw.replace(/ /g, '%20');
     console.log('✅ [cleanPdfUrl] OUTPUT:', cleaned);
     return cleaned;
   }
-  
-  console.log('⚠️ [cleanPdfUrl] No Google Storage URL found, returning original');
+
+  console.log('⚠️ [cleanPdfUrl] No GCS PDF found, returning original');
   return url;
 }
+
+
 type Mark = {
-  mark_id?: string;
+  mark_id: string;         // ✅ always required - matches GroupEditor / MarkList types
   page_index: number;
   order_index: number;
   name: string;
@@ -62,7 +71,20 @@ type Mark = {
   nw: number;
   nh: number;
   zoom_hint?: number | null;
-  label?: string; // ✅ NEW
+  label?: string;          // A, B, C...
+  instrument?: string;     // Vernier, Micrometer, etc.
+  is_required?: boolean;   // true = mandatory, false = optional
+};
+
+type Group = {
+  group_id: string;
+  name: string;
+  page_index: number;   // 0-based
+  nx: number;
+  ny: number;
+  nw: number;
+  nh: number;
+  mark_ids: string[];
 };
 
 type Rect = { x: number; y: number; w: number; h: number };
@@ -140,7 +162,7 @@ type CreateDocMarkSetBody = {
 };
 
 // ------- NEW Setup Screen (doc bootstrap + markset picker) -------
-function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string) => void }) {
+function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string, isMaster: boolean) => void }) {
   const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
   const params = useSearchParams();
 
@@ -213,13 +235,33 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string)
     }
   };
 
-  const handleOpenMarkset = (markSetId: string) => {
+  const handleOpenMarkset = (markSetId: string, isMaster: boolean) => {
     if (!boot?.document?.pdf_url) {
       setErr('No PDF URL on document.');
       return;
     }
-    onStart(boot.document.pdf_url, markSetId);
-  };
+
+    // 👉 For master sets, master_for_viewer = itself
+    // 👉 For QC sets, use boot.master_mark_set_id if present
+    const masterForViewer = isMaster
+      ? markSetId
+      : boot.master_mark_set_id || markSetId;
+
+    const finalPdfUrl = boot.document.pdf_url;
+
+    const params = new URLSearchParams();
+    params.set('pdf_url', finalPdfUrl);
+    params.set('mark_set_id', markSetId);
+    params.set('is_master', isMaster ? '1' : '0');
+    params.set('master_mark_set_id', masterForViewer);
+    if (userMail) {
+      params.set('user_mail', userMail);
+    }
+
+    // Hard redirect so Viewer boots with correct params
+    window.location.href = `${window.location.pathname}?${params.toString()}`;
+
+  }; 
 
   const handleCreateMarkset = async () => {
     if (!boot?.document?.doc_id) {
@@ -246,9 +288,9 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string)
         body: JSON.stringify(body),
       });
       if (!res.ok) throw new Error(await res.text());
-      const out = await res.json();
+            const out = await res.json();
       // Immediately open it in the editor
-      handleOpenMarkset(out.mark_set_id);
+      handleOpenMarkset(out.mark_set_id, !!isMaster);
     } catch (e: any) {
       console.error(e);
       setErr('Failed to create mark set.');
@@ -447,7 +489,7 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string)
 
       {!isEditing && (
         <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
-          <button onClick={() => handleOpenMarkset(ms.mark_set_id)} style={btn}>
+                   <button onClick={() => handleOpenMarkset(ms.mark_set_id, ms.is_master)} style={btn}>
             Open
           </button>
           <button onClick={() => handleDuplicateMarkset(ms.mark_set_id, ms.label)} style={btn}>
@@ -504,6 +546,9 @@ function EditorContent() {
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [numPages, setNumPages] = useState(0);
   const [marks, setMarks] = useState<Mark[]>([]);
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
+
   // Gap between pages in .pdf-surface-wrap
 const PAGE_GAP = 16;
 
@@ -556,6 +601,14 @@ useEffect(() => {
   const [nameBoxPosition, setNameBoxPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [pendingMark, setPendingMark] = useState<Partial<Mark> | null>(null);
   
+    // ✅ NEW: group creation mode + pending group rect
+  const [drawMode, setDrawMode] = useState<'mark' | 'group'>('mark');
+  const [pendingGroup, setPendingGroup] = useState<{
+    pageIndex: number;
+    rect: { nx: number; ny: number; nw: number; nh: number };
+  } | null>(null);
+  const [groupEditorOpen, setGroupEditorOpen] = useState(false);
+
   // Mark editing states
   const [editingMarkId, setEditingMarkId] = useState<string | null>(null);
   const [editMode, setEditMode] = useState<'move' | 'resize' | null>(null);
@@ -565,10 +618,17 @@ useEffect(() => {
   const pageHeightsRef = useRef<number[]>([]);
   const pdfUrl = useRef<string>('');
   const markSetId = useRef<string>('');
+  const ownerMarkSetId = useRef<string>('');
+  const marksSourceMarkSetId = useRef<string>('');
+  const originalMarksRef = useRef<Mark[]>([]); // ✅ snapshot of universal marks at load time
 
   const isDemo = searchParams?.get('demo') === '1';
   const pdfUrlParam = searchParams?.get('pdf_url') || '';
   const urlMarkSetId = searchParams?.get('mark_set_id') || '';
+  const isMasterMarkSet = searchParams?.get('is_master') === '1';
+  const masterMarkSetIdFromUrl = searchParams?.get('master_mark_set_id') || '';
+  const userMail = searchParams?.get('user_mail') || '';
+
 
   // Check if we should show setup screen
   useEffect(() => {
@@ -577,10 +637,10 @@ useEffect(() => {
     }
   }, [isDemo, pdfUrlParam, urlMarkSetId]);
 
-const handleSetupComplete = (url: string, setId: string) => {
+const handleSetupComplete = (url: string, setId: string, isMaster: boolean) => {
     // Clean URL one more time before adding to query params
     const finalUrl = cleanPdfUrl(url);
-    const newUrl = `${window.location.pathname}?pdf_url=${encodeURIComponent(finalUrl)}&mark_set_id=${setId}`;
+    const newUrl = `${window.location.pathname}?pdf_url=${encodeURIComponent(finalUrl)}&mark_set_id=${setId}&is_master=${isMaster ? '1' : '0'}`;
     window.location.href = newUrl;
   };
 
@@ -606,6 +666,32 @@ const handleSetupComplete = (url: string, setId: string) => {
     }, 3000);
   }, []);
 
+   const fetchGroups = useCallback(async () => {
+    // Groups always belong to the *owner* mark-set (master in QC mode)
+    const ownerId = ownerMarkSetId.current;
+    if (!ownerId) return;
+
+    const apiBase =
+      process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
+
+    try {
+      const res = await fetch(`${apiBase}/mark-sets/${ownerId}/groups`);
+      if (res.status === 404) {
+        setGroups([]);
+        return;
+      }
+      if (!res.ok) {
+        console.warn('Failed to load groups', await res.text());
+        return;
+      }
+      const data: Group[] = await res.json();
+      setGroups(data || []);
+    } catch (e) {
+      console.warn('Failed to load groups', e);
+    }
+  }, []);
+
+
   useEffect(() => {
     if (showSetup) return;
     if (isDemo) {
@@ -628,47 +714,92 @@ const handleSetupComplete = (url: string, setId: string) => {
           setError('Failed to load PDF');
           setLoading(false);
         });
-} else {
-  const targetPdfUrl = cleanPdfUrl(pdfUrlParam);  // ✅ Clean before proxying
-  const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
-  const proxiedUrl = `${apiBase}/proxy-pdf?url=${encodeURIComponent(targetPdfUrl)}`;
-  
-  pdfUrl.current = proxiedUrl;
-  markSetId.current = urlMarkSetId;
+    } else {
+      const targetPdfUrl = cleanPdfUrl(pdfUrlParam);
+      const apiBase =
+        process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
+      const proxiedUrl = `${apiBase}/proxy-pdf?url=${encodeURIComponent(
+        targetPdfUrl
+      )}`;
+      pdfUrl.current = proxiedUrl;
 
-  setLoading(true);
+      // This mark-set is the one we are "inside" (master or QC)
+      markSetId.current = urlMarkSetId;
 
-  pdfjsLib
-    .getDocument({ url: proxiedUrl })
-        .promise.then((loadedPdf) => {
+      // ✅ Marks always come from:
+      //   • Master mark set for this document (for QC)
+      //   • If we're on the master itself, that's just urlMarkSetId
+      marksSourceMarkSetId.current = isMasterMarkSet
+        ? urlMarkSetId
+        : masterMarkSetIdFromUrl || urlMarkSetId;
+
+      // ✅ Groups are always stored on the *QC* mark-set itself.
+      // We do NOT create groups on the master.
+      ownerMarkSetId.current = urlMarkSetId;
+
+
+      setLoading(true);
+
+
+      pdfjsLib
+        .getDocument({ url: proxiedUrl })
+        .promise
+        .then(async (loadedPdf) => {
           setPdf(loadedPdf);
           setNumPages(loadedPdf.numPages);
-          
-          if (urlMarkSetId) {
-            const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
-            return fetch(`${apiBase}/mark-sets/${urlMarkSetId}/marks`)
-              .then((res) => {
-                if (!res.ok) throw new Error('Failed to fetch marks');
-                return res.json();
-              })
-              .then((data: any) => {
-  const sorted = [...data].sort((a: Mark, b: Mark) => a.order_index - b.order_index);
-  setMarks(normalizeMarks(sorted));
-  setLoading(false);
-});
 
-          } else {
+          // No mark-set ID → just load PDF, no marks
+          if (!urlMarkSetId) {
             setMarks([]);
             setLoading(false);
+            return;
+          }
+
+           try {
+            // ✅ Master editor → marks from itself
+            // ✅ QC editor → marks from master_mark_set_id
+            const sourceId = marksSourceMarkSetId.current || urlMarkSetId;
+            const res = await fetch(`${apiBase}/mark-sets/${sourceId}/marks`);
+
+            // 404 = "no marks yet" → empty list
+            if (res.status === 404) {
+              setMarks([]);
+              originalMarksRef.current = [];
+            } else if (!res.ok) {
+              throw new Error(`marks fetch failed: ${res.status}`);
+            } else {
+              const data: any = await res.json();
+              const sorted = [...data].sort(
+                (a: Mark, b: Mark) => a.order_index - b.order_index
+              );
+              const normalized = normalizeMarks(sorted);
+              setMarks(normalized);
+
+              // ✅ For QC view: remember original universal marks to forbid deletion later
+              if (!isMasterMarkSet) {
+                originalMarksRef.current = normalized;
+              } else {
+                originalMarksRef.current = [];
+              }
+            }
+          } catch (err) {
+            console.warn('Marks fetch failed, using empty list', err);
+            setMarks([]);
+            originalMarksRef.current = [];
+          } finally {
+            setLoading(false);
+            if (!isMasterMarkSet) {
+              fetchGroups();   // 🔹 load groups only for QC/non-master marksets
+            }
           }
         })
         .catch((err) => {
-          console.error('Load error:', err);
-          setError('Failed to load PDF or marks');
+          console.error('PDF load error:', err);
+          setError('Failed to load PDF');
           setLoading(false);
         });
     }
-  }, [showSetup, isDemo, pdfUrlParam, urlMarkSetId]);
+  }, [showSetup, isDemo, pdfUrlParam, urlMarkSetId, fetchGroups, isMasterMarkSet]);
 
   useEffect(() => {
     if (!pdf) return;
@@ -759,37 +890,63 @@ const jumpToPage = useCallback((pageNumber: number) => {
 }, [pageTopFor]);
 
 
-const navigateToMark = useCallback((mark: Mark) => {
+const navigateToMark = useCallback((mark: any) => {
   const container = containerRef.current;
   if (!container) return;
 
-  setSelectedMarkId(mark.mark_id || null);
+  const m = mark as Mark;
+
+  setSelectedMarkId(m.mark_id);
+  setSelectedGroupId(null); // 🔹 deselect group when focusing a specific mark
 
   // compute where that page starts
-  const targetTop = pageTopFor(mark.page_index);
+  const targetTop = pageTopFor(m.page_index);
   const curTop = container.scrollTop;
-  const pageH = pageHeightsRef.current[mark.page_index] || 0;
+  const pageH = pageHeightsRef.current[m.page_index] || 0;
 
   // robust "same page" check that does NOT rely on currentPage state
   const samePage = curTop > (targetTop - pageH / 2) && curTop < (targetTop + pageH / 2);
 
   if (!samePage) {
     container.scrollTo({ left: 0, top: targetTop, behavior: 'smooth' });
-    setCurrentPage(mark.page_index + 1); // sync toolbar right away
+    setCurrentPage(m.page_index + 1); // sync toolbar right away
   }
 }, [pageTopFor]);
 
 
-        
+const navigateToGroup = useCallback((group: Group) => {
+  const container = containerRef.current;
+  if (!container) return;
+
+  setSelectedGroupId(group.group_id);
+  setSelectedMarkId(null); // 🔹 no specific mark selected
+
+  // scroll to group's page (no zoom change)
+  const top = pageTopFor(group.page_index);
+  container.scrollTo({ left: 0, top, behavior: 'smooth' });
+
+  // briefly highlight group rectangle on that page
+  if (pdf) {
+    pdf.getPage(group.page_index + 1)
+      .then((page) => {
+        const vp = page.getViewport({ scale: zoom });
+        setFlashRect({
+          pageNumber: group.page_index + 1,
+          x: group.nx * vp.width,
+          y: group.ny * vp.height,
+          w: group.nw * vp.width,
+          h: group.nh * vp.height,
+        });
+      })
+      .catch((e) => console.warn('Failed to compute group flash rect', e));
+  }
+}, [pdf, zoom, pageTopFor]);
+
+
   
   const saveMarks = useCallback(async () => {
     if (isDemo) {
       addToast('Demo mode - changes not saved', 'info');
-      return;
-    }
-
-    if (!markSetId.current) {
-      addToast('No mark set ID provided', 'error');
       return;
     }
 
@@ -798,22 +955,58 @@ const navigateToMark = useCallback((mark: Mark) => {
       return;
     }
 
-    const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
+    const apiBase =
+      process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
+
+    // ✅ Master: save into itself
+    // ✅ QC: save into MASTER (universal pool)
+    const targetId = isMasterMarkSet
+      ? markSetId.current
+      : marksSourceMarkSetId.current || markSetId.current;
+
+    if (!targetId) {
+      addToast('No target mark set id to save into', 'error');
+      return;
+    }
+
     addToast('Saving...', 'info');
 
     try {
-      await fetch(`${apiBase}/mark-sets/${markSetId.current}/marks`, {
+      const url = `${apiBase}/mark-sets/${targetId}/marks${
+        userMail ? `?user_mail=${encodeURIComponent(userMail)}` : ''
+      }`;
+
+      const res = await fetch(url, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(applyLabels(marks)),
       });
 
+      if (!res.ok) {
+        const text = await res.text();
+        console.error('Save error:', res.status, text);
+        if (res.status === 403) {
+          addToast(
+            'You are not allowed to update master marks for this document. Ask an owner to add your email in master_editors.',
+            'error'
+          );
+        } else {
+          addToast('Failed to save marks', 'error');
+        }
+        return;
+      }
+
       addToast('Saved successfully', 'success');
+
+      // ✅ After a QC save, everything in `marks` is now part of the universal pool
+      if (!isMasterMarkSet) {
+        originalMarksRef.current = normalizeMarks(marks);
+      }
     } catch (err) {
       console.error('Save error:', err);
       addToast('Failed to save marks', 'error');
     }
-  }, [marks, isDemo, addToast]);
+  }, [marks, isDemo, addToast, isMasterMarkSet, userMail]);
 
   // ✅ NEW: Check for duplicate names and overlapping areas (client-side only - NO API calls)
 // Allow duplicate names; only warn (optionally) on heavy overlap
@@ -842,6 +1035,28 @@ const checkDuplicates = useCallback(
   [marks]
 );
 // If you want no popups at all (even for overlap) const checkDuplicates = useCallback(() => null, []);
+  // ✅ Used by GroupEditor when drawing directly in the preview
+  const createMarkFromGroup = useCallback(
+    (pageIndex: number, rect: { nx: number; ny: number; nw: number; nh: number }) => {
+      const newMark: Mark = {
+        mark_id: `group-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        page_index: pageIndex,
+        order_index: marks.length,
+        name: '',           // user can set later in sidebar
+        nx: rect.nx,
+        ny: rect.ny,
+        nw: rect.nw,
+        nh: rect.nh,
+        zoom_hint: null,
+        instrument: '',
+        is_required: true,
+      };
+
+      setMarks((prev) => [...prev, newMark]);
+      addToast('Mark created from group preview', 'success');
+    },
+    [marks.length, addToast]
+  );
 
 const createMark = useCallback((name: string) => {
   if (!pendingMark || !pdf) return;
@@ -867,7 +1082,10 @@ const createMark = useCallback((name: string) => {
     nw: pendingMark.nw!,
     nh: pendingMark.nh!,
     zoom_hint: null,          // viewer-side "Auto"
+    instrument: '',           // user will set this in MarkList
+    is_required: true,        // default: required
   };
+
 
   setMarks((prev) => [...prev, newMark]);
   setPendingMark(null);
@@ -880,20 +1098,41 @@ const createMark = useCallback((name: string) => {
   // If you want it to just highlight (no scroll), uncomment:
   setSelectedMarkId(newMark.mark_id!);
 }, [pendingMark, marks.length, addToast, pdf, checkDuplicates]);
-
+// Update an existing mark by ID
   const updateMark = useCallback((markId: string, updates: Partial<Mark>) => {
     setMarks((prev) =>
       prev.map((m) => (m.mark_id === markId ? { ...m, ...updates } : m))
     );
     addToast('Mark updated', 'success');
   }, [addToast]);
+// Delete a mark by ID
+  const deleteMark = useCallback(
+    (markId: string) => {
+      // ❌ In QC (non-master) view, do NOT allow deleting marks
+      // that were present when the doc was first loaded.
+      if (!isMasterMarkSet) {
+        const wasOriginal = originalMarksRef.current.some(
+          (m) => m.mark_id === markId
+        );
+        if (wasOriginal) {
+          addToast(
+            'Cannot delete an existing universal mark from the QC view. You can only delete marks you created in this session.',
+            'info'
+          );
+          return;
+        }
+      }
 
-const deleteMark = useCallback((markId: string) => {
-  setMarks((prev) => normalizeMarks(prev.filter((m) => m.mark_id !== markId)));
-  addToast('Mark deleted', 'success');
-}, [addToast]);
+      setMarks((prev) =>
+        normalizeMarks(prev.filter((m) => m.mark_id !== markId))
+      );
+      addToast('Mark deleted', 'success');
+    },
+    [addToast, isMasterMarkSet]
+  );
 
 
+// Duplicate an existing mark
   const duplicateMark = useCallback((markId: string) => {
     const source = marks.find((m) => m.mark_id === markId);
     if (!source) return;
@@ -909,6 +1148,7 @@ const deleteMark = useCallback((markId: string) => {
     addToast('Mark duplicated', 'success');
   }, [marks, addToast]);
 
+  // Reorder mark up or down
  const reorderMark = useCallback((markId: string, direction: 'up' | 'down') => {
   setMarks((prev) => {
     const index = prev.findIndex((m) => m.mark_id === markId);
@@ -938,7 +1178,7 @@ const deleteMark = useCallback((markId: string) => {
       setZoom(clampZoom(newZoom));
     });
   }, [pdf]);
-
+// Finalize PDF with marks and trigger download
 const finalizeAndDownload = useCallback(async () => {
   try {
     const res = await fetch(pdfUrl.current);
@@ -1088,53 +1328,72 @@ URL.revokeObjectURL(a.href);
       document.addEventListener('keydown', handleKeyDown);
       return () => document.removeEventListener('keydown', handleKeyDown);
     }, []);
-  const handleMouseDown = useCallback(
-    (e: React.MouseEvent, pageIndex: number) => {
-      if (!pdf || showNameBox) return;
 
-      const target = e.currentTarget as HTMLElement;
-      const rect = target.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
+// Mouse event handlers for drawing and editing marks
+const handleMouseDown = useCallback(
+  (e: React.MouseEvent, pageIndex: number) => {
+    if (!pdf) return;
 
-      // Check if clicking on existing mark overlay
-      const clickedOverlay = markOverlays.find(overlay => {
-        if (overlay.pageIndex !== pageIndex) return false;
-        const { left, top, width, height } = overlay.style;
-        return x >= left && x <= left + width && y >= top && y <= top + height;
-      });
+    const target = e.currentTarget as HTMLElement;
+    const rect = target.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
 
-      if (clickedOverlay) {
-        // Start editing existing mark
-        const mark = marks.find(m => m.mark_id === clickedOverlay.markId);
-        if (mark) {
-          setEditingMarkId(clickedOverlay.markId);
-          const { left, top, width, height } = clickedOverlay.style;
-          
-          // Check if near edge (resize) or center (move)
-          const isNearEdge = 
-            x < left + 10 || x > left + width - 10 ||
-            y < top + 10 || y > top + height - 10;
-          
-          setEditMode(isNearEdge ? 'resize' : 'move');
-          setEditStart({
-            x,
-            y,
-            rect: { x: left, y: top, w: width, h: height }
-          });
-          e.stopPropagation();
-          return;
-        }
-      }
+    // 👉 Non-master = hamesha GROUP mode
+    // 👉 Master = normal drawMode ('mark' ya 'group')
+    const effectiveMode = isMasterMarkSet ? drawMode : 'group';
 
-      // Normal drawing mode
+    // ✅ GROUP MODE (all non-masters + master jab group mode ho)
+    if (effectiveMode === 'group') {
       setIsDrawing(true);
       setDrawStart({ x, y, pageIndex });
       setCurrentRect(null);
-    },
-    [pdf, showNameBox, markOverlays, marks]
-  );
+      return;
+    }
 
+    // ⬇️ Yahan se sirf MASTER mark-set ka MARK drawing/editing
+    if (showNameBox) return;
+
+    // Check if clicking on existing mark overlay (edit / move / resize)
+    const clickedOverlay = markOverlays.find((overlay) => {
+      if (overlay.pageIndex !== pageIndex) return false;
+      const { left, top, width, height } = overlay.style;
+      return x >= left && x <= left + width && y >= top && y <= top + height;
+    });
+
+    if (clickedOverlay) {
+      const mark = marks.find((m) => m.mark_id === clickedOverlay.markId);
+      if (mark) {
+        setEditingMarkId(clickedOverlay.markId);
+        const { left, top, width, height } = clickedOverlay.style;
+
+        const isNearEdge =
+          x < left + 10 ||
+          x > left + width - 10 ||
+          y < top + 10 ||
+          y > top + height - 10;
+
+        setEditMode(isNearEdge ? 'resize' : 'move');
+        setEditStart({
+          x,
+          y,
+          rect: { x: left, y: top, w: width, h: height },
+        });
+        e.stopPropagation();
+        return;
+      }
+    }
+
+    // Normal MARK drawing (MASTER only)
+    setIsDrawing(true);
+    setDrawStart({ x, y, pageIndex });
+    setCurrentRect(null);
+  },
+  [pdf, drawMode, showNameBox, markOverlays, marks, isMasterMarkSet]
+);
+
+
+// Mouse move handler
   const handleMouseMove = useCallback(
     (e: React.MouseEvent, pageIndex: number) => {
       const target = e.currentTarget as HTMLElement;
@@ -1201,75 +1460,118 @@ URL.revokeObjectURL(a.href);
     [isDrawing, drawStart, editingMarkId, editStart, editMode]
   );
 
-  const handleMouseUp = useCallback(
-    (e: React.MouseEvent, pageIndex: number) => {
-      // Handle mark editing finish
-      if (editingMarkId && editMode) {
-        const overlay = markOverlays.find(o => o.markId === editingMarkId);
-        if (overlay) {
-          const target = e.currentTarget as HTMLElement;
-          const pageWidth = target.clientWidth;
-          const pageHeight = target.clientHeight;
+// Mouse up handler
+const handleMouseUp = useCallback(
+  (e: React.MouseEvent, pageIndex: number) => {
+    // 1) Finish editing (move / resize)
+    if (editingMarkId && editMode) {
+      const overlay = markOverlays.find((o) => o.markId === editingMarkId);
+      if (overlay) {
+        const target = e.currentTarget as HTMLElement;
+        const pageWidth = target.clientWidth;
+        const pageHeight = target.clientHeight;
 
-          // Update the actual mark with new normalized coordinates
-          const updatedMark: Partial<Mark> = {
-            nx: overlay.style.left / pageWidth,
-            ny: overlay.style.top / pageHeight,
-            nw: overlay.style.width / pageWidth,
-            nh: overlay.style.height / pageHeight,
-          };
+        const updatedMark: Partial<Mark> = {
+          nx: overlay.style.left / pageWidth,
+          ny: overlay.style.top / pageHeight,
+          nw: overlay.style.width / pageWidth,
+          nh: overlay.style.height / pageHeight,
+        };
 
-          updateMark(editingMarkId, updatedMark);
-        }
-
-        setEditingMarkId(null);
-        setEditMode(null);
-        setEditStart(null);
-        return;
+        updateMark(editingMarkId, updatedMark);
       }
 
-      // Handle normal drawing finish
-      if (!isDrawing || !drawStart || !currentRect || drawStart.pageIndex !== pageIndex) {
-        setIsDrawing(false);
-        return;
-      }
+      setEditingMarkId(null);
+      setEditMode(null);
+      setEditStart(null);
+      return;
+    }
 
-      if (currentRect.w < 10 || currentRect.h < 10) {
-        setIsDrawing(false);
-        setCurrentRect(null);
-        return;
-      }
-
-      const target = e.currentTarget as HTMLElement;
-      const pageWidth = target.clientWidth;
-      const pageHeight = target.clientHeight;
-
-      const normalizedMark: Partial<Mark> = {
-        page_index: pageIndex,
-        nx: currentRect.x / pageWidth,
-        ny: currentRect.y / pageHeight,
-        nw: currentRect.w / pageWidth,
-        nh: currentRect.h / pageHeight,
-      };
-
-      setPendingMark(normalizedMark);
-
-      const container = containerRef.current;
-      if (container) {
-        const containerRect = container.getBoundingClientRect();
-        const targetRect = target.getBoundingClientRect();
-        const absoluteX = targetRect.left - containerRect.left + container.scrollLeft + currentRect.x;
-        const absoluteY = targetRect.top - containerRect.top + container.scrollTop + currentRect.y;
-
-        setNameBoxPosition({ x: absoluteX, y: absoluteY });
-      }
-
-      setShowNameBox(true);
+    // 2) No drawing? clean up and exit
+    if (!isDrawing || !drawStart || !currentRect || drawStart.pageIndex !== pageIndex) {
       setIsDrawing(false);
-    },
-    [isDrawing, drawStart, currentRect, editingMarkId, editMode, markOverlays, updateMark]
-  );
+      return;
+    }
 
+    if (currentRect.w < 10 || currentRect.h < 10) {
+      setIsDrawing(false);
+      setCurrentRect(null);
+      return;
+    }
+
+    const target = e.currentTarget as HTMLElement;
+    const pageWidth = target.clientWidth;
+    const pageHeight = target.clientHeight;
+
+    const nx = currentRect.x / pageWidth;
+    const ny = currentRect.y / pageHeight;
+    const nw = currentRect.w / pageWidth;
+    const nh = currentRect.h / pageHeight;
+
+    // Same effective mode logic as mousedown
+    const effectiveMode = isMasterMarkSet ? drawMode : 'group';
+
+    // 3) GROUP MODE ⇒ GroupEditor kholna (master + non-master dono)
+    if (effectiveMode === 'group') {
+      setPendingGroup({
+        pageIndex,
+        rect: { nx, ny, nw, nh },
+      });
+      setGroupEditorOpen(true);
+      setIsDrawing(false);
+      setCurrentRect(null);
+      return;
+    }
+
+    // 4) Agar yahan tak aaye, to MARK MODE hai ⇒ sirf MASTER pe allowed
+    if (!isMasterMarkSet) {
+      // safety: non-master pe kabhi mark create mat karo
+      setIsDrawing(false);
+      setCurrentRect(null);
+      return;
+    }
+
+    // MARK MODE (FLOATING NAME BOX) – MASTER ONLY
+    const normalizedMark: Partial<Mark> = {
+      page_index: pageIndex,
+      nx,
+      ny,
+      nw,
+      nh,
+    };
+
+    setPendingMark(normalizedMark);
+
+    const container = containerRef.current;
+    if (container) {
+      const containerRect = container.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      const absoluteX =
+        targetRect.left - containerRect.left + container.scrollLeft + currentRect.x;
+      const absoluteY =
+        targetRect.top - containerRect.top + container.scrollTop + currentRect.y;
+
+      setNameBoxPosition({ x: absoluteX, y: absoluteY });
+    }
+
+    setShowNameBox(true);
+    setIsDrawing(false);
+  },
+  [
+    isDrawing,
+    drawStart,
+    currentRect,
+    editingMarkId,
+    editMode,
+    markOverlays,
+    updateMark,
+    drawMode,
+    isMasterMarkSet,
+  ]
+);
+
+
+// Track page heights as they load
   const handlePageReady = useCallback((pageNumber: number, height: number) => {
     pageHeightsRef.current[pageNumber - 1] = height;
   }, []);
@@ -1309,11 +1611,14 @@ const handleSearchResult = useCallback((pageNumber: number, highlights: any[]) =
           </button>
           {sidebarOpen && <h3>Marks</h3>}
         </div>
-        {sidebarOpen && (
-          <MarkList
+                {sidebarOpen && (
+                    <MarkList
             marks={marks}
+            groups={isMasterMarkSet ? [] : groups}
             selectedMarkId={selectedMarkId}
+            selectedGroupId={isMasterMarkSet ? null : selectedGroupId}
             onSelect={navigateToMark}
+            onGroupSelect={isMasterMarkSet ? undefined : navigateToGroup}
             onUpdate={updateMark}
             onDelete={deleteMark}
             onDuplicate={duplicateMark}
@@ -1334,28 +1639,39 @@ const handleSearchResult = useCallback((pageNumber: number, highlights: any[]) =
       </div>
 
       <div className="main-content">
-        <ZoomToolbar
-      zoom={zoom}
-      onZoomIn={zoomIn}
-      onZoomOut={zoomOut}
-      onReset={resetZoom}
-      onFit={fitToWidthZoom}
-      currentPage={currentPage}
-      totalPages={numPages}
-      onPageJump={jumpToPage}
-      // ⬇️ rename intent: this still uses the same prop name from toolbar
-      onFinalize={finalizeAndDownload}
-      onSaveSubmit={async () => {
-        // 1) save marks
-        await saveMarks();
-        // 2) stash a notice for the setup screen and navigate back
-        try {
-          localStorage.setItem('markset_notice', '✅ Mark set created.');
-        } catch {}
-        // 3) go back to previous screen
-        window.history.back();
-      }}
-    />
+              <ZoomToolbar
+          zoom={zoom}
+          onZoomIn={zoomIn}
+          onZoomOut={zoomOut}
+          onReset={resetZoom}
+          onFit={fitToWidthZoom}
+          currentPage={currentPage}
+          totalPages={numPages}
+          onPageJump={jumpToPage}
+          // ⬇️ rename intent: this still uses the same prop name from toolbar
+                    onFinalize={finalizeAndDownload}
+          // ✅ NEW: enter group mode (disabled on master markset)
+          onCreateGroup={() => {
+            if (isMasterMarkSet) {
+              addToast('Groups are only available on QC (non-master) mark sets.', 'info');
+              return;
+            }
+            setDrawMode('group');
+            setPendingGroup(null);
+            setCurrentRect(null);
+            addToast('Group mode: draw a rectangle on the PDF to define a group area.', 'info');
+          }}
+          onSaveSubmit={async () => {
+            // 1) save marks
+            await saveMarks();
+            // 2) stash a notice for the setup screen and navigate back
+            try {
+              localStorage.setItem('markset_notice', '✅ Mark set created.');
+            } catch {}
+            // 3) go back to previous screen
+            window.history.back();
+          }}
+        />
 
 
 
@@ -1469,10 +1785,7 @@ const handleSearchResult = useCallback((pageNumber: number, highlights: any[]) =
         })()}
       </div>
     );
-  })}
-
-
-  
+  })}  
               </div>
             ))}
           </div>
@@ -1490,15 +1803,50 @@ const handleSearchResult = useCallback((pageNumber: number, highlights: any[]) =
 
           )}
                     {/* PDF Search Component */}
-          <PDFSearch
+                    <PDFSearch
             pdf={pdf}
             isOpen={showSearch}
             onClose={() => setShowSearch(false)}
             onResultFound={handleSearchResult}
           />
         </div>
-      </div>
 
+         {/* ✅ Group Editor overlay (QC/non-master only) */}
+         {pendingGroup && !isMasterMarkSet && (
+          <GroupEditor
+            isOpen={groupEditorOpen}
+            pdf={pdf}
+            pageIndex={pendingGroup.pageIndex}
+            rect={pendingGroup.rect}
+            // ✅ marks come from the master mark set (loaded earlier)
+            marksOnPage={marks.filter(
+              (m) => m.page_index === pendingGroup.pageIndex
+            )}
+            // ✅ groups belong to this QC mark-set
+            ownerMarkSetId={ownerMarkSetId.current}
+              onUpdateMark={updateMark}
+            onFocusMark={(markId) => {
+              const m = marks.find((mm) => mm.mark_id === markId);
+              if (m) navigateToMark(m);
+            }}
+            // ✅ QC can create new marks inside this group area
+            onCreateMarkInGroup={createMarkFromGroup}
+            onClose={() => {
+              setGroupEditorOpen(false);
+              setPendingGroup(null);
+              setDrawMode('mark');
+            }}
+            onSaved={() => {
+              setGroupEditorOpen(false);
+              setPendingGroup(null);
+              setDrawMode('mark');
+              addToast('Group saved', 'success');
+              // 🔹 refresh sidebar groups for this QC mark-set
+              fetchGroups();
+            }}
+          />
+        )}
+      </div>
       <div className="toast-container">
         {toasts.map((toast) => (
           <Toast key={toast.id} message={toast.message} type={toast.type} />

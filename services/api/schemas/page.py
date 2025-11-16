@@ -7,10 +7,13 @@ from typing import List
 
 class PageDim(BaseModel):
     """Single page geometry in PDF points (1/72 inch)."""
-    idx: int = Field(ge=0, description="Zero-based page index")
+    page_index: int = Field(ge=0, description="Zero-based page index")
     width_pt: float = Field(gt=0, description="Page width in points")
     height_pt: float = Field(gt=0, description="Page height in points")
-    rotation_deg: int = Field(default=0, description="Rotation of the page (0/90/180/270)")
+    rotation_deg: int = Field(
+        default=0,
+        description="Rotation of the page (0/90/180/270)",
+    )
 
     @model_validator(mode="after")
     def _rotation_allowed(self):

@@ -38,6 +38,7 @@ from core.report_pdf import generate_report_pdf  # NEW
 import io
 from adapters.sheets import HEADERS as SHEETS_HEADERS
 from routers import reports, reports_excel
+from typing import Any, Dict  
 
 # ========== NEW: Request Context for Tracing ==========
 request_id_var = contextvars.ContextVar('request_id', default=None)
@@ -193,321 +194,67 @@ else:
 mark_cache = TTLCache(maxsize=100, ttl=5)  # 5-second cache (simple and fast)
 
 # ============================================================================
-# PYDANTIC MODELS
-# ============================================================================
-
-
-class Mark(BaseModel):
-    mark_id: Optional[str] = None
-    page_index: int = Field(ge=0, description="Page index (0-based)")
-    order_index: int = Field(ge=0, description="Display order")
-
-    # ✅ name is allowed to be blank (stored as "")
-    name: Optional[str] = Field(
-        default=None,
-        description="Mark name (optional; can be blank)"
-    )
-
-    # label is independent; used for circle badge only
-    label: Optional[str] = Field(None, min_length=1, max_length=6, description="Excel-style label")
-
-    nx: float = Field(ge=0.0, le=1.0, description="Normalized X (0–1)")
-    ny: float = Field(ge=0.0, le=1.0, description="Normalized Y (0–1)")
-    nw: float = Field(gt=0.0, le=1.0, description="Normalized width (>0)")
-    nh: float = Field(gt=0.0, le=1.0, description="Normalized height (>0)")
-    zoom_hint: Optional[float] = Field(None, ge=0.25, le=6.0, description="Zoom level")
-
-    @field_validator("name")
-    @classmethod
-    def normalize_name(cls, v: Optional[str]) -> Optional[str]:
-        # allow blank; just normalize None -> "" and trim
-        if v is None:
-            return ""
-        return v.strip()
-
-    @field_validator("label")
-    @classmethod
-    def normalize_label(cls, v: Optional[str]) -> Optional[str]:
-        if v == "" or (v and not v.strip()):
-            return None
-        return v
-
-    @model_validator(mode='after')
-    def validate_mark_bounds(self):
-        if self.nx + self.nw > 1.0001:
-            raise ValueError(
-                f"Mark extends beyond page width: nx({self.nx:.4f}) + nw({self.nw:.4f}) = {self.nx + self.nw:.4f} > 1.0"
-            )
-        if self.ny + self.nh > 1.0001:
-            raise ValueError(
-                f"Mark extends beyond page height: ny({self.ny:.4f}) + nh({self.nh:.4f}) = {self.ny + self.nh:.4f} > 1.0"
-            )
-        area = self.nw * self.nh
-        if area < 0.00001:
-            raise ValueError(f"Mark area too small ({area:.6f}).")
-        return self
-
-
-class MarkSet(BaseModel):
-    id: str
-    pdf_url: str
-    name: str
-
-class MarkSetCreate(BaseModel):
-    pdf_url: str = Field(min_length=1, max_length=2000, description="PDF URL")
-    name: str = Field(min_length=1, max_length=200, description="Mark set name")
-
-    @field_validator('pdf_url')  # ✅ NEW - Pydantic V2
-    @classmethod
-    def validate_url(cls, v):
-        if not v or not v.strip():
-            raise ValueError('PDF URL cannot be empty')
-        if not (v.startswith('http://') or v.startswith('https://')):
-            raise ValueError('PDF URL must start with http:// or https://')
-        return v.strip()
-
-    @field_validator('name')  # ✅ NEW - Pydantic V2
-    @classmethod
-    def name_not_empty(cls, v):
-        if not v or not v.strip():
-            raise ValueError('Name cannot be empty')
-        return v.strip()
-# ============================================================================
 # STORAGE OPERATIONS (Works with both backends)
 # ============================================================================
-
-def storage_create_mark_set(pdf_url: str, name: str) -> str:
-    """Create a mark set in the configured storage backend."""
-    new_id = str(uuid.uuid4())
-    
-    # ✅ Clean URL before saving
-    cleaned_url = clean_pdf_url(pdf_url)
-    logger.info(f"Original URL: {pdf_url[:100]}...")
-    logger.info(f"Cleaned URL: {cleaned_url}")
-    
+def storage_get_marks(mark_set_id: str) -> List[Dict[str, Any]]:
+    """
+    Get all marks for a mark set from the configured storage backend.
+    NOTE: returns plain dicts, not Pydantic models. This keeps it aligned
+    with the new Sheets adapter + routers.
+    """
     if STORAGE_BACKEND == "sqlite":
-        with get_db() as db:
-            db_mark_set = MarkSetDB(id=new_id, pdf_url=cleaned_url, name=name)
-            db.add(db_mark_set)
-            db.flush()
-    
-    elif STORAGE_BACKEND == "sheets":
-        # For sheets, we need to create document first, then mark_set
-        # Simplified: Just create mark_set with embedded PDF URL
-        doc_id = storage_adapter.create_document(pdf_url=cleaned_url, created_by=None)
-        new_id = storage_adapter.create_mark_set(
-            doc_id=doc_id,
-            label=name,
-            created_by=None,
-            marks=[]  # Empty initially
-        )
-    
-    return new_id
-
-def storage_list_mark_sets() -> List[MarkSet]:
-    """List all mark sets from the configured storage backend."""
-    if STORAGE_BACKEND == "sqlite":
-        with get_db() as db:
-            mark_sets = db.query(MarkSetDB).all()
-            return [MarkSet(id=ms.id, pdf_url=ms.pdf_url, name=ms.name) for ms in mark_sets]
-    
-    elif STORAGE_BACKEND == "sheets":
-        # Get all mark_sets and join with documents to get PDF URL
-        mark_sets_data = storage_adapter._get_all_dicts("mark_sets")
-        documents_data = storage_adapter._get_all_dicts("documents")
-        
-        doc_map = {d["doc_id"]: d for d in documents_data}
-        
-        result = []
-        for ms in mark_sets_data:
-            doc = doc_map.get(ms["doc_id"])
-            if doc:
-                result.append(MarkSet(
-                    id=ms["mark_set_id"],
-                    pdf_url=doc["pdf_url"],
-                    name=ms["label"]
-                ))
-        return result
-
-def storage_get_marks(mark_set_id: str) -> List[Mark]:
-    """Get all marks for a mark set from the configured storage backend."""
-    if STORAGE_BACKEND == "sqlite":
+        # Legacy support: still return dicts so report/status endpoints work.
         with get_db() as db:
             mark_set = db.query(MarkSetDB).filter(MarkSetDB.id == mark_set_id).first()
             if not mark_set:
                 raise HTTPException(status_code=404, detail=f"Mark set {mark_set_id} not found")
             
-            marks = db.query(MarkDB).filter(
-                MarkDB.mark_set_id == mark_set_id
-            ).order_by(MarkDB.order_index).all()
-            
-            return [
-                Mark(
-                    mark_id=m.mark_id, page_index=m.page_index, order_index=m.order_index,
-                    name=m.name, nx=m.nx, ny=m.ny, nw=m.nw, nh=m.nh, zoom_hint=m.zoom_hint
-                ) for m in marks
-            ]
-    
+            marks = (
+                db.query(MarkDB)
+                .filter(MarkDB.mark_set_id == mark_set_id)
+                .order_by(MarkDB.order_index)
+                .all()
+            )
+
+            result: List[Dict[str, Any]] = []
+            for m in marks:
+                result.append(
+                    {
+                        "mark_id": m.mark_id,
+                        "mark_set_id": m.mark_set_id,
+                        "page_index": m.page_index,
+                        "order_index": m.order_index,
+                        "name": m.name,
+                        "label": "",  # sqlite legacy has no label
+                        "nx": m.nx,
+                        "ny": m.ny,
+                        "nw": m.nw,
+                        "nh": m.nh,
+                        "zoom_hint": m.zoom_hint,
+                        "padding_pct": 0.1,
+                        "anchor": "auto",
+                    }
+                )
+            return result
+
     elif STORAGE_BACKEND == "sheets":
         try:
+            # SheetsAdapter already returns dicts in the correct shape
             marks_data = storage_adapter.list_marks(mark_set_id)
-            cleaned: list[Mark] = []
-            for m in marks_data:
-                try:
-                    cleaned.append(Mark(**m))
-                except Exception as e:
-                    logger.warning(f"Skipping invalid mark in {mark_set_id}: {e}")
-                    continue
-            return cleaned
+            return marks_data
         except ValueError as e:
             if "MARK_SET_NOT_FOUND" in str(e):
-                raise HTTPException(status_code=404, detail=f"Mark set {mark_set_id} not found")
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Mark set {mark_set_id} not found"
+                )
             raise
 
-def storage_replace_marks(mark_set_id: str, marks: List[Mark]) -> int:
-    """Replace all marks for a mark set - SIMPLIFIED VERSION."""
-    deleted_count = 0
-    
-    if STORAGE_BACKEND == "sqlite":
-        with get_db() as db:
-            mark_set = db.query(MarkSetDB).filter(MarkSetDB.id == mark_set_id).first()
-            if not mark_set:
-                raise HTTPException(status_code=404, detail=f"Mark set {mark_set_id} not found")
-            
-            deleted_count = db.query(MarkDB).filter(MarkDB.mark_set_id == mark_set_id).delete()
-            
-            for mark in marks:
-                mark_id = mark.mark_id if mark.mark_id and not mark.mark_id.startswith('temp-') else str(uuid.uuid4())
-                db_mark = MarkDB(
-                    mark_id=mark_id, mark_set_id=mark_set_id, page_index=mark.page_index,
-                    order_index=mark.order_index, name=mark.name, nx=mark.nx, ny=mark.ny,
-                    nw=mark.nw, nh=mark.nh, zoom_hint=mark.zoom_hint
-                )
-                db.add(db_mark)
-            db.flush()
-    
-    elif STORAGE_BACKEND == "sheets":
-        # Get the mark_set to find its doc_id
-        mark_sets_data = storage_adapter._get_all_dicts("mark_sets")
-        mark_set = next((ms for ms in mark_sets_data if ms["mark_set_id"] == mark_set_id), None)
-        if not mark_set:
-            raise HTTPException(status_code=404, detail=f"Mark set {mark_set_id} not found")
-
-        doc_id = mark_set["doc_id"]
-
-        # Get existing pages for this document
-        existing_pages = storage_adapter._pages_for_doc(doc_id)
-        page_index_to_id = {p["idx"]: p["page_id"] for p in existing_pages}
-
-        # Bootstrap any missing pages for given marks
-        needed_page_indices = set(mark.page_index for mark in marks)
-        for page_idx in needed_page_indices:
-            if page_idx not in page_index_to_id:
-                logger.info(f"Bootstrapping page {page_idx} for document {doc_id}")
-                page_id = str(uuid.uuid4())
-                storage_adapter._append_rows("pages", [[
-                    page_id, doc_id, page_idx, 612.0, 792.0, 0
-                ]])
-                page_index_to_id[page_idx] = page_id
-                storage_adapter._pages_by_doc_cache.pop(doc_id, None)
-
-        # ---- keep documents.page_count up to date (max page idx + 1) ----
-        pages_now = storage_adapter._pages_for_doc(doc_id)
-        max_idx = max((p["idx"] for p in pages_now), default=-1)
-        computed_page_count = max_idx + 1
-        doc_row_idx = storage_adapter._find_row_by_value("documents", "doc_id", doc_id)
-        if doc_row_idx:
-            storage_adapter._update_cells("documents", doc_row_idx, {
-                "page_count": computed_page_count,
-                "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-            })
-        all_marks = storage_adapter._get_all_dicts("marks")
-
-        # ---- Always use the canonical columns for 'marks' (drop legacy user columns) ----
-        canonical_header = SHEETS_HEADERS["marks"][:]  # from adapters.sheets.HEADERS
-
-        # Keep rows for other mark_sets but only with canonical columns
-        filtered_rows = [canonical_header]
-        for m in all_marks:
-            if m.get("mark_set_id") == mark_set_id:
-                continue
-            filtered_rows.append([m.get(col, "") for col in canonical_header])
-
-        # Add new marks for this mark_set (canonical columns only)
-        for mark in marks:
-            mark_id = mark.mark_id if (mark.mark_id and not mark.mark_id.startswith('temp-')) else str(uuid.uuid4())
-            page_id = page_index_to_id.get(mark.page_index)
-            if not page_id:
-                logger.error(f"Could not find page_id for page_index {mark.page_index}")
-                continue
-
-            base = {
-                "mark_id": mark_id,
-                "mark_set_id": mark_set_id,
-                "page_id": page_id,
-                "order_index": mark.order_index,
-                "name": mark.name,
-                "label": (mark.label or ""),
-                "nx": mark.nx, "ny": mark.ny, "nw": mark.nw, "nh": mark.nh,
-                "zoom_hint": (mark.zoom_hint if mark.zoom_hint is not None else ""),
-                "padding_pct": 0.1,
-                "anchor": "auto",
-            }
-            filtered_rows.append([base.get(col, "") for col in canonical_header])
-            logger.info(f"Added mark '{mark.name}' with ID {mark_id} on page {mark.page_index}")
-
-        # Overwrite the sheet with canonical header + rows
-        storage_adapter.ws["marks"].clear()
-        storage_adapter.ws["marks"].update('A1', filtered_rows)
-
-
-        # Clear caches
-        storage_adapter._doc_cache.pop(doc_id, None)
-        storage_adapter._pages_by_doc_cache.pop(doc_id, None)
-
-        logger.info(f"Replaced {deleted_count} marks with {len(marks)} new marks in Google Sheets")
-    return deleted_count
-
-def storage_delete_mark_set(mark_set_id: str) -> int:
-    """Delete a mark set and all its marks from the configured storage backend."""
-    marks_deleted = 0
-    
-    if STORAGE_BACKEND == "sqlite":
-        with get_db() as db:
-            marks_deleted = db.query(MarkDB).filter(MarkDB.mark_set_id == mark_set_id).delete()
-            result = db.query(MarkSetDB).filter(MarkSetDB.id == mark_set_id).delete()
-            if result == 0:
-                raise HTTPException(status_code=404, detail=f"Mark set {mark_set_id} not found")
-    
-    elif STORAGE_BACKEND == "sheets":
-        # Delete marks
-        all_marks = storage_adapter._get_all_dicts("marks")
-        marks_deleted = sum(1 for m in all_marks if m.get("mark_set_id") == mark_set_id)
-        header_marks = storage_adapter.ws["marks"].row_values(1)
-        filtered_marks = [header_marks] + [
-            [m[k] for k in header_marks]
-            for m in all_marks
-            if m.get("mark_set_id") != mark_set_id
-        ]
-        storage_adapter.ws["marks"].clear()
-        storage_adapter.ws["marks"].update('A1', filtered_marks)
-        
-        # Delete mark_set
-        all_sets = storage_adapter._get_all_dicts("mark_sets")
-        found = any(ms.get("mark_set_id") == mark_set_id for ms in all_sets)
-        if not found:
-            raise HTTPException(status_code=404, detail=f"Mark set {mark_set_id} not found")
-        
-        header_sets = storage_adapter.ws["mark_sets"].row_values(1)
-        filtered_sets = [header_sets] + [
-            [ms[k] for k in header_sets]
-            for ms in all_sets
-            if ms.get("mark_set_id") != mark_set_id
-        ]
-        storage_adapter.ws["mark_sets"].clear()
-        storage_adapter.ws["mark_sets"].update('A1', filtered_sets)
-    
-    return marks_deleted
+    else:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unsupported storage backend: {STORAGE_BACKEND}"
+        )
 
 # ============================================================================
 # FASTAPI APP
@@ -793,129 +540,6 @@ async def get_metrics():
     }
 
 # ========== End of Metrics ==========
-
-@app.post("/mark-sets", response_model=MarkSet, status_code=status.HTTP_201_CREATED)
-async def create_mark_set(mark_set: MarkSetCreate):
-    """Create a new mark set for a PDF"""
-    try:
-        logger.info(f"Creating mark set: {mark_set.name}")
-        new_id = storage_create_mark_set(mark_set.pdf_url, mark_set.name)
-        logger.info(f"Created mark set with ID: {new_id}")
-        
-        if "all_mark_sets" in mark_cache:
-            del mark_cache["all_mark_sets"]
-        
-        return MarkSet(id=new_id, pdf_url=mark_set.pdf_url, name=mark_set.name)
-    except Exception as e:
-        logger.error(f"Error creating mark set: {str(e)}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to create mark set: {str(e)}")
-
-@app.get("/mark-sets", response_model=List[MarkSet])
-async def list_mark_sets():
-    """List all mark sets with caching"""
-    cache_key = "all_mark_sets"
-    
-    if cache_key in mark_cache:
-        logger.info("Returning cached mark sets")
-        return mark_cache[cache_key]
-    
-    try:
-        result = storage_list_mark_sets()
-        mark_cache[cache_key] = result
-        logger.info(f"Fetched {len(result)} mark sets")
-        return result
-    except Exception as e:
-        logger.error(f"Error listing mark sets: {str(e)}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to fetch mark sets")
-
-@app.get("/mark-sets/{mark_set_id}/marks", response_model=List[Mark])
-async def get_marks(
-    mark_set_id: str,
-    limit: Optional[int] = None,
-    offset: Optional[int] = 0
-):
-    """Get marks - with simple 5-second cache."""
-    cache_key = f"marks_{mark_set_id}"
-    
-    # Simple 5-second cache
-    if cache_key in mark_cache:
-        logger.info(f"Returning cached marks for {mark_set_id}")
-        request_metrics["cache_hits"] += 1
-        all_marks = mark_cache[cache_key]
-    else:
-        try:
-            request_metrics["cache_misses"] += 1
-            all_marks = storage_get_marks(mark_set_id)
-            mark_cache[cache_key] = all_marks
-            logger.info(f"Fetched {len(all_marks)} marks for set {mark_set_id}")
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"Error fetching marks: {str(e)}")
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to fetch marks")
-    
-    # Apply pagination
-    if limit is not None:
-        if limit < 1 or limit > 1000:
-            raise HTTPException(status_code=400, detail="limit must be between 1 and 1000")
-        if offset < 0:
-            raise HTTPException(status_code=400, detail="offset must be non-negative")
-        
-        paginated_marks = all_marks[offset:offset + limit]
-        logger.info(f"Paginated: returning {len(paginated_marks)} of {len(all_marks)} marks")
-        return paginated_marks
-    
-    return all_marks
-
-@app.put("/mark-sets/{mark_set_id}/marks")
-async def replace_marks(mark_set_id: str, marks: List[Mark]):
-    """REPLACE all marks for a mark set - SIMPLIFIED (no delta save)."""
-    if not marks:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Mark list cannot be empty")
-    if len(marks) > 1000:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Too many marks (max 1000)")
-    
-    try:
-        # Always use full replace (simple and reliable)
-        deleted_count = storage_replace_marks(mark_set_id, marks)
-        
-        # Clear ALL caches
-        mark_cache.clear()
-        
-        logger.info(f"Replaced {deleted_count} marks with {len(marks)} new marks")
-        return {
-            "status": "success",
-            "count": len(marks),
-            "deleted": deleted_count,
-            "method": "full_replace"
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error replacing marks: {str(e)}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to save marks")
-        
-
-@app.delete("/mark-sets/{mark_set_id}", status_code=status.HTTP_200_OK)
-async def delete_mark_set(mark_set_id: str):
-    """Delete a mark set and all its marks"""
-    try:
-        marks_deleted = storage_delete_mark_set(mark_set_id)
-        
-        cache_key = f"marks_{mark_set_id}"
-        if cache_key in mark_cache:
-            del mark_cache[cache_key]
-        if "all_mark_sets" in mark_cache:
-            del mark_cache["all_mark_sets"]
-        
-        logger.info(f"Deleted mark set {mark_set_id} and {marks_deleted} marks")
-        return {"status": "deleted", "marks_deleted": marks_deleted}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error deleting mark set: {str(e)}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete mark set")
-
 @app.get("/")
 async def root():
     """API root endpoint"""
@@ -930,14 +554,18 @@ async def root():
 
 
 # ========== NEW: PDF Proxy Endpoint ==========
-
 @app.get("/proxy-pdf")
 async def proxy_pdf(url: str):
     """
     Proxy PDF files to avoid CORS issues.
-    Supports Google Drive, ArXiv, and other PDF sources.
+    Supports Google Drive, ArXiv, nested Cloudinary/Glide URLs, etc.
     """
     try:
+        original_url = url
+        # 🔹 Clean nested Cloudinary / Glide → direct GCS PDF if possible
+        url = clean_pdf_url(url)
+        logger.info(f"[proxy-pdf] cleaned URL: {url} (from {original_url})")
+
         # Convert Google Drive URLs to direct download format
         if "drive.google.com" in url:
             # Extract file ID from various Google Drive URL formats
@@ -1024,40 +652,43 @@ class SubmissionReportRequest(PydanticBaseModel):
 async def submit_and_build_report(mark_set_id: str, body: SubmissionReportRequest = Body(...)):
     """
     Save submissions and build PDF report.
-    Now saves to mark_user_input table instead of marks table.
+
+    - Reads marks from the active storage backend (Sheets/SQLite) as plain dicts.
+    - Persists entries to mark_user_input (Sheets) when using the Sheets backend.
     """
+    # 1) Fetch marks (plain dicts)
     marks = storage_get_marks(mark_set_id)
 
-    # Resolve PDF URL
+    # 2) Resolve PDF URL
     pdf_url = body.pdf_url
-    if not pdf_url:
-        if STORAGE_BACKEND == "sheets":
-            ms_all = storage_adapter._get_all_dicts("mark_sets")
-            ms = next((r for r in ms_all if r["mark_set_id"] == mark_set_id), None)
-            if ms:
-                doc = storage_adapter.get_document(ms["doc_id"])
-                if doc:
-                    pdf_url = doc.get("pdf_url")
+    if not pdf_url and STORAGE_BACKEND == "sheets":
+        ms_all = storage_adapter._get_all_dicts("mark_sets")
+        ms = next((r for r in ms_all if r.get("mark_set_id") == mark_set_id), None)
+        if ms:
+            doc = storage_adapter.get_document(ms["doc_id"])
+            if doc:
+                pdf_url = doc.get("pdf_url")
+
     if not pdf_url:
         raise HTTPException(status_code=400, detail="pdf_url required")
 
-    # Save to NEW mark_user_input table
+    # 3) Save to mark_user_input (Sheets) - best-effort
     try:
         if STORAGE_BACKEND == "sheets" and body.entries:
             submitted_by = body.author or "viewer_user"
             storage_adapter.create_user_inputs_batch(
                 mark_set_id=mark_set_id,
                 entries=body.entries,
-                submitted_by=submitted_by
+                submitted_by=submitted_by,
             )
     except Exception as e:
         logger.warning(f"save to mark_user_input failed: {e}")
 
-    # Generate report
+    # 4) Generate report
     try:
         pdf_bytes = await generate_report_pdf(
             pdf_url=pdf_url,
-            marks=[m.model_dump() if hasattr(m, "model_dump") else dict(m) for m in marks],
+            marks=marks,                # already a list[dict]
             entries=body.entries,
             padding_pct=body.padding_pct or 0.25,
             render_zoom=2.0,
@@ -1068,6 +699,7 @@ async def submit_and_build_report(mark_set_id: str, body: SubmissionReportReques
         logger.error(f"Report generation failed: {e}")
         raise HTTPException(status_code=500, detail=f"Report generation failed: {e}")
 
+    # 5) Return PDF as download
     fname = f"submission_{mark_set_id}.pdf"
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
@@ -1147,6 +779,13 @@ app.include_router(reports_excel_router)
 
 from routers import reports_bundle
 app.include_router(reports_bundle.router)
+
+from routers import groups as groups_router
+app.include_router(groups_router.router)
+
+from routers import instruments as instruments_router
+app.include_router(instruments_router.router)
+
 # ========== End of Submissions ==========
 
 startup_time = time.time()

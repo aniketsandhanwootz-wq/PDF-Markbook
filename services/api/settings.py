@@ -7,7 +7,8 @@ from typing import List
 
 class Settings(BaseSettings):
     # Storage settings
-    storage_backend: str = "sqlite"
+    # Default to Google Sheets; you can still override via .env (STORAGE_BACKEND=sqlite)
+    storage_backend: str = "sheets"
     google_sa_json: str = ""
     google_sa_json_base64: str = ""
     sheets_spreadsheet_id: str = ""

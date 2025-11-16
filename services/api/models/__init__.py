@@ -1,69 +1,44 @@
-"""
-Domain models for PDF Markbook.
-These are internal representations, separate from I/O schemas.
-"""
-from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Optional
+from __future__ import annotations
+
+from typing import Optional, Any, List
+from pydantic import BaseModel
 
 
-@dataclass
-class Document:
-    """Represents a PDF document in the system."""
+class Document(BaseModel):
+    """
+    Domain model for a document row from the `documents` sheet.
+    """
     doc_id: str
     pdf_url: str
-    page_count: Optional[int] = None
+    page_count: int = 0
+
+    part_number: Optional[str] = None
+    external_id: Optional[str] = None
+    project_name: Optional[str] = None
+    master_editors: Optional[str] = None
+
     created_by: Optional[str] = None
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
 
 
-@dataclass
-class Page:
-    """Represents a single page within a document."""
-    page_id: str
-    doc_id: str
-    idx: int  # 0-based page index
-    width_pt: float  # Page width in points (unrotated)
-    height_pt: float  # Page height in points (unrotated)
-    rotation_deg: int  # Rotation in degrees: 0, 90, 180, or 270
-
-
-@dataclass
-class MarkSet:
+class MarkSet(BaseModel):
     """
-    A collection of marks (regions of interest) for a document.
-    Only one mark set per document can be active at a time.
+    Domain model for a mark_set row from the `mark_sets` sheet.
     """
     mark_set_id: str
     doc_id: str
-    label: str = "v1"
+
+    # UI label (maps to `name` in the sheet)
+    label: str
+    description: Optional[str] = None
+
     is_active: bool = False
+    is_master: bool = False
+
     created_by: Optional[str] = None
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: Optional[str] = None
+    updated_by: Optional[str] = None
 
-
-@dataclass
-class Mark:
-    """
-    A rectangular region of interest on a PDF page.
-    Coordinates are normalized (0-1 range) relative to unrotated page dimensions.
-    """
-    mark_id: str
-    mark_set_id: str
-    page_id: str
-    order_index: int  # Sequential order for navigation
-    name: str  # User-friendly label for the mark
-    
-    # Normalized coordinates (0-1 range, relative to unrotated page)
-    nx: float  # Normalized x coordinate (left edge)
-    ny: float  # Normalized y coordinate (top edge)
-    nw: float  # Normalized width
-    nh: float  # Normalized height
-    
-    # Display preferences
-    zoom_hint: Optional[float] = None  # Custom zoom level (multiplier)
-    padding_pct: float = 0.1  # Padding around mark when viewing (0.1 = 10%)
-    anchor: str = "auto"  # Zoom anchor point: "auto", "center", "top-left"
-    
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    # Parsed JSON history from `update_history` column
+    update_history: Optional[List[dict[str, Any]]] = None

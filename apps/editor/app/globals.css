@@ -639,3 +639,42 @@ body {
   scroll-margin-top: 72px;        /* adjust if your sticky header is taller/shorter */
   scroll-margin-bottom: 16px;
 }
+
+/* Group pills in sidebar */
+.group-pill {
+  border: 1px solid #ddd;
+  background: #fff;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 11px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+
+.group-pill:hover {
+  background: #f0f4ff;
+  border-color: #1976d2;
+}
+
+.group-pill-active {
+  background: #e3f2fd;
+  border-color: #1976d2;
+  color: #0d47a1;
+  font-weight: 600;
+}
+
+.group-pill-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.group-pill-meta {
+  font-size: 10px;
+  color: #666;
+}
