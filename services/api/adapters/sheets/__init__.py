@@ -676,7 +676,7 @@ class SheetsAdapter(StorageAdapter):
         self.ws["marks"].clear()
         self.ws["marks"].update("A1", updated_matrix)
 
-
+# ========== Additional mark operations ==========
     def list_distinct_instruments(self) -> list[str]:
         """
         Return a sorted list of distinct non-empty instrument names

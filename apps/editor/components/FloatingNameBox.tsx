@@ -42,11 +42,17 @@ export default function FloatingNameBox({
       className="floating-name-box"
       style={{ position: 'absolute', left: position.x, top: position.y, zIndex: 1000 }}
     >
-      <div style={{ marginBottom: '12px' }}>
+            <div style={{ marginBottom: '12px' }}>
         <label
-          style={{ display: 'block', fontSize: '12px', fontWeight: 500, marginBottom: '6px', color: '#666' }}
+          style={{
+            display: 'block',
+            fontSize: '12px',
+            fontWeight: 500,
+            marginBottom: '6px',
+            color: '#666'
+          }}
         >
-          Mark Name
+          Mark
         </label>
         <input
           ref={inputRef}
@@ -54,10 +60,11 @@ export default function FloatingNameBox({
           value={name}
           onChange={(e) => setName(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Enter mark name (optional)..."
+          placeholder="Enter mark (optional)…"
           className="name-input"
         />
       </div>
+
 
       <div className="name-actions">
         <button onClick={handleSave} className="btn-save">{/* 👈 not disabled anymore */}

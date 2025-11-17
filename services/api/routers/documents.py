@@ -15,6 +15,13 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 # ---- DI alias (no default value allowed) ----
 Storage = Annotated[object, Depends(get_storage_adapter)]
 
+from models.converters import document_from_sheets, markset_from_sheets
+
+router = APIRouter(prefix="/documents", tags=["documents"])
+
+# Default master-editors string for *new* documents.
+# You can later override per-document directly in the Google Sheet.
+DEFAULT_MASTER_EDITORS = "aniket.sandhan@wootz.work"
 
 # ====== Schemas used by this router only ======
 
@@ -34,6 +41,12 @@ class MarkSetCreateForDoc(BaseModel):
     label: str = Field(min_length=1, description="Markset label to show in UI")
     created_by: Optional[str] = None
     is_master: bool = False
+    description: Optional[str] = Field(  # 👈 NEW
+        default=None,
+        max_length=500,
+        description="Short description shown in UI",
+    )
+
 
 
 class DocumentInitPayload(BaseModel):
@@ -113,6 +126,8 @@ def _ensure_document(
 ) -> str:
     """
     Find a document by the 3-part business key; if not found, create it.
+    For newly created documents we also seed `master_editors` with
+    DEFAULT_MASTER_EDITORS so that master-edit permissions are not empty.
     """
     doc = storage.get_document_by_business_key(
         project_name=project_name,
@@ -134,6 +149,7 @@ def _ensure_document(
         part_number=part_number,
         project_name=project_name,
         external_id=external_id,
+        master_editors=DEFAULT_MASTER_EDITORS,  # 👈 NEW
     )
 
 
@@ -208,9 +224,11 @@ async def get_by_identifier(
                     "created_at": ms.created_at or "",
                     "updated_by": ms.updated_by or "",
                     "marks_count": counts.get(ms.mark_set_id, 0),
+                    "description": getattr(ms, "description", None) or "",
                 }
                 for ms in mark_set_models
             ],
+
             "master_mark_set_id": master_id,
             "mark_set_count": len(mark_set_models),
             "role": role,  # 'master' or 'qc'
@@ -234,6 +252,7 @@ async def init_document(
     - If doc exists, return it with marksets.
     - If not, create it with cleaned pdf_url.
     - Also infer role = 'master' / 'qc' based on documents.master_editors + user_mail.
+    - Ensure there is ALWAYS exactly one master markset for this document.
     """
     try:
         # 1) Try to find existing (Sheets → Domain)
@@ -270,6 +289,7 @@ async def init_document(
                 part_number=payload.part_number,
                 project_name=payload.project_name,
                 external_id=payload.id,
+                master_editors=DEFAULT_MASTER_EDITORS,  # 👈 NEW: seed master editors
             )
             doc_raw = storage.get_document(doc_id)
 
@@ -282,6 +302,25 @@ async def init_document(
             markset_from_sheets(ms) for ms in mark_sets_raw
         ]
         master_id = _master_mark_set_id(mark_set_models)
+
+        # 5.1) 🔥 Ensure a MASTER markset exists for this document
+        if not master_id:
+            # System-level creation; we don't enforce master_editors here.
+            new_master_id = storage.create_mark_set(
+                doc_id=doc.doc_id,
+                label="MASTER",
+                created_by=payload.user_mail or "",
+                marks=[],
+                is_master=True,
+                description="Auto-created master markset",
+            )
+            # Make sure this is the ONLY master
+            storage.set_master_mark_set(new_master_id)
+
+            # Reload marksets & counts after creation
+            mark_sets_raw = storage.list_mark_sets_by_document(doc.doc_id)
+            mark_set_models = [markset_from_sheets(ms) for ms in mark_sets_raw]
+            master_id = new_master_id
 
         counts = (
             storage.count_marks_by_mark_set(doc.doc_id)
@@ -314,9 +353,11 @@ async def init_document(
                     "created_at": ms.created_at or "",
                     "updated_by": ms.updated_by or "",
                     "marks_count": counts.get(ms.mark_set_id, 0),
+                    "description": getattr(ms, "description", None) or "",
                 }
                 for ms in mark_set_models
             ],
+
             "master_mark_set_id": master_id,
             "mark_set_count": len(mark_set_models),
             "status": "existing" if master_id or mark_set_models else "new_or_empty",
@@ -375,7 +416,9 @@ async def create_mark_set_for_document(
             created_by=payload.created_by or "",
             marks=[],
             is_master=payload.is_master,  # default False handled in adapter
+            description=payload.description or None,  # 👈 NEW: wire description
         )
+
 
         # 5) If user checked "Set as Master", enforce single master
         if payload.is_master:

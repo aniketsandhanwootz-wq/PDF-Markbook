@@ -786,6 +786,9 @@ app.include_router(groups_router.router)
 from routers import instruments as instruments_router
 app.include_router(instruments_router.router)
 
+
+from routers import marks as marks_router         
+app.include_router(marks_router.router) 
 # ========== End of Submissions ==========
 
 startup_time = time.time()

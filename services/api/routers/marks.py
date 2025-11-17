@@ -9,8 +9,6 @@ import re
 import urllib.parse
 from logging import getLogger
 
-from services.api.models.mark import Mark  # currently unused, but kept for future
-from services.api.models.services import MarkSetService  # currently unused, kept for compatibility
 from schemas import MarkSetCreate, MarkSetOut, MarkOut, MarkPatch
 from core.validation import (
     validate_normalized_rect,

@@ -146,6 +146,7 @@ type BootstrapDoc = {
     created_at: string;
     updated_by: string;
     marks_count?: number;
+    description?: string;   // ✅ NEW
   }>;
   master_mark_set_id?: string | null;
   mark_set_count: number;
@@ -159,7 +160,9 @@ type CreateDocMarkSetBody = {
   label: string;
   created_by?: string | null;
   is_master?: boolean;
+  description?: string | null;   // ✅ NEW
 };
+
 
 // ------- NEW Setup Screen (doc bootstrap + markset picker) -------
 function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string, isMaster: boolean) => void }) {
@@ -184,8 +187,9 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
 
   // New markset modal-ish fields
   const [newLabel, setNewLabel] = useState('');
-  const [isMaster, setIsMaster] = useState(false);
+  const [newDescription, setNewDescription] = useState('');  // ✅ NEW
   const [creating, setCreating] = useState(false);
+
 
   // one-time notice after Save & Submit
   const [notice, setNotice] = useState<string>('');
@@ -196,7 +200,7 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
         setNotice(msg);
         localStorage.removeItem('markset_notice');
       }
-    } catch {}
+    } catch { }
   }, []);
 
   const runBootstrap = async () => {
@@ -241,11 +245,16 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
       return;
     }
 
-    // 👉 For master sets, master_for_viewer = itself
-    // 👉 For QC sets, use boot.master_mark_set_id if present
+    // ✅ For master sets: master_for_viewer = itself
+    // ✅ For QC sets: MUST point to the real master mark-set
+    if (!isMaster && !boot.master_mark_set_id) {
+      setErr('No master mark-set for this document. Please open or create the MASTER first.');
+      return;
+    }
+
     const masterForViewer = isMaster
       ? markSetId
-      : boot.master_mark_set_id || markSetId;
+      : (boot.master_mark_set_id as string);
 
     const finalPdfUrl = boot.document.pdf_url;
 
@@ -260,8 +269,8 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
 
     // Hard redirect so Viewer boots with correct params
     window.location.href = `${window.location.pathname}?${params.toString()}`;
+  };
 
-  }; 
 
   const handleCreateMarkset = async () => {
     if (!boot?.document?.doc_id) {
@@ -280,7 +289,8 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
         part_number: partNumber,
         label: newLabel.trim(),
         created_by: userMail || undefined,
-        is_master: isMaster,
+        is_master: false,
+        description: newDescription.trim() || undefined,  // ✅ send description
       };
       const res = await fetch(`${apiBase}/documents/mark-sets`, {
         method: 'POST',
@@ -288,9 +298,9 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
         body: JSON.stringify(body),
       });
       if (!res.ok) throw new Error(await res.text());
-            const out = await res.json();
-      // Immediately open it in the editor
-      handleOpenMarkset(out.mark_set_id, !!isMaster);
+      const out = await res.json();
+      // Immediately open it in the editor (always non-master; only one master exists)
+      handleOpenMarkset(out.mark_set_id, false);
     } catch (e: any) {
       console.error(e);
       setErr('Failed to create mark set.');
@@ -298,6 +308,7 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
       setCreating(false);
     }
   };
+
 
   const handleDuplicateMarkset = async (srcId: string, srcLabel: string) => {
     try {
@@ -363,16 +374,113 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
       await runBootstrap();
       setEditingId(null);
       setEditingName('');
-    } catch (e) {
+     } catch (e) {
       console.error(e);
       setErr('Failed to rename mark set.');
     }
   };
 
+   // ----- helper to render a single mark-set card -----
+  const renderMarkSetCard = (ms: BootstrapDoc['mark_sets'][number]) => {
+    // MASTER cannot be renamed, so we never go into "editing" state for it
+    const isEditing = !ms.is_master && editingId === ms.mark_set_id;
+    const effectiveLabel = ms.is_master ? 'MASTER' : ms.label;
+
+    return (
+      <div
+        key={ms.mark_set_id}
+        style={{
+          border: '1px solid #ddd',
+          borderRadius: 6,
+          padding: 10,
+          background: '#fff',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 8,
+        }}
+      >
+        <div>
+          {isEditing ? (
+            // 🔁 Inline rename only for NON-MASTER mark sets
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <input
+                value={editingName}
+                onChange={e => setEditingName(e.target.value)}
+                style={{ ...inp, padding: '6px 8px', fontSize: 13 }}
+                autoFocus
+              />
+              <button style={btn} onClick={saveInlineRename}>
+                Save
+              </button>
+              <button
+                style={btn}
+                onClick={() => {
+                  setEditingId(null);
+                  setEditingName('');
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <div style={{ fontWeight: 600 }}>
+              {effectiveLabel}
+              {ms.is_master ? ' ⭐' : ''}
+            </div>
+          )}
+          <div style={{ color: '#666', fontSize: 12 }}>
+            {(ms.marks_count ?? 0)} mark{(ms.marks_count ?? 0) === 1 ? '' : 's'}
+          </div>
+          {ms.description && (
+            <div style={{ color: '#999', fontSize: 11, marginTop: 2 }}>
+              {ms.description}
+            </div>
+          )}
+        </div>
+
+        {!isEditing && (
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button
+              onClick={() => handleOpenMarkset(ms.mark_set_id, ms.is_master)}
+              style={btn}
+            >
+              Open
+            </button>
+
+            {/* Duplicate + Rename only for QC / non-master mark sets */}
+            {!ms.is_master && (
+              <>
+                <button
+                  onClick={() => handleDuplicateMarkset(ms.mark_set_id, ms.label)}
+                  style={btn}
+                >
+                  Duplicate
+                </button>
+                <button
+                  onClick={() => handleRenameMarkset(ms.mark_set_id, ms.label)}
+                  style={btn}
+                >
+                  Rename
+                </button>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+
+  // split MASTER vs QC/other mark-sets
+  const masterMarkSet = boot?.mark_sets.find(ms => ms.is_master) || null;
+  const nonMasterMarkSets = boot?.mark_sets.filter(ms => !ms.is_master) || [];
+
   // 🔁 Auto-bootstrap on first load if URL already has keys + assembly_drawing
   useEffect(() => {
+
     const hasKeys = projectName && extId && partNumber;
-    const hasUrl  = !!assemblyDrawing; // backend will clean it
+    const hasUrl = !!assemblyDrawing; // backend will clean it
     if (!boot && !loading && hasKeys && hasUrl) {
       runBootstrap();
     }
@@ -400,7 +508,7 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
           </div>
         )}
 
-          {/* Keys + URL + errors are ONLY visible before bootstrap */}
+        {/* Keys + URL + errors are ONLY visible before bootstrap */}
         {!boot && (
           <>
             {/* Keys row */}
@@ -418,7 +526,7 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
               style={{ ...inp, width: '100%', marginBottom: 12 }}
             />
 
-            {err && <div style={{ background:'#ffebee', color:'#c62828', padding:10, borderRadius:4, marginBottom:12 }}>{err}</div>}
+            {err && <div style={{ background: '#ffebee', color: '#c62828', padding: 10, borderRadius: 4, marginBottom: 12 }}>{err}</div>}
           </>
         )}
 
@@ -428,100 +536,90 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
           </button>
         ) : (
           <>
-            {/* Document summary */}
-            <div style={{ background:'#f9f9f9', border:'1px solid #eee', borderRadius:6, padding:12, marginTop:12 }}>
-              <div style={{ fontWeight:600, marginBottom:6 }}>Document</div>
-              <div style={{ fontSize:13, color:'#333' }}>
-                <div><b>PDF:</b> {boot.document.pdf_url}</div>
-                <div style={{ marginTop:6 }}>
-                  <b>Mark Sets:</b> {boot.mark_sets.length}{' '}
-                  {boot.mark_sets.length > 0 && `· Master: ${boot.mark_sets.find(m => m.is_master)?.label || '—'}`}
+
+            {/* Markset picker */}
+            <div style={{ marginTop: 16 }}>
+              <div style={{ fontWeight: 600, marginBottom: 6 }}>Available Mark Sets</div>
+
+              {/* MASTER pinned at top (not in scroll) */}
+              {masterMarkSet && (
+                <div style={{ marginBottom: 12 }}>
+                  <div
+                    style={{
+                      fontSize: 12,
+                      fontWeight: 600,
+                      color: '#555',
+                      marginBottom: 4,
+                      textTransform: 'uppercase',
+                    }}
+                  >
+                    MASTER mark set
+                  </div>
+                  {renderMarkSetCard(masterMarkSet)}
+                </div>
+              )}
+
+              {/* QC / other mark-sets in scrollable list */}
+              <div>
+                <div
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: '#555',
+                    margin: '4px 0 6px',
+                    textTransform: 'uppercase',
+                  }}
+                >
+                  QC / other mark sets
+                </div>
+
+                <div
+                  style={{
+                    display: 'grid',
+                    gap: 8,
+                    maxHeight: 280, // rest of the list scrolls
+                    overflow: 'auto',
+                    paddingRight: 4,
+                  }}
+                >
+                  {nonMasterMarkSets.map(ms => renderMarkSetCard(ms))}
+
+                  {nonMasterMarkSets.length === 0 && (
+                    <div style={{ color: '#666', fontSize: 13, padding: '6px 2px' }}>
+                      No QC mark sets yet.
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
 
-            {/* Markset picker */}
-            <div style={{ marginTop:16 }}>
-              <div style={{ fontWeight:600, marginBottom:6 }}>Available Mark Sets</div>
-
-              {/* Scrollable list */}
-              <div style={{ display:'grid', gap:8, maxHeight: 340, overflow: 'auto', paddingRight: 4 }}>
-                {boot.mark_sets.map(ms => {
-  const isEditing = editingId === ms.mark_set_id;
-  return (
-    <div
-      key={ms.mark_set_id}
-      style={{
-        border:'1px solid #ddd',
-        borderRadius:6,
-        padding:10,
-        background:'#fff',
-        display:'flex',
-        alignItems:'center',
-        justifyContent:'space-between',
-        gap:8
-      }}
-    >
-      <div>
-        {isEditing ? (
-          <div style={{ display:'flex', gap:8, alignItems:'center' }}>
-            <input
-              value={editingName}
-              onChange={e => setEditingName(e.target.value)}
-              style={{ ...inp, padding:'6px 8px', fontSize:13 }}
-              autoFocus
-            />
-            <button style={btn} onClick={saveInlineRename}>Save</button>
-            <button
-              style={btn}
-              onClick={() => { setEditingId(null); setEditingName(''); }}
-            >
-              Cancel
-            </button>
-          </div>
-        ) : (
-          <div style={{ fontWeight:600 }}>
-            {ms.label}{ms.is_master ? ' ⭐' : ''}
-          </div>
-        )}
-        <div style={{ color:'#666', fontSize:12 }}>{(ms.marks_count ?? 0)} marks</div>
-      </div>
-
-      {!isEditing && (
-        <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
-                   <button onClick={() => handleOpenMarkset(ms.mark_set_id, ms.is_master)} style={btn}>
-            Open
-          </button>
-          <button onClick={() => handleDuplicateMarkset(ms.mark_set_id, ms.label)} style={btn}>
-            Duplicate
-          </button>
-          <button onClick={() => handleRenameMarkset(ms.mark_set_id, ms.label)} style={btn}>
-            Rename
-          </button>
-        </div>
-      )}
-    </div>
-  );
-})}
-
-
-                {boot.mark_sets.length === 0 && (
-                  <div style={{ color:'#666', fontSize:13, padding:'6px 2px' }}>No mark sets yet.</div>
-                )}
-              </div>
-            </div>
 
             {/* Create new markset */}
-            <div style={{ marginTop:16, borderTop:'1px dashed #ddd', paddingTop:12 }}>
-              <div style={{ fontWeight:600, marginBottom:6 }}>Create New Mark Set</div>
-              <div style={{ display:'grid', gridTemplateColumns:'1fr auto', gap:8 }}>
-                <input placeholder="Label (e.g., QC – Dimensions)" value={newLabel} onChange={e => setNewLabel(e.target.value)} style={inp} />
-                <label style={{ display:'flex', alignItems:'center', gap:6, fontSize:13 }}>
-                  <input type="checkbox" checked={isMaster} onChange={e => setIsMaster(e.target.checked)} />
-                  Set as Master
-                </label>
-              </div>
-              <button onClick={handleCreateMarkset} disabled={creating} style={{ ...btnPrimary, marginTop:10 }}>
+            <div style={{ marginTop: 16, borderTop: '1px dashed #ddd', paddingTop: 12 }}>
+              <div style={{ fontWeight: 600, marginBottom: 6 }}>Create New Mark Set</div>
+              <div style={{ marginBottom:8 }}>
+  <input
+    placeholder="Label (e.g., QC – Dimensions)"
+    value={newLabel}
+    onChange={e => setNewLabel(e.target.value)}
+    style={inp}
+  />
+</div>
+
+
+              {/* ✅ NEW: Description field */}
+              <textarea
+                placeholder="Description (optional) – e.g., 'QC for first article inspection, batch #123'"
+                value={newDescription}
+                onChange={e => setNewDescription(e.target.value)}
+                style={{ ...inp, width: '100%', minHeight: 60, resize: 'vertical', fontSize: 13, marginBottom: 4 }}
+              />
+
+              <button
+                onClick={handleCreateMarkset}
+                disabled={creating}
+                style={{ ...btnPrimary, marginTop: 10 }}
+              >
                 {creating ? 'Creating…' : 'Create & Open'}
               </button>
             </div>
@@ -533,14 +631,14 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
 }
 
 // small styles for setup
-const inp: React.CSSProperties = { padding:'10px 12px', border:'1px solid #ddd', borderRadius:4, fontSize:14, outline:'none' };
-const btn: React.CSSProperties = { padding:'8px 14px', border:'1px solid #ccc', borderRadius:6, background:'#fff', cursor:'pointer' };
-const btnPrimary: React.CSSProperties = { ...btn, borderColor:'#1976d2', color:'#1976d2', fontWeight:700 };
+const inp: React.CSSProperties = { padding: '10px 12px', border: '1px solid #ddd', borderRadius: 4, fontSize: 14, outline: 'none' };
+const btn: React.CSSProperties = { padding: '8px 14px', border: '1px solid #ccc', borderRadius: 6, background: '#fff', cursor: 'pointer' };
+const btnPrimary: React.CSSProperties = { ...btn, borderColor: '#1976d2', color: '#1976d2', fontWeight: 700 };
 
 
 // Main Editor Component
 function EditorContent() {
-  const searchParams = useSearchParams();
+  const searchParams = useSearchParams();  
   const router = useRouter();
   const [showSetup, setShowSetup] = useState(true);
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
@@ -550,35 +648,35 @@ function EditorContent() {
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
 
   // Gap between pages in .pdf-surface-wrap
-const PAGE_GAP = 16;
+  const PAGE_GAP = 16;
 
-/** Top scroll offset for a given 0-based page index */
-const pageTopFor = useCallback((pageIndex: number) => {
-  let top = PAGE_GAP; // initial padding
-  for (let i = 0; i < pageIndex; i++) {
-    top += (pageHeightsRef.current[i] || 0) + PAGE_GAP;
-  }
-  return top;
-}, []);
+  /** Top scroll offset for a given 0-based page index */
+  const pageTopFor = useCallback((pageIndex: number) => {
+    let top = PAGE_GAP; // initial padding
+    for (let i = 0; i < pageIndex; i++) {
+      top += (pageHeightsRef.current[i] || 0) + PAGE_GAP;
+    }
+    return top;
+  }, []);
 
-// Keep IDs, order_index, labels in sync after any change
-useEffect(() => {
-  setMarks((prev) => {
-    if (prev.length === 0) return prev;
+  // Keep IDs, order_index, labels in sync after any change
+  useEffect(() => {
+    setMarks((prev) => {
+      if (prev.length === 0) return prev;
 
-    const normalized = normalizeMarks(prev);
+      const normalized = normalizeMarks(prev);
 
-    const changed =
-      normalized.length !== prev.length ||
-      normalized.some((m, i) =>
-        m.mark_id !== prev[i].mark_id ||
-        m.order_index !== prev[i].order_index ||
-        m.label !== prev[i].label
-      );
+      const changed =
+        normalized.length !== prev.length ||
+        normalized.some((m, i) =>
+          m.mark_id !== prev[i].mark_id ||
+          m.order_index !== prev[i].order_index ||
+          m.label !== prev[i].label
+        );
 
-    return changed ? normalized : prev;
-  });
-}, [marks]);
+      return changed ? normalized : prev;
+    });
+  }, [marks]);
 
 
   const [selectedMarkId, setSelectedMarkId] = useState<string | null>(null);
@@ -600,8 +698,8 @@ useEffect(() => {
   const [showNameBox, setShowNameBox] = useState(false);
   const [nameBoxPosition, setNameBoxPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [pendingMark, setPendingMark] = useState<Partial<Mark> | null>(null);
-  
-    // ✅ NEW: group creation mode + pending group rect
+
+  // ✅ NEW: group creation mode + pending group rect
   const [drawMode, setDrawMode] = useState<'mark' | 'group'>('mark');
   const [pendingGroup, setPendingGroup] = useState<{
     pageIndex: number;
@@ -637,7 +735,7 @@ useEffect(() => {
     }
   }, [isDemo, pdfUrlParam, urlMarkSetId]);
 
-const handleSetupComplete = (url: string, setId: string, isMaster: boolean) => {
+  const handleSetupComplete = (url: string, setId: string, isMaster: boolean) => {
     // Clean URL one more time before adding to query params
     const finalUrl = cleanPdfUrl(url);
     const newUrl = `${window.location.pathname}?pdf_url=${encodeURIComponent(finalUrl)}&mark_set_id=${setId}&is_master=${isMaster ? '1' : '0'}`;
@@ -666,7 +764,7 @@ const handleSetupComplete = (url: string, setId: string, isMaster: boolean) => {
     }, 3000);
   }, []);
 
-   const fetchGroups = useCallback(async () => {
+  const fetchGroups = useCallback(async () => {
     // Groups always belong to the *owner* mark-set (master in QC mode)
     const ownerId = ownerMarkSetId.current;
     if (!ownerId) return;
@@ -695,14 +793,14 @@ const handleSetupComplete = (url: string, setId: string, isMaster: boolean) => {
   useEffect(() => {
     if (showSetup) return;
     if (isDemo) {
-  const demoPdfUrl = 'https://mozilla.github.io/pdf.js/web/compressed.tracemonkey-pldi-09.pdf';
-  const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
-  const proxiedUrl = `${apiBase}/proxy-pdf?url=${encodeURIComponent(demoPdfUrl)}`;
-  pdfUrl.current = proxiedUrl;
+      const demoPdfUrl = 'https://mozilla.github.io/pdf.js/web/compressed.tracemonkey-pldi-09.pdf';
+      const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
+      const proxiedUrl = `${apiBase}/proxy-pdf?url=${encodeURIComponent(demoPdfUrl)}`;
+      pdfUrl.current = proxiedUrl;
 
-  setLoading(true);
-  pdfjsLib
-    .getDocument({ url: proxiedUrl })
+      setLoading(true);
+      pdfjsLib
+        .getDocument({ url: proxiedUrl })
         .promise.then((loadedPdf) => {
           setPdf(loadedPdf);
           setNumPages(loadedPdf.numPages);
@@ -731,7 +829,7 @@ const handleSetupComplete = (url: string, setId: string, isMaster: boolean) => {
       //   • If we're on the master itself, that's just urlMarkSetId
       marksSourceMarkSetId.current = isMasterMarkSet
         ? urlMarkSetId
-        : masterMarkSetIdFromUrl || urlMarkSetId;
+        : masterMarkSetIdFromUrl; // ⚠️ no fallback to QC id
 
       // ✅ Groups are always stored on the *QC* mark-set itself.
       // We do NOT create groups on the master.
@@ -755,7 +853,7 @@ const handleSetupComplete = (url: string, setId: string, isMaster: boolean) => {
             return;
           }
 
-           try {
+          try {
             // ✅ Master editor → marks from itself
             // ✅ QC editor → marks from master_mark_set_id
             const sourceId = marksSourceMarkSetId.current || urlMarkSetId;
@@ -811,7 +909,7 @@ const handleSetupComplete = (url: string, setId: string, isMaster: boolean) => {
         try {
           const page = await pdf.getPage(mark.page_index + 1);
           const vp = page.getViewport({ scale: zoom });
-          
+
           overlays.push({
             markId: mark.mark_id!,
             pageIndex: mark.page_index,
@@ -833,117 +931,117 @@ const handleSetupComplete = (url: string, setId: string, isMaster: boolean) => {
     updateOverlays();
   }, [pdf, marks, zoom]);
 
-// Track current page while user scrolls (manual scroll -> toolbar updates)
-useEffect(() => {
-  const container = containerRef.current;
-  if (!container) return;
+  // Track current page while user scrolls (manual scroll -> toolbar updates)
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
 
-  let raf = 0;
+    let raf = 0;
 
-  const computeCurrentPage = () => {
-    const scrollTop = container.scrollTop;
-    const pages = numPages;
+    const computeCurrentPage = () => {
+      const scrollTop = container.scrollTop;
+      const pages = numPages;
 
-    let found = 1;
-    let top = PAGE_GAP; // same gap as jumpToPage/pageTopFor
-    for (let i = 0; i < pages; i++) {
-      const h = pageHeightsRef.current[i] || 0;
-      const midpoint = top + h / 2;
-      if (scrollTop < midpoint) {
-        found = i + 1;
-        break;
+      let found = 1;
+      let top = PAGE_GAP; // same gap as jumpToPage/pageTopFor
+      for (let i = 0; i < pages; i++) {
+        const h = pageHeightsRef.current[i] || 0;
+        const midpoint = top + h / 2;
+        if (scrollTop < midpoint) {
+          found = i + 1;
+          break;
+        }
+        top += h + PAGE_GAP;
       }
-      top += h + PAGE_GAP;
+      setCurrentPage(found);
+    };
+
+    const onScroll = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        computeCurrentPage();
+      });
+    };
+
+    container.addEventListener('scroll', onScroll, { passive: true });
+
+    // Initial sync (in case we mount mid-document or after a jump/zoom)
+    computeCurrentPage();
+
+    return () => {
+      container.removeEventListener('scroll', onScroll);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [numPages, zoom]); // re-evaluate when page count or zoom changes
+
+  // ✅ NEW: Jump to specific page
+  const jumpToPage = useCallback((pageNumber: number) => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const top = pageTopFor(pageNumber - 1);
+    container.scrollTo({ left: 0, top, behavior: 'smooth' });
+
+    // keep the toolbar in sync immediately
+    setCurrentPage(pageNumber);
+  }, [pageTopFor]);
+
+
+  const navigateToMark = useCallback((mark: any) => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const m = mark as Mark;
+
+    setSelectedMarkId(m.mark_id);
+    setSelectedGroupId(null); // 🔹 deselect group when focusing a specific mark
+
+    // compute where that page starts
+    const targetTop = pageTopFor(m.page_index);
+    const curTop = container.scrollTop;
+    const pageH = pageHeightsRef.current[m.page_index] || 0;
+
+    // robust "same page" check that does NOT rely on currentPage state
+    const samePage = curTop > (targetTop - pageH / 2) && curTop < (targetTop + pageH / 2);
+
+    if (!samePage) {
+      container.scrollTo({ left: 0, top: targetTop, behavior: 'smooth' });
+      setCurrentPage(m.page_index + 1); // sync toolbar right away
     }
-    setCurrentPage(found);
-  };
-
-  const onScroll = () => {
-    if (raf) return;
-    raf = requestAnimationFrame(() => {
-      raf = 0;
-      computeCurrentPage();
-    });
-  };
-
-  container.addEventListener('scroll', onScroll, { passive: true });
-
-  // Initial sync (in case we mount mid-document or after a jump/zoom)
-  computeCurrentPage();
-
-  return () => {
-    container.removeEventListener('scroll', onScroll);
-    if (raf) cancelAnimationFrame(raf);
-  };
-}, [numPages, zoom]); // re-evaluate when page count or zoom changes
-
-// ✅ NEW: Jump to specific page
-const jumpToPage = useCallback((pageNumber: number) => {
-  const container = containerRef.current;
-  if (!container) return;
-
-  const top = pageTopFor(pageNumber - 1);
-  container.scrollTo({ left: 0, top, behavior: 'smooth' });
-
-  // keep the toolbar in sync immediately
-  setCurrentPage(pageNumber);
-}, [pageTopFor]);
+  }, [pageTopFor]);
 
 
-const navigateToMark = useCallback((mark: any) => {
-  const container = containerRef.current;
-  if (!container) return;
+  const navigateToGroup = useCallback((group: Group) => {
+    const container = containerRef.current;
+    if (!container) return;
 
-  const m = mark as Mark;
+    setSelectedGroupId(group.group_id);
+    setSelectedMarkId(null); // 🔹 no specific mark selected
 
-  setSelectedMarkId(m.mark_id);
-  setSelectedGroupId(null); // 🔹 deselect group when focusing a specific mark
+    // scroll to group's page (no zoom change)
+    const top = pageTopFor(group.page_index);
+    container.scrollTo({ left: 0, top, behavior: 'smooth' });
 
-  // compute where that page starts
-  const targetTop = pageTopFor(m.page_index);
-  const curTop = container.scrollTop;
-  const pageH = pageHeightsRef.current[m.page_index] || 0;
-
-  // robust "same page" check that does NOT rely on currentPage state
-  const samePage = curTop > (targetTop - pageH / 2) && curTop < (targetTop + pageH / 2);
-
-  if (!samePage) {
-    container.scrollTo({ left: 0, top: targetTop, behavior: 'smooth' });
-    setCurrentPage(m.page_index + 1); // sync toolbar right away
-  }
-}, [pageTopFor]);
-
-
-const navigateToGroup = useCallback((group: Group) => {
-  const container = containerRef.current;
-  if (!container) return;
-
-  setSelectedGroupId(group.group_id);
-  setSelectedMarkId(null); // 🔹 no specific mark selected
-
-  // scroll to group's page (no zoom change)
-  const top = pageTopFor(group.page_index);
-  container.scrollTo({ left: 0, top, behavior: 'smooth' });
-
-  // briefly highlight group rectangle on that page
-  if (pdf) {
-    pdf.getPage(group.page_index + 1)
-      .then((page) => {
-        const vp = page.getViewport({ scale: zoom });
-        setFlashRect({
-          pageNumber: group.page_index + 1,
-          x: group.nx * vp.width,
-          y: group.ny * vp.height,
-          w: group.nw * vp.width,
-          h: group.nh * vp.height,
-        });
-      })
-      .catch((e) => console.warn('Failed to compute group flash rect', e));
-  }
-}, [pdf, zoom, pageTopFor]);
+    // briefly highlight group rectangle on that page
+    if (pdf) {
+      pdf.getPage(group.page_index + 1)
+        .then((page) => {
+          const vp = page.getViewport({ scale: zoom });
+          setFlashRect({
+            pageNumber: group.page_index + 1,
+            x: group.nx * vp.width,
+            y: group.ny * vp.height,
+            w: group.nw * vp.width,
+            h: group.nh * vp.height,
+          });
+        })
+        .catch((e) => console.warn('Failed to compute group flash rect', e));
+    }
+  }, [pdf, zoom, pageTopFor]);
 
 
-  
+
   const saveMarks = useCallback(async () => {
     if (isDemo) {
       addToast('Demo mode - changes not saved', 'info');
@@ -962,19 +1060,19 @@ const navigateToGroup = useCallback((group: Group) => {
     // ✅ QC: save into MASTER (universal pool)
     const targetId = isMasterMarkSet
       ? markSetId.current
-      : marksSourceMarkSetId.current || markSetId.current;
+      : marksSourceMarkSetId.current; // ⚠️ never fall back to QC
 
     if (!targetId) {
-      addToast('No target mark set id to save into', 'error');
+      addToast('No master mark-set id found to save into. Please reopen this document from the setup screen.', 'error');
       return;
     }
+
 
     addToast('Saving...', 'info');
 
     try {
-      const url = `${apiBase}/mark-sets/${targetId}/marks${
-        userMail ? `?user_mail=${encodeURIComponent(userMail)}` : ''
-      }`;
+      const url = `${apiBase}/mark-sets/${targetId}/marks${userMail ? `?user_mail=${encodeURIComponent(userMail)}` : ''
+        }`;
 
       const res = await fetch(url, {
         method: 'PUT',
@@ -1009,40 +1107,39 @@ const navigateToGroup = useCallback((group: Group) => {
   }, [marks, isDemo, addToast, isMasterMarkSet, userMail]);
 
   // ✅ NEW: Check for duplicate names and overlapping areas (client-side only - NO API calls)
-// Allow duplicate names; only warn (optionally) on heavy overlap
-const checkDuplicates = useCallback(
-  (name: string, pageIndex: number, nx: number, ny: number, nw: number, nh: number): string | null => {
-    // ✅ No duplicate-name check anymore
+  // Allow duplicate names; only warn (optionally) on heavy overlap
+  const checkDuplicates = useCallback(
+    (name: string, pageIndex: number, nx: number, ny: number, nw: number, nh: number): string | null => {
+      // ✅ No duplicate-name check anymore
 
-    // (Optional) keep overlap warning; return null if you want zero popups ever
-    const marksOnSamePage = marks.filter(m => m.page_index === pageIndex);
+      // (Optional) keep overlap warning; return null if you want zero popups ever
+      const marksOnSamePage = marks.filter(m => m.page_index === pageIndex);
 
-    for (const existing of marksOnSamePage) {
-      const x1 = Math.max(nx, existing.nx);
-      const y1 = Math.max(ny, existing.ny);
-      const x2 = Math.min(nx + nw, existing.nx + existing.nw);
-      const y2 = Math.min(ny + nh, existing.ny + existing.nh);
-      if (x1 < x2 && y1 < y2) {
-        const overlapArea = (x2 - x1) * (y2 - y1);
-        const overlapPct = (overlapArea / Math.min(nw * nh, existing.nw * existing.nh)) * 100;
-        if (overlapPct > 30) {
-          return `⚠️ This mark overlaps ${Math.round(overlapPct)}% with "${existing.name}". Continue anyway?`;
+      for (const existing of marksOnSamePage) {
+        const x1 = Math.max(nx, existing.nx);
+        const y1 = Math.max(ny, existing.ny);
+        const x2 = Math.min(nx + nw, existing.nx + existing.nw);
+        const y2 = Math.min(ny + nh, existing.ny + existing.nh);
+        if (x1 < x2 && y1 < y2) {
+          const overlapArea = (x2 - x1) * (y2 - y1);
+          const overlapPct = (overlapArea / Math.min(nw * nh, existing.nw * existing.nh)) * 100;
+          if (overlapPct > 30) {
+            return `⚠️ This mark overlaps ${Math.round(overlapPct)}% with "${existing.name}". Continue anyway?`;
+          }
         }
       }
-    }
-    return null; // no warning -> no confirm
-  },
-  [marks]
-);
-// If you want no popups at all (even for overlap) const checkDuplicates = useCallback(() => null, []);
-  // ✅ Used by GroupEditor when drawing directly in the preview
+      return null; // no warning -> no confirm
+    },
+    [marks]
+  );
+  // If you want no popups at all (even for overlap) const checkDuplicates = useCallback(() => null, []);
   const createMarkFromGroup = useCallback(
     (pageIndex: number, rect: { nx: number; ny: number; nw: number; nh: number }) => {
       const newMark: Mark = {
         mark_id: `group-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         page_index: pageIndex,
         order_index: marks.length,
-        name: '',           // user can set later in sidebar
+        name: '',
         nx: rect.nx,
         ny: rect.ny,
         nw: rect.nw,
@@ -1053,59 +1150,60 @@ const checkDuplicates = useCallback(
       };
 
       setMarks((prev) => [...prev, newMark]);
-      addToast('Mark created from group preview', 'success');
+      addToast('Mark created in group. Set instrument in the right-hand list.', 'success');
     },
     [marks.length, addToast]
   );
 
-const createMark = useCallback((name: string) => {
-  if (!pendingMark || !pdf) return;
 
-  // Duplicate/overlap check
-  const duplicateWarning = checkDuplicates(
-    name,
-    pendingMark.page_index!,
-    pendingMark.nx!,
-    pendingMark.ny!,
-    pendingMark.nw!,
-    pendingMark.nh!
-  );
-  if (duplicateWarning && !window.confirm(duplicateWarning)) return;
+  const createMark = useCallback((name: string) => {
+    if (!pendingMark || !pdf) return;
 
-  const newMark: Mark = {
-    mark_id: `temp-${Date.now()}`,
-    page_index: pendingMark.page_index!,
-    order_index: marks.length,
-    name: name || '',         // allow blank name
-    nx: pendingMark.nx!,
-    ny: pendingMark.ny!,
-    nw: pendingMark.nw!,
-    nh: pendingMark.nh!,
-    zoom_hint: null,          // viewer-side "Auto"
-    instrument: '',           // user will set this in MarkList
-    is_required: true,        // default: required
-  };
+    // Duplicate/overlap check
+    const duplicateWarning = checkDuplicates(
+      name,
+      pendingMark.page_index!,
+      pendingMark.nx!,
+      pendingMark.ny!,
+      pendingMark.nw!,
+      pendingMark.nh!
+    );
+    if (duplicateWarning && !window.confirm(duplicateWarning)) return;
+
+    const newMark: Mark = {
+      mark_id: `temp-${Date.now()}`,
+      page_index: pendingMark.page_index!,
+      order_index: marks.length,
+      name: name || '',         // allow blank name
+      nx: pendingMark.nx!,
+      ny: pendingMark.ny!,
+      nw: pendingMark.nw!,
+      nh: pendingMark.nh!,
+      zoom_hint: null,          // viewer-side "Auto"
+      instrument: '',           // user will set this in MarkList
+      is_required: true,        // default: required
+    };
 
 
-  setMarks((prev) => [...prev, newMark]);
-  setPendingMark(null);
-  setShowNameBox(false);
-  setCurrentRect(null);
+    setMarks((prev) => [...prev, newMark]);
+    setPendingMark(null);
+    setShowNameBox(false);
+    setCurrentRect(null);
 
-  addToast(`Mark "${name || '(no name)'}" created`, 'success');
+    addToast(`Mark "${name || '(no name)'}" created`, 'success');
 
-  // Do NOT auto-scroll/center/zoom after creation
-  // If you want it to just highlight (no scroll), uncomment:
-  setSelectedMarkId(newMark.mark_id!);
-}, [pendingMark, marks.length, addToast, pdf, checkDuplicates]);
-// Update an existing mark by ID
+    // Do NOT auto-scroll/center/zoom after creation
+    // If you want it to just highlight (no scroll), uncomment:
+    setSelectedMarkId(newMark.mark_id!);
+  }, [pendingMark, marks.length, addToast, pdf, checkDuplicates]);
+  // Update an existing mark by ID
   const updateMark = useCallback((markId: string, updates: Partial<Mark>) => {
     setMarks((prev) =>
       prev.map((m) => (m.mark_id === markId ? { ...m, ...updates } : m))
     );
     addToast('Mark updated', 'success');
   }, [addToast]);
-// Delete a mark by ID
+  // Delete a mark by ID
   const deleteMark = useCallback(
     (markId: string) => {
       // ❌ In QC (non-master) view, do NOT allow deleting marks
@@ -1132,7 +1230,7 @@ const createMark = useCallback((name: string) => {
   );
 
 
-// Duplicate an existing mark
+  // Duplicate an existing mark
   const duplicateMark = useCallback((markId: string) => {
     const source = marks.find((m) => m.mark_id === markId);
     if (!source) return;
@@ -1148,22 +1246,30 @@ const createMark = useCallback((name: string) => {
     addToast('Mark duplicated', 'success');
   }, [marks, addToast]);
 
-  // Reorder mark up or down
- const reorderMark = useCallback((markId: string, direction: 'up' | 'down') => {
-  setMarks((prev) => {
-    const index = prev.findIndex((m) => m.mark_id === markId);
-    if (index === -1) return prev;
+  const reorderMark = useCallback(
+    (markId: string, dir: 'up' | 'down') => {
+      setMarks((prev) => {
+        // Work on a copy
+        const sorted = [...prev].sort((a, b) => a.order_index - b.order_index);
+        const idx = sorted.findIndex((m) => m.mark_id === markId);
+        if (idx === -1) return prev;
 
-    const newIndex = direction === 'up' ? index - 1 : index + 1;
-    if (newIndex < 0 || newIndex >= prev.length) return prev;
+        const swapIdx = dir === 'up' ? idx - 1 : idx + 1;
+        if (swapIdx < 0 || swapIdx >= sorted.length) return prev;
 
-    const newMarks = [...prev];
-    [newMarks[index], newMarks[newIndex]] = [newMarks[newIndex], newMarks[index]];
+        // Swap only order_index; KEEP label as-is
+        const current = sorted[idx];
+        const target = sorted[swapIdx];
 
-    return normalizeMarks(newMarks);
-  });
-}, []);
+        const tmpOrder = current.order_index;
+        current.order_index = target.order_index;
+        target.order_index = tmpOrder;
 
+        return [...sorted];
+      });
+    },
+    []
+  );
 
   const zoomIn = useCallback(() => setZoom((z) => clampZoom(z * 1.2)), []);
   const zoomOut = useCallback(() => setZoom((z) => clampZoom(z / 1.2)), []);
@@ -1178,94 +1284,94 @@ const createMark = useCallback((name: string) => {
       setZoom(clampZoom(newZoom));
     });
   }, [pdf]);
-// Finalize PDF with marks and trigger download
-const finalizeAndDownload = useCallback(async () => {
-  try {
-    const res = await fetch(pdfUrl.current);
-    const srcBytes: ArrayBuffer = await res.arrayBuffer();
+  // Finalize PDF with marks and trigger download
+  const finalizeAndDownload = useCallback(async () => {
+    try {
+      const res = await fetch(pdfUrl.current);
+      const srcBytes: ArrayBuffer = await res.arrayBuffer();
 
-    const doc = await PDFDocument.load(srcBytes);
-    const font = await doc.embedFont(StandardFonts.Helvetica);
+      const doc = await PDFDocument.load(srcBytes);
+      const font = await doc.embedFont(StandardFonts.Helvetica);
 
-    const toDraw = applyLabels(marks);
-    toDraw.forEach(m => {
-      const page = doc.getPage(m.page_index);
-      const { width, height } = page.getSize();
+      const toDraw = applyLabels(marks);
+      toDraw.forEach(m => {
+        const page = doc.getPage(m.page_index);
+        const { width, height } = page.getSize();
 
-      const x = m.nx * width;
-      const w = m.nw * width;
-      const y = (1 - m.ny - m.nh) * height;
-      const h = m.nh * height;
+        const x = m.nx * width;
+        const w = m.nw * width;
+        const y = (1 - m.ny - m.nh) * height;
+        const h = m.nh * height;
 
-      page.drawRectangle({
-        x, y, width: w, height: h,
-        borderWidth: 2,
-        color: undefined,
-        borderColor: rgb(0.0, 0.55, 0.2)
+        page.drawRectangle({
+          x, y, width: w, height: h,
+          borderWidth: 2,
+          color: undefined,
+          borderColor: rgb(0.0, 0.55, 0.2)
+        });
+
+        // Stroke used on the rectangle; nudge the circle to hug the corner
+        const stroke = 2;
+
+        // Circle radius (same scaling)
+        const r = Math.max(8, Math.min(12, Math.min(w, h) * 0.06));
+
+        // Smaller pad for export (PDF only)
+        const PAD_PDF = 0.75; // ↓ make this 0.5 if you want it even tighter
+
+        // Top-left corner in PDF coords
+        const cornerX = x;
+        const cornerY = y + h;
+
+        // Circle center just outside the corner, adjusted for stroke so it sits closer
+        const circleCX = cornerX - r - PAD_PDF + stroke / 2;
+        const circleCY = cornerY + r + PAD_PDF - stroke / 2;
+
+        // Draw the circle
+        page.drawCircle({
+          x: circleCX,
+          y: circleCY,
+          size: r,
+          borderWidth: 1.5,
+          borderColor: rgb(0, 0, 0),
+          color: undefined,
+        });
+
+
+        // Draw the label centered in the circle
+        const label = m.label ?? indexToLabel(m.order_index);
+        const textSize = r;
+        const textWidth = font.widthOfTextAtSize(label, textSize);
+        const textX = circleCX - textWidth / 2;
+        const textY = circleCY - textSize / 3;
+
+        page.drawText(label, {
+          x: textX,
+          y: textY,
+          size: textSize,
+          font,
+          color: rgb(0, 0, 0),
+        });
+
       });
 
-// Stroke used on the rectangle; nudge the circle to hug the corner
-const stroke = 2;
-
-// Circle radius (same scaling)
-const r = Math.max(8, Math.min(12, Math.min(w, h) * 0.06));
-
-// Smaller pad for export (PDF only)
-const PAD_PDF = 0.75; // ↓ make this 0.5 if you want it even tighter
-
-// Top-left corner in PDF coords
-const cornerX = x;
-const cornerY = y + h;
-
-// Circle center just outside the corner, adjusted for stroke so it sits closer
-const circleCX = cornerX - r - PAD_PDF + stroke / 2;
-const circleCY = cornerY + r + PAD_PDF - stroke / 2;
-
-// Draw the circle
-page.drawCircle({
-  x: circleCX,
-  y: circleCY,
-  size: r,
-  borderWidth: 1.5,
-  borderColor: rgb(0, 0, 0),
-  color: undefined,
-});
-
-
-// Draw the label centered in the circle
-const label = m.label ?? indexToLabel(m.order_index);
-const textSize = r;
-const textWidth = font.widthOfTextAtSize(label, textSize);
-const textX = circleCX - textWidth / 2;
-const textY = circleCY - textSize / 3;
-
-page.drawText(label, {
-  x: textX,
-  y: textY,
-  size: textSize,
-  font,
-  color: rgb(0, 0, 0),
-});
-
-    });
-
-// 4) download
-const pdfBytes: Uint8Array = await doc.save(); // explicit
-const blob = new Blob([pdfBytes as unknown as BlobPart], { type: 'application/pdf' });
-const a = document.createElement('a');
-a.href = URL.createObjectURL(blob);
-a.download = 'marked-document.pdf';
-a.click();
-URL.revokeObjectURL(a.href);
+      // 4) download
+      const pdfBytes: Uint8Array = await doc.save(); // explicit
+      const blob = new Blob([pdfBytes as unknown as BlobPart], { type: 'application/pdf' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'marked-document.pdf';
+      a.click();
+      URL.revokeObjectURL(a.href);
 
 
 
-    addToast('PDF generated', 'success');
-  } catch (e) {
-    console.error(e);
-    addToast('Failed to generate PDF', 'error');
-  }
-}, [marks, addToast]);
+      addToast('PDF generated', 'success');
+    } catch (e) {
+      console.error(e);
+      addToast('Failed to generate PDF', 'error');
+    }
+  }, [marks, addToast]);
 
 
   // Wheel zoom - prevent browser zoom, only zoom PDF (SLOWER SPEED)
@@ -1292,7 +1398,7 @@ URL.revokeObjectURL(a.href);
       const scrollTop = container.scrollTop;
       const contentX = scrollLeft + mouseX;
       const contentY = scrollTop + mouseY;
-      
+
       // SLOWER zoom speed - reduced from 0.9/1.1 to 0.95/1.05
       const zoomFactor = e.deltaY > 0 ? 0.95 : 1.05;
 
@@ -1311,89 +1417,89 @@ URL.revokeObjectURL(a.href);
 
     // Add to DOCUMENT to catch before browser
     document.addEventListener('wheel', handleWheel, { passive: false, capture: true });
-    
+
     return () => {
       document.removeEventListener('wheel', handleWheel, { capture: true });
     };
   }, []);
-    // Ctrl+F / Cmd+F to open search
-    useEffect(() => {
-      const handleKeyDown = (e: KeyboardEvent) => {
-        if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
-          e.preventDefault();
-          setShowSearch(true);
+  // Ctrl+F / Cmd+F to open search
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+        e.preventDefault();
+        setShowSearch(true);
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  // Mouse event handlers for drawing and editing marks
+  const handleMouseDown = useCallback(
+    (e: React.MouseEvent, pageIndex: number) => {
+      if (!pdf) return;
+
+      const target = e.currentTarget as HTMLElement;
+      const rect = target.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+
+      // 👉 Non-master = hamesha GROUP mode
+      // 👉 Master = normal drawMode ('mark' ya 'group')
+      const effectiveMode = isMasterMarkSet ? drawMode : 'group';
+
+      // ✅ GROUP MODE (all non-masters + master jab group mode ho)
+      if (effectiveMode === 'group') {
+        setIsDrawing(true);
+        setDrawStart({ x, y, pageIndex });
+        setCurrentRect(null);
+        return;
+      }
+
+      // ⬇️ Yahan se sirf MASTER mark-set ka MARK drawing/editing
+      if (showNameBox) return;
+
+      // Check if clicking on existing mark overlay (edit / move / resize)
+      const clickedOverlay = markOverlays.find((overlay) => {
+        if (overlay.pageIndex !== pageIndex) return false;
+        const { left, top, width, height } = overlay.style;
+        return x >= left && x <= left + width && y >= top && y <= top + height;
+      });
+
+      if (clickedOverlay) {
+        const mark = marks.find((m) => m.mark_id === clickedOverlay.markId);
+        if (mark) {
+          setEditingMarkId(clickedOverlay.markId);
+          const { left, top, width, height } = clickedOverlay.style;
+
+          const isNearEdge =
+            x < left + 10 ||
+            x > left + width - 10 ||
+            y < top + 10 ||
+            y > top + height - 10;
+
+          setEditMode(isNearEdge ? 'resize' : 'move');
+          setEditStart({
+            x,
+            y,
+            rect: { x: left, y: top, w: width, h: height },
+          });
+          e.stopPropagation();
+          return;
         }
-      };
+      }
 
-      document.addEventListener('keydown', handleKeyDown);
-      return () => document.removeEventListener('keydown', handleKeyDown);
-    }, []);
-
-// Mouse event handlers for drawing and editing marks
-const handleMouseDown = useCallback(
-  (e: React.MouseEvent, pageIndex: number) => {
-    if (!pdf) return;
-
-    const target = e.currentTarget as HTMLElement;
-    const rect = target.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-
-    // 👉 Non-master = hamesha GROUP mode
-    // 👉 Master = normal drawMode ('mark' ya 'group')
-    const effectiveMode = isMasterMarkSet ? drawMode : 'group';
-
-    // ✅ GROUP MODE (all non-masters + master jab group mode ho)
-    if (effectiveMode === 'group') {
+      // Normal MARK drawing (MASTER only)
       setIsDrawing(true);
       setDrawStart({ x, y, pageIndex });
       setCurrentRect(null);
-      return;
-    }
-
-    // ⬇️ Yahan se sirf MASTER mark-set ka MARK drawing/editing
-    if (showNameBox) return;
-
-    // Check if clicking on existing mark overlay (edit / move / resize)
-    const clickedOverlay = markOverlays.find((overlay) => {
-      if (overlay.pageIndex !== pageIndex) return false;
-      const { left, top, width, height } = overlay.style;
-      return x >= left && x <= left + width && y >= top && y <= top + height;
-    });
-
-    if (clickedOverlay) {
-      const mark = marks.find((m) => m.mark_id === clickedOverlay.markId);
-      if (mark) {
-        setEditingMarkId(clickedOverlay.markId);
-        const { left, top, width, height } = clickedOverlay.style;
-
-        const isNearEdge =
-          x < left + 10 ||
-          x > left + width - 10 ||
-          y < top + 10 ||
-          y > top + height - 10;
-
-        setEditMode(isNearEdge ? 'resize' : 'move');
-        setEditStart({
-          x,
-          y,
-          rect: { x: left, y: top, w: width, h: height },
-        });
-        e.stopPropagation();
-        return;
-      }
-    }
-
-    // Normal MARK drawing (MASTER only)
-    setIsDrawing(true);
-    setDrawStart({ x, y, pageIndex });
-    setCurrentRect(null);
-  },
-  [pdf, drawMode, showNameBox, markOverlays, marks, isMasterMarkSet]
-);
+    },
+    [pdf, drawMode, showNameBox, markOverlays, marks, isMasterMarkSet]
+  );
 
 
-// Mouse move handler
+  // Mouse move handler
   const handleMouseMove = useCallback(
     (e: React.MouseEvent, pageIndex: number) => {
       const target = e.currentTarget as HTMLElement;
@@ -1410,7 +1516,7 @@ const handleMouseDown = useCallback(
           // Move the mark
           const newX = Math.max(0, editStart.rect.x + dx);
           const newY = Math.max(0, editStart.rect.y + dy);
-          
+
           // Update mark overlay temporarily
           setMarkOverlays(prev => prev.map(overlay => {
             if (overlay.markId === editingMarkId) {
@@ -1429,7 +1535,7 @@ const handleMouseDown = useCallback(
           // Resize the mark
           const newW = Math.max(20, editStart.rect.w + dx);
           const newH = Math.max(20, editStart.rect.h + dy);
-          
+
           setMarkOverlays(prev => prev.map(overlay => {
             if (overlay.markId === editingMarkId) {
               return {
@@ -1460,127 +1566,127 @@ const handleMouseDown = useCallback(
     [isDrawing, drawStart, editingMarkId, editStart, editMode]
   );
 
-// Mouse up handler
-const handleMouseUp = useCallback(
-  (e: React.MouseEvent, pageIndex: number) => {
-    // 1) Finish editing (move / resize)
-    if (editingMarkId && editMode) {
-      const overlay = markOverlays.find((o) => o.markId === editingMarkId);
-      if (overlay) {
-        const target = e.currentTarget as HTMLElement;
-        const pageWidth = target.clientWidth;
-        const pageHeight = target.clientHeight;
+  // Mouse up handler
+  const handleMouseUp = useCallback(
+    (e: React.MouseEvent, pageIndex: number) => {
+      // 1) Finish editing (move / resize)
+      if (editingMarkId && editMode) {
+        const overlay = markOverlays.find((o) => o.markId === editingMarkId);
+        if (overlay) {
+          const target = e.currentTarget as HTMLElement;
+          const pageWidth = target.clientWidth;
+          const pageHeight = target.clientHeight;
 
-        const updatedMark: Partial<Mark> = {
-          nx: overlay.style.left / pageWidth,
-          ny: overlay.style.top / pageHeight,
-          nw: overlay.style.width / pageWidth,
-          nh: overlay.style.height / pageHeight,
-        };
+          const updatedMark: Partial<Mark> = {
+            nx: overlay.style.left / pageWidth,
+            ny: overlay.style.top / pageHeight,
+            nw: overlay.style.width / pageWidth,
+            nh: overlay.style.height / pageHeight,
+          };
 
-        updateMark(editingMarkId, updatedMark);
+          updateMark(editingMarkId, updatedMark);
+        }
+
+        setEditingMarkId(null);
+        setEditMode(null);
+        setEditStart(null);
+        return;
       }
 
-      setEditingMarkId(null);
-      setEditMode(null);
-      setEditStart(null);
-      return;
-    }
+      // 2) No drawing? clean up and exit
+      if (!isDrawing || !drawStart || !currentRect || drawStart.pageIndex !== pageIndex) {
+        setIsDrawing(false);
+        return;
+      }
 
-    // 2) No drawing? clean up and exit
-    if (!isDrawing || !drawStart || !currentRect || drawStart.pageIndex !== pageIndex) {
+      if (currentRect.w < 10 || currentRect.h < 10) {
+        setIsDrawing(false);
+        setCurrentRect(null);
+        return;
+      }
+
+      const target = e.currentTarget as HTMLElement;
+      const pageWidth = target.clientWidth;
+      const pageHeight = target.clientHeight;
+
+      const nx = currentRect.x / pageWidth;
+      const ny = currentRect.y / pageHeight;
+      const nw = currentRect.w / pageWidth;
+      const nh = currentRect.h / pageHeight;
+
+      // Same effective mode logic as mousedown
+      const effectiveMode = isMasterMarkSet ? drawMode : 'group';
+
+      // 3) GROUP MODE ⇒ GroupEditor kholna (master + non-master dono)
+      if (effectiveMode === 'group') {
+        setPendingGroup({
+          pageIndex,
+          rect: { nx, ny, nw, nh },
+        });
+        setGroupEditorOpen(true);
+        setIsDrawing(false);
+        setCurrentRect(null);
+        return;
+      }
+
+      // 4) Agar yahan tak aaye, to MARK MODE hai ⇒ sirf MASTER pe allowed
+      if (!isMasterMarkSet) {
+        // safety: non-master pe kabhi mark create mat karo
+        setIsDrawing(false);
+        setCurrentRect(null);
+        return;
+      }
+
+      // MARK MODE (FLOATING NAME BOX) – MASTER ONLY
+      const normalizedMark: Partial<Mark> = {
+        page_index: pageIndex,
+        nx,
+        ny,
+        nw,
+        nh,
+      };
+
+      setPendingMark(normalizedMark);
+
+      const container = containerRef.current;
+      if (container) {
+        const containerRect = container.getBoundingClientRect();
+        const targetRect = target.getBoundingClientRect();
+        const absoluteX =
+          targetRect.left - containerRect.left + container.scrollLeft + currentRect.x;
+        const absoluteY =
+          targetRect.top - containerRect.top + container.scrollTop + currentRect.y;
+
+        setNameBoxPosition({ x: absoluteX, y: absoluteY });
+      }
+
+      setShowNameBox(true);
       setIsDrawing(false);
-      return;
-    }
-
-    if (currentRect.w < 10 || currentRect.h < 10) {
-      setIsDrawing(false);
-      setCurrentRect(null);
-      return;
-    }
-
-    const target = e.currentTarget as HTMLElement;
-    const pageWidth = target.clientWidth;
-    const pageHeight = target.clientHeight;
-
-    const nx = currentRect.x / pageWidth;
-    const ny = currentRect.y / pageHeight;
-    const nw = currentRect.w / pageWidth;
-    const nh = currentRect.h / pageHeight;
-
-    // Same effective mode logic as mousedown
-    const effectiveMode = isMasterMarkSet ? drawMode : 'group';
-
-    // 3) GROUP MODE ⇒ GroupEditor kholna (master + non-master dono)
-    if (effectiveMode === 'group') {
-      setPendingGroup({
-        pageIndex,
-        rect: { nx, ny, nw, nh },
-      });
-      setGroupEditorOpen(true);
-      setIsDrawing(false);
-      setCurrentRect(null);
-      return;
-    }
-
-    // 4) Agar yahan tak aaye, to MARK MODE hai ⇒ sirf MASTER pe allowed
-    if (!isMasterMarkSet) {
-      // safety: non-master pe kabhi mark create mat karo
-      setIsDrawing(false);
-      setCurrentRect(null);
-      return;
-    }
-
-    // MARK MODE (FLOATING NAME BOX) – MASTER ONLY
-    const normalizedMark: Partial<Mark> = {
-      page_index: pageIndex,
-      nx,
-      ny,
-      nw,
-      nh,
-    };
-
-    setPendingMark(normalizedMark);
-
-    const container = containerRef.current;
-    if (container) {
-      const containerRect = container.getBoundingClientRect();
-      const targetRect = target.getBoundingClientRect();
-      const absoluteX =
-        targetRect.left - containerRect.left + container.scrollLeft + currentRect.x;
-      const absoluteY =
-        targetRect.top - containerRect.top + container.scrollTop + currentRect.y;
-
-      setNameBoxPosition({ x: absoluteX, y: absoluteY });
-    }
-
-    setShowNameBox(true);
-    setIsDrawing(false);
-  },
-  [
-    isDrawing,
-    drawStart,
-    currentRect,
-    editingMarkId,
-    editMode,
-    markOverlays,
-    updateMark,
-    drawMode,
-    isMasterMarkSet,
-  ]
-);
+    },
+    [
+      isDrawing,
+      drawStart,
+      currentRect,
+      editingMarkId,
+      editMode,
+      markOverlays,
+      updateMark,
+      drawMode,
+      isMasterMarkSet,
+    ]
+  );
 
 
-// Track page heights as they load
+  // Track page heights as they load
   const handlePageReady = useCallback((pageNumber: number, height: number) => {
     pageHeightsRef.current[pageNumber - 1] = height;
   }, []);
 
-const handleSearchResult = useCallback((pageNumber: number, highlights: any[]) => {
-  setHighlightPageNumber(pageNumber);
-  setSearchHighlights(highlights);
-  jumpToPage(pageNumber);
-}, [jumpToPage]);
+  const handleSearchResult = useCallback((pageNumber: number, highlights: any[]) => {
+    setHighlightPageNumber(pageNumber);
+    setSearchHighlights(highlights);
+    jumpToPage(pageNumber);
+  }, [jumpToPage]);
 
   if (showSetup) {
     return <SetupScreen onStart={handleSetupComplete} />;
@@ -1611,8 +1717,8 @@ const handleSearchResult = useCallback((pageNumber: number, highlights: any[]) =
           </button>
           {sidebarOpen && <h3>Marks</h3>}
         </div>
-                {sidebarOpen && (
-                    <MarkList
+        {sidebarOpen && (
+          <MarkList
             marks={marks}
             groups={isMasterMarkSet ? [] : groups}
             selectedMarkId={selectedMarkId}
@@ -1639,7 +1745,7 @@ const handleSearchResult = useCallback((pageNumber: number, highlights: any[]) =
       </div>
 
       <div className="main-content">
-              <ZoomToolbar
+        <ZoomToolbar
           zoom={zoom}
           onZoomIn={zoomIn}
           onZoomOut={zoomOut}
@@ -1649,7 +1755,7 @@ const handleSearchResult = useCallback((pageNumber: number, highlights: any[]) =
           totalPages={numPages}
           onPageJump={jumpToPage}
           // ⬇️ rename intent: this still uses the same prop name from toolbar
-                    onFinalize={finalizeAndDownload}
+          onFinalize={finalizeAndDownload}
           // ✅ NEW: enter group mode (disabled on master markset)
           onCreateGroup={() => {
             if (isMasterMarkSet) {
@@ -1667,7 +1773,7 @@ const handleSearchResult = useCallback((pageNumber: number, highlights: any[]) =
             // 2) stash a notice for the setup screen and navigate back
             try {
               localStorage.setItem('markset_notice', '✅ Mark set created.');
-            } catch {}
+            } catch { }
             // 3) go back to previous screen
             window.history.back();
           }}
@@ -1696,7 +1802,7 @@ const handleSearchResult = useCallback((pageNumber: number, highlights: any[]) =
                       : null
                   }
                 />
-                
+
                 {/* Search Highlights */}
                 {highlightPageNumber === pageNum && searchHighlights.map((highlight, idx) => (
                   <div
@@ -1726,84 +1832,84 @@ const handleSearchResult = useCallback((pageNumber: number, highlights: any[]) =
                     }}
                   />
                 )}
-{markOverlays
-  .filter((overlay) => overlay.pageIndex === pageNum - 1)
-  .map((overlay) => {
-    const mark = marks.find((m) => m.mark_id === overlay.markId);
-    const label = mark?.label ?? indexToLabel(mark?.order_index ?? 0);
+                {markOverlays
+                  .filter((overlay) => overlay.pageIndex === pageNum - 1)
+                  .map((overlay) => {
+                    const mark = marks.find((m) => m.mark_id === overlay.markId);
+                    const label = mark?.label ?? indexToLabel(mark?.order_index ?? 0);
 
-    return (
-      <div
-        key={overlay.markId}
-        className={`mark-rect ${selectedMarkId === overlay.markId ? 'selected' : ''} ${editingMarkId === overlay.markId ? 'editing' : ''}`}
-        style={{
-          position: 'absolute',
-          left: overlay.style.left,
-          top: overlay.style.top,
-          width: overlay.style.width,
-          height: overlay.style.height,
-          cursor: editingMarkId === overlay.markId ? (editMode === 'move' ? 'move' : 'nwse-resize') : 'pointer',
-          transition: editingMarkId === overlay.markId ? 'none' : 'all 0.2s',
-          zIndex: editingMarkId === overlay.markId ? 10 : 5,
-        }}
-        onClick={(e) => {
-          if (editingMarkId) return;
-          if (mark) navigateToMark(mark);
-        }}
-      >
-        {(() => {
-          const w = overlay.style.width;
-          const h = overlay.style.height;
-          const r = Math.max(8, Math.min(12, Math.min(w, h) * 0.06));
-          const pad = 2;
-          const diameter = 2 * r;
+                    return (
+                      <div
+                        key={overlay.markId}
+                        className={`mark-rect ${selectedMarkId === overlay.markId ? 'selected' : ''} ${editingMarkId === overlay.markId ? 'editing' : ''}`}
+                        style={{
+                          position: 'absolute',
+                          left: overlay.style.left,
+                          top: overlay.style.top,
+                          width: overlay.style.width,
+                          height: overlay.style.height,
+                          cursor: editingMarkId === overlay.markId ? (editMode === 'move' ? 'move' : 'nwse-resize') : 'pointer',
+                          transition: editingMarkId === overlay.markId ? 'none' : 'all 0.2s',
+                          zIndex: editingMarkId === overlay.markId ? 10 : 5,
+                        }}
+                        onClick={(e) => {
+                          if (editingMarkId) return;
+                          if (mark) navigateToMark(mark);
+                        }}
+                      >
+                        {(() => {
+                          const w = overlay.style.width;
+                          const h = overlay.style.height;
+                          const r = Math.max(8, Math.min(12, Math.min(w, h) * 0.06));
+                          const pad = 2;
+                          const diameter = 2 * r;
 
-          return (
-            <div
-              style={{
-                position: 'absolute',
-                left: -(diameter + pad),
-                top: -(diameter + pad),
-                width: diameter,
-                height: diameter,
-                borderRadius: '50%',
-                border: '2px solid #000',
-                background: '#fff',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontWeight: 600,
-                fontSize: r,
-                lineHeight: 1,
-                pointerEvents: 'none',
-                boxSizing: 'border-box',
-              }}
-            >
-              {label}
-            </div>
-          );
-        })()}
-      </div>
-    );
-  })}  
+                          return (
+                            <div
+                              style={{
+                                position: 'absolute',
+                                left: -(diameter + pad),
+                                top: -(diameter + pad),
+                                width: diameter,
+                                height: diameter,
+                                borderRadius: '50%',
+                                border: '2px solid #000',
+                                background: '#fff',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontWeight: 600,
+                                fontSize: r,
+                                lineHeight: 1,
+                                pointerEvents: 'none',
+                                boxSizing: 'border-box',
+                              }}
+                            >
+                              {label}
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    );
+                  })}
               </div>
             ))}
           </div>
 
           {showNameBox && (
             <FloatingNameBox
-  position={nameBoxPosition}
-  onSave={(name) => createMark(name)}
-  onCancel={() => {
-    setShowNameBox(false);
-    setPendingMark(null);
-    setCurrentRect(null);
-  }}
-/>
+              position={nameBoxPosition}
+              onSave={(name) => createMark(name)}
+              onCancel={() => {
+                setShowNameBox(false);
+                setPendingMark(null);
+                setCurrentRect(null);
+              }}
+            />
 
           )}
-                    {/* PDF Search Component */}
-                    <PDFSearch
+          {/* PDF Search Component */}
+          <PDFSearch
             pdf={pdf}
             isOpen={showSearch}
             onClose={() => setShowSearch(false)}
@@ -1811,8 +1917,8 @@ const handleSearchResult = useCallback((pageNumber: number, highlights: any[]) =
           />
         </div>
 
-         {/* ✅ Group Editor overlay (QC/non-master only) */}
-         {pendingGroup && !isMasterMarkSet && (
+        {/* ✅ Group Editor overlay (QC/non-master only) */}
+        {pendingGroup && !isMasterMarkSet && (
           <GroupEditor
             isOpen={groupEditorOpen}
             pdf={pdf}
@@ -1824,7 +1930,7 @@ const handleSearchResult = useCallback((pageNumber: number, highlights: any[]) =
             )}
             // ✅ groups belong to this QC mark-set
             ownerMarkSetId={ownerMarkSetId.current}
-              onUpdateMark={updateMark}
+            onUpdateMark={updateMark}
             onFocusMark={(markId) => {
               const m = marks.find((mm) => mm.mark_id === markId);
               if (m) navigateToMark(m);
