@@ -210,11 +210,15 @@ export default function GroupEditor({
     fetchSuggestions('');
   }, [isOpen, fetchSuggestions]);
 
-  /**
+   /**
    * High-res preview of ONLY the selected area.
-   * We render the whole page to an offscreen canvas at a scale where
-   * the group rect width == container width, then crop that rect into
-   * the visible canvas.
+   * Strategy:
+   *  1. Render the whole page once at scale = 1 onto an offscreen canvas.
+   *  2. Crop the group rect from that page.
+   *  3. Scale the cropped image up/down to a nice preview size.
+   *
+   * Because the crop uses the same base viewport (scale 1) as our normalized
+   * rect coords, the preview matches the blue selection exactly.
    */
   useEffect(() => {
     if (!isOpen) return;
@@ -229,49 +233,55 @@ export default function GroupEditor({
         const page = await pdf.getPage(pageIndex + 1);
         if (cancelled) return;
 
+        // --- 1) Render full page at scale = 1 ---
         const baseViewport = page.getViewport({ scale: 1 });
-        const groupWidthAt1 = rect.nw * baseViewport.width;
-        const groupHeightAt1 = rect.nh * baseViewport.height;
-
-        // container width in CSS px – use full clientWidth so
-        // the selected blue area maps 1:1 to the preview width
-        const containerWidth = Math.max(container.clientWidth, 260);
-
-        // scale whole page so that the GROUP width fits container width
-        const scale =
-          groupWidthAt1 > 0 ? containerWidth / groupWidthAt1 : 1;
-        const viewport = page.getViewport({ scale });
-
         const dpr = window.devicePixelRatio || 1;
 
-        // ---- offscreen: full page render (crisp) ----
         const offCanvas = document.createElement('canvas');
-        offCanvas.width = viewport.width * dpr;
-        offCanvas.height = viewport.height * dpr;
+        offCanvas.width = baseViewport.width * dpr;
+        offCanvas.height = baseViewport.height * dpr;
         const offCtx = offCanvas.getContext('2d');
         if (!offCtx) return;
+
         offCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        offCtx.clearRect(0, 0, viewport.width, viewport.height);
+        offCtx.clearRect(0, 0, baseViewport.width, baseViewport.height);
 
         await page
           .render({
             canvasContext: offCtx,
-            viewport,
+            viewport: baseViewport,
           })
           .promise;
         if (cancelled) return;
 
-        // group rect on the *page* at this scale
-        const gx = rect.nx * viewport.width;
-        const gy = rect.ny * viewport.height;
-        const gw = rect.nw * viewport.width;
-        const gh = rect.nh * viewport.height;
+        // --- 2) Group rect in page pixels (scale = 1) ---
+        const gx = rect.nx * baseViewport.width;
+        const gy = rect.ny * baseViewport.height;
+        const gw = rect.nw * baseViewport.width;
+        const gh = rect.nh * baseViewport.height;
 
-        // visible canvas size = scaled group rect size
-        const cssWidth = containerWidth;
-        const cssHeight = gh;
+        // --- 3) Decide preview size (scale cropped region) ---
+        // Start from the natural group size at scale=1
+        let cssWidth = gw;
+        let cssHeight = gh;
 
-        // ---- visible canvas: exactly the cropped area ----
+        // Ensure a minimum width for usability
+        const MIN_WIDTH = 260;
+        if (cssWidth < MIN_WIDTH) {
+          const factor = MIN_WIDTH / cssWidth;
+          cssWidth *= factor;
+          cssHeight *= factor;
+        }
+
+        // Also make sure we don't overflow the container width
+        const maxWidth = Math.max(200, container.clientWidth - 16);
+        if (cssWidth > maxWidth) {
+          const factor = maxWidth / cssWidth;
+          cssWidth *= factor;
+          cssHeight *= factor;
+        }
+
+        // --- 4) Configure visible canvas ---
         canvas.width = cssWidth * dpr;
         canvas.height = cssHeight * dpr;
         canvas.style.width = `${cssWidth}px`;
@@ -279,10 +289,11 @@ export default function GroupEditor({
 
         const ctx = canvas.getContext('2d');
         if (!ctx) return;
+
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.clearRect(0, 0, cssWidth, cssHeight);
 
-        // crop selected area from offscreen → visible
+        // --- 5) Crop from offscreen page → visible preview ---
         ctx.drawImage(
           offCanvas,
           gx * dpr,
@@ -295,7 +306,7 @@ export default function GroupEditor({
           cssHeight
         );
 
-        // store overlay size for HTML overlay div (same size as canvas)
+        // Overlay (green mark boxes) uses this size
         setOverlaySize({ w: cssWidth, h: cssHeight });
       } catch (e) {
         if (!cancelled) {
@@ -308,6 +319,7 @@ export default function GroupEditor({
       cancelled = true;
     };
   }, [isOpen, pdf, pageIndex, rect]);
+
 
   // Mouse handlers on the HTML overlay (not the canvas) – fixes dpr misalignment
   const handleOverlayMouseDown = (e: React.MouseEvent) => {
