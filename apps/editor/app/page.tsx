@@ -14,6 +14,7 @@ import PDFSearch from '../components/PDFSearch';
 import { applyLabels, indexToLabel } from '../lib/labels';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import GroupEditor from '../components/GroupEditor';
+import { bootstrapPagesForDoc } from '../lib/pagesApi';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 // Clean nested Cloudinary URLs
@@ -239,43 +240,44 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
     }
   };
 
-  const handleOpenMarkset = (markSetId: string, isMaster: boolean) => {
-    if (!boot?.document?.pdf_url) {
-      setErr('No PDF URL on document.');
-      return;
-    }
+const handleOpenMarkset = (markSetId: string, isMaster: boolean) => {
+  if (!boot?.document?.pdf_url) {
+    setErr('No PDF URL on document.');
+    return;
+  }
+  if (!boot.document.doc_id) {
+    setErr('Document not initialized correctly (missing doc_id). Try bootstrapping again.');
+    return;
+  }
 
-    // ✅ For master sets: master_for_viewer = itself
-    // ✅ For QC sets: MUST point to the real master mark-set
-    if (!isMaster && !boot.master_mark_set_id) {
-      setErr('No master mark-set for this document. Please open or create the MASTER first.');
-      return;
-    }
+  // ✅ For master sets: master_for_viewer = itself
+  // ✅ For QC sets: MUST point to the real master mark-set
+  if (!isMaster && !boot.master_mark_set_id) {
+    setErr('No master mark-set for this document. Please open or create the MASTER first.');
+    return;
+  }
 
-    const masterForViewer = isMaster
-      ? markSetId
-      : (boot.master_mark_set_id as string);
+  const masterForViewer = isMaster
+    ? markSetId
+    : (boot.master_mark_set_id as string);
 
-    const finalPdfUrl = boot.document.pdf_url;
+  const finalPdfUrl = boot.document.pdf_url;
 
-    const params = new URLSearchParams();
-    params.set('pdf_url', finalPdfUrl);
-    params.set('mark_set_id', markSetId);
-    params.set('is_master', isMaster ? '1' : '0');
-    params.set('master_mark_set_id', masterForViewer);
-        if (userMail) {
-      params.set('user_mail', userMail);
-      // cache it so the viewer can still use it even if URL loses the param
-      try {
-        localStorage.setItem('markbook_user_mail', userMail);
-      } catch {
-        // ignore storage errors
-      }
-    }
+  const params = new URLSearchParams();
+  params.set('pdf_url', finalPdfUrl);
+  params.set('doc_id', boot.document.doc_id);        // 👈 NEW
+  params.set('mark_set_id', markSetId);
+  params.set('is_master', isMaster ? '1' : '0');
+  params.set('master_mark_set_id', masterForViewer);
+  if (userMail) {
+    params.set('user_mail', userMail);
+    try {
+      localStorage.setItem('markbook_user_mail', userMail);
+    } catch { }
+  }
 
-    // Hard redirect so Viewer boots with correct params
-    window.location.href = `${window.location.pathname}?${params.toString()}`;
-  };
+  window.location.href = `${window.location.pathname}?${params.toString()}`;
+};
 
 
   const handleCreateMarkset = async () => {
@@ -742,6 +744,8 @@ function EditorContent() {
   const urlMarkSetId = searchParams?.get('mark_set_id') || '';
   const isMasterMarkSet = searchParams?.get('is_master') === '1';
   const masterMarkSetIdFromUrl = searchParams?.get('master_mark_set_id') || '';
+  const docIdParam = searchParams?.get('doc_id') || '';
+
   // Prefer URL param; fall back to cached value if param is missing
   let userMail = searchParams?.get('user_mail') || '';
   if (!userMail && typeof window !== 'undefined') {
@@ -875,6 +879,15 @@ function EditorContent() {
           setPdf(loadedPdf);
           setNumPages(loadedPdf.numPages);
 
+
+          // 👇 NEW: send page geometry to backend if we have doc_id
+          if (docIdParam) {
+            try {
+              await bootstrapPagesForDoc(apiBase, docIdParam, loadedPdf);
+            } catch (e) {
+              console.warn('bootstrapPagesForDoc failed', e);
+            }
+          }
           // No mark-set ID → just load PDF, no marks
           if (!urlMarkSetId) {
             setMarks([]);
@@ -926,7 +939,7 @@ function EditorContent() {
           setLoading(false);
         });
     }
-  }, [showSetup, isDemo, pdfUrlParam, urlMarkSetId, fetchGroups, isMasterMarkSet]);
+  }, [showSetup, isDemo, pdfUrlParam, urlMarkSetId, docIdParam, fetchGroups, isMasterMarkSet]);
 
   useEffect(() => {
     if (!pdf) return;

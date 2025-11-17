@@ -347,25 +347,74 @@ class SheetsAdapter(StorageAdapter):
         return obj
 
     def bootstrap_pages(self, doc_id: str, page_count: int, dims: list[dict[str, Any]]) -> None:
-        existing = self._get_all_dicts("pages")
-        for row in existing:
-            if row.get("doc_id") == doc_id:
-                raise ValueError("PAGES_ALREADY_BOOTSTRAPPED")
+        """
+        Bootstrap or update page geometry for a document.
 
-        rows = []
+        Behaviour:
+        - If no pages exist yet for this doc_id -> create full set of rows.
+        - If rows already exist (possibly stubbed with width/height=0) -> update
+          width_pt / height_pt / rotation_deg in-place, keeping page_id stable.
+        """
+        # Map incoming dims by page_index for quick lookup
+        dims_by_index: dict[int, dict[str, Any]] = {}
         for d in dims:
-            rows.append(
-                [
-                    _uuid(),
-                    doc_id,
-                    int(d["page_index"]),
-                    float(d["width_pt"]),
-                    float(d["height_pt"]),
-                    int(d["rotation_deg"]),
-                ]
-            )
-        self._append_rows("pages", rows)
+            idx = int(d["page_index"])
+            dims_by_index[idx] = d
 
+        # All existing pages for this doc (as dicts, without row indexes)
+        all_pages = self._get_all_dicts("pages")
+        existing_for_doc = [r for r in all_pages if r.get("doc_id") == doc_id]
+
+        if not existing_for_doc:
+            # --- Case 1: no rows yet -> create fresh ones (original behaviour) ---
+            rows: list[list[Any]] = []
+            for d in dims:
+                rows.append(
+                    [
+                        _uuid(),
+                        doc_id,
+                        int(d["page_index"]),
+                        float(d["width_pt"]),
+                        float(d["height_pt"]),
+                        int(d["rotation_deg"]),
+                    ]
+                )
+            self._append_rows("pages", rows)
+        else:
+            # --- Case 2: rows already exist -> update geometry in-place ---
+            for existing in existing_for_doc:
+                try:
+                    idx = _safe_int(existing.get("page_index"), default=None)
+                    if idx is None:
+                        continue
+
+                    dim = dims_by_index.get(idx)
+                    if not dim:
+                        # No new info for this index -> skip
+                        continue
+
+                    page_id = existing.get("page_id")
+                    if not page_id:
+                        continue
+
+                    row_idx = self._find_row_by_value("pages", "page_id", page_id)
+                    if not row_idx:
+                        continue
+
+                    self._update_cells(
+                        "pages",
+                        row_idx,
+                        {
+                            "width_pt": float(dim["width_pt"]),
+                            "height_pt": float(dim["height_pt"]),
+                            "rotation_deg": int(dim["rotation_deg"]),
+                        },
+                    )
+                except Exception:
+                    # Don't let one bad row kill the whole bootstrap
+                    continue
+
+        # --- Update documents.page_count and clear cache ---
         drow = self._find_row_by_value("documents", "doc_id", doc_id)
         if drow:
             self._update_cells(
@@ -373,7 +422,9 @@ class SheetsAdapter(StorageAdapter):
                 drow,
                 {"page_count": page_count, "updated_at": _utc_iso()},
             )
+
         self._pages_by_doc_cache.pop(doc_id, None)
+
 
     def _pages_for_doc(self, doc_id: str) -> list[dict[str, Any]]:
         if doc_id in self._pages_by_doc_cache:
@@ -676,7 +727,6 @@ class SheetsAdapter(StorageAdapter):
         self.ws["marks"].clear()
         self.ws["marks"].update("A1", updated_matrix)
 
-# ========== Additional mark operations ==========
     def list_distinct_instruments(self) -> list[str]:
         """
         Return a sorted list of distinct non-empty instrument names

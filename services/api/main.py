@@ -39,6 +39,7 @@ import io
 from adapters.sheets import HEADERS as SHEETS_HEADERS
 from routers import reports, reports_excel
 from typing import Any, Dict  
+from routers import pages as pages_router
 
 # ========== NEW: Request Context for Tracing ==========
 request_id_var = contextvars.ContextVar('request_id', default=None)
@@ -403,6 +404,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Make backend info & adapter available to routers via request.app.state
+app.state.storage_backend = STORAGE_BACKEND
+app.state.storage_adapter = storage_adapter if STORAGE_BACKEND == "sheets" else None
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):
@@ -789,6 +793,9 @@ app.include_router(instruments_router.router)
 
 from routers import marks as marks_router         
 app.include_router(marks_router.router) 
+
+from routers import pages as pages_router
+app.include_router(pages_router.router)
 # ========== End of Submissions ==========
 
 startup_time = time.time()
