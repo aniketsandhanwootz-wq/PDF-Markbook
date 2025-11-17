@@ -95,11 +95,11 @@ function PageCanvas({
           // Use cached bitmap
           ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
           ctx.drawImage(cached, 0, 0, viewport.width, viewport.height);
-          
+
           if (!isCancelled) {
             // Swap canvases immediately
             currentCanvasRef.current = currentCanvasRef.current === 'front' ? 'back' : 'front';
-            
+
             if (currentCanvasRef.current === 'back') {
               backCanvas.style.display = 'block';
               frontCanvas.style.display = 'none';
@@ -144,7 +144,7 @@ function PageCanvas({
 
           // Swap canvases
           currentCanvasRef.current = currentCanvasRef.current === 'front' ? 'back' : 'front';
-          
+
           if (currentCanvasRef.current === 'back') {
             backCanvas.style.display = 'block';
             frontCanvas.style.display = 'none';
@@ -233,23 +233,23 @@ function PageCanvas({
           Loading page {pageNumber}...
         </div>
       )}
-      <canvas 
-        ref={frontCanvasRef} 
-        className="page-canvas" 
-        style={{ 
+      <canvas
+        ref={frontCanvasRef}
+        className="page-canvas"
+        style={{
           display: 'block',
           opacity: isLoading ? 0.5 : 1,
           transition: 'opacity 0.2s'
-        }} 
+        }}
       />
-      <canvas 
-        ref={backCanvasRef} 
-        className="page-canvas" 
-        style={{ 
+      <canvas
+        ref={backCanvasRef}
+        className="page-canvas"
+        style={{
           display: 'none',
           opacity: isLoading ? 0.5 : 1,
           transition: 'opacity 0.2s'
-        }} 
+        }}
       />
       <canvas ref={overlayRef} className="page-overlay" />
     </div>

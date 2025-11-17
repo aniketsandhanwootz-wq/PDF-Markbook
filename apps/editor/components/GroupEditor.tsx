@@ -33,6 +33,11 @@ type GroupEditorProps = {
   marksOnPage: Mark[];
   // 👉 This is the mark-set that actually OWNS the groups (QC mark-set)
   ownerMarkSetId: string;
+  // create vs edit existing group
+  mode?: 'create' | 'edit';
+  groupId?: string;
+  initialName?: string;
+  initialSelectedMarkIds?: string[];
   onClose: () => void;
   onSaved: () => void;
   onUpdateMark: (markId: string, updates: Partial<Mark>) => void;
@@ -41,7 +46,7 @@ type GroupEditorProps = {
   onCreateMarkInGroup?: (
     pageIndex: number,
     rect: { nx: number; ny: number; nw: number; nh: number }
-  ) => void;
+  ) => string | void;
 };
 
 const apiBase =
@@ -78,14 +83,21 @@ export default function GroupEditor({
   rect,
   marksOnPage,
   ownerMarkSetId,
+  mode = 'create',
+  groupId,
+  initialName,
+  initialSelectedMarkIds,
   onClose,
   onSaved,
   onUpdateMark,
   onFocusMark,
   onCreateMarkInGroup,
 }: GroupEditorProps) {
-  const [name, setName] = useState<string>(`Group p${pageIndex + 1}`);
+  const [name, setName] = useState<string>(
+    initialName ?? `Group p${pageIndex + 1}`
+  );
   const [saving, setSaving] = useState(false);
+
 
   // marks that geometrically lie inside this area
   const marksInArea = useMemo(
@@ -119,13 +131,43 @@ export default function GroupEditor({
   const suggestionsAbortRef = useRef<AbortController | null>(null);
 
   // hydrate selected marks whenever area or marks change
+  // Initialise and keep selection stable:
+  // - when dialog opens:
+  //    • edit mode  → use initialSelectedMarkIds
+  //    • create mode → select all marks in area
+  // - when marksInArea changes:
+  //    • keep existing selection if possible
+  //    • don't auto-reselect marks that user unchecked
   useEffect(() => {
-    const s = new Set<string>();
-    marksInArea.forEach((m) => {
-      if (m.mark_id) s.add(m.mark_id);
+    if (!isOpen) return;
+
+    setSelected((prev) => {
+      const idsInArea = new Set<string>(
+        marksInArea.map((m) => m.mark_id).filter(Boolean) as string[]
+      );
+
+      // first time (prev empty) → initialise from props
+      let base: Set<string>;
+      if (prev.size === 0) {
+        if (initialSelectedMarkIds && initialSelectedMarkIds.length > 0) {
+          base = new Set(
+            initialSelectedMarkIds.filter((id) => idsInArea.has(id))
+          );
+        } else {
+          // create mode default: everything in area selected
+          base = new Set(idsInArea);
+        }
+      } else {
+        // subsequent updates: keep only ids that still exist in area
+        base = new Set<string>();
+        prev.forEach((id) => {
+          if (idsInArea.has(id)) base.add(id);
+        });
+      }
+
+      return base;
     });
-    setSelected(s);
-  }, [marksInArea]);
+  }, [isOpen, marksInArea, initialSelectedMarkIds]);
 
   const toggleMarkSelected = (id: string) => {
     setSelected((prev) => {
@@ -191,10 +233,11 @@ export default function GroupEditor({
         const groupWidthAt1 = rect.nw * baseViewport.width;
         const groupHeightAt1 = rect.nh * baseViewport.height;
 
-        // container width in CSS px (a bit of inner padding)
-        const containerWidth = Math.max(container.clientWidth - 16, 260);
+        // container width in CSS px – use full clientWidth so
+        // the selected blue area maps 1:1 to the preview width
+        const containerWidth = Math.max(container.clientWidth, 260);
 
-        // scale so that group width fits container width
+        // scale whole page so that the GROUP width fits container width
         const scale =
           groupWidthAt1 > 0 ? containerWidth / groupWidthAt1 : 1;
         const viewport = page.getViewport({ scale });
@@ -224,8 +267,9 @@ export default function GroupEditor({
         const gw = rect.nw * viewport.width;
         const gh = rect.nh * viewport.height;
 
+        // visible canvas size = scaled group rect size
         const cssWidth = containerWidth;
-        const cssHeight = gh; // keep aspect ratio of selected area
+        const cssHeight = gh;
 
         // ---- visible canvas: exactly the cropped area ----
         canvas.width = cssWidth * dpr;
@@ -336,7 +380,16 @@ export default function GroupEditor({
       nh: rect.nh * relH,
     };
 
-    onCreateMarkInGroup(pageIndex, markRect);
+    const newId = onCreateMarkInGroup(pageIndex, markRect);
+
+    // auto-select only the new mark (do NOT disturb existing selections)
+    if (newId) {
+      setSelected((prev) => {
+        const next = new Set(prev);
+        next.add(newId);
+        return next;
+      });
+    }
 
     setIsDrawing(false);
     setCurrentRect(null);
@@ -362,7 +415,7 @@ export default function GroupEditor({
     try {
       setSaving(true);
 
-      const payload = {
+      const payload: any = {
         page_index: pageIndex,
         name: groupName,
         nx: rect.nx,
@@ -370,17 +423,25 @@ export default function GroupEditor({
         nw: rect.nw,
         nh: rect.nh,
         mark_ids,
-        created_by: undefined, // you can later wire user email if needed
       };
 
-      const res = await fetch(
-        `${apiBase}/mark-sets/${ownerMarkSetId}/groups`,
-        {
+      let res: Response;
+
+      if (mode === 'edit' && groupId) {
+        // Update existing group
+        res = await fetch(`${apiBase}/groups/${groupId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      } else {
+        // Create new group
+        res = await fetch(`${apiBase}/mark-sets/${ownerMarkSetId}/groups`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
-        }
-      );
+        });
+      }
 
       if (!res.ok) {
         const txt = await res.text();
@@ -439,8 +500,9 @@ export default function GroupEditor({
           }}
         >
           <div>
-            <div style={{ fontSize: 16, fontWeight: 700 }}>
-              New Group – Page {pageIndex + 1}
+                        <div style={{ fontSize: 16, fontWeight: 700 }}>
+              {mode === 'edit' ? 'Edit Group' : 'New Group'} – Page{' '}
+              {pageIndex + 1}
             </div>
             <div
               style={{

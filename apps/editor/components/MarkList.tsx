@@ -29,11 +29,13 @@ type MarkListProps = {
   selectedGroupId: string | null;
   onSelect: (mark: Mark) => void;
   onGroupSelect?: (group: Group) => void;
+  onGroupEdit?: (group: Group) => void;
   onUpdate: (markId: string, updates: Partial<Mark>) => void;
   onDelete: (markId: string) => void;
   onDuplicate: (markId: string) => void;
   onReorder: (markId: string, dir: 'up' | 'down') => void;
 };
+
 
 const iconBtn: React.CSSProperties = {
   border: '1px solid #ccc',
@@ -51,6 +53,7 @@ export default function MarkList({
   selectedGroupId,
   onSelect,
   onGroupSelect,
+  onGroupEdit,
   onUpdate,
   onDelete,
   onDuplicate,
@@ -216,8 +219,36 @@ export default function MarkList({
                   : '1px solid #eee',
               }}
             >
-              <div style={{ fontSize: 13, fontWeight: 600 }}>
-                {group.name || `Group p${group.page_index + 1}`}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  fontSize: 13,
+                  fontWeight: 600,
+                }}
+              >
+                <span>{group.name || `Group p${group.page_index + 1}`}</span>
+                {onGroupEdit && (
+                  <button
+                    type="button"
+                    title="Edit group"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onGroupEdit(group);
+                    }}
+                    style={{
+                      border: '1px solid #ccc',
+                      borderRadius: 4,
+                      padding: '0 4px',
+                      fontSize: 11,
+                      cursor: 'pointer',
+                      background: '#fff',
+                    }}
+                  >
+                    ✏️
+                  </button>
+                )}
               </div>
               <div style={{ fontSize: 11, color: '#666' }}>
                 Page {group.page_index + 1} · {gmarks.length} mark

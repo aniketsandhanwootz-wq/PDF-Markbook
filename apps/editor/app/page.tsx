@@ -660,6 +660,8 @@ function EditorContent() {
   const [marks, setMarks] = useState<Mark[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
+  const [editingGroup, setEditingGroup] = useState<Group | null>(null);
+
 
   // Gap between pages in .pdf-surface-wrap
   const PAGE_GAP = 16;
@@ -720,6 +722,7 @@ function EditorContent() {
     rect: { nx: number; ny: number; nw: number; nh: number };
   } | null>(null);
   const [groupEditorOpen, setGroupEditorOpen] = useState(false);
+  const [pendingGroupMarkIds, setPendingGroupMarkIds] = useState<string[]>([]);
 
   // Mark editing states
   const [editingMarkId, setEditingMarkId] = useState<string | null>(null);
@@ -1014,28 +1017,41 @@ function EditorContent() {
   }, [pageTopFor]);
 
 
-  const navigateToMark = useCallback((mark: any) => {
-    const container = containerRef.current;
-    if (!container) return;
+  const navigateToMark = useCallback(
+    (mark: any) => {
+      const container = containerRef.current;
+      if (!container) return;
 
-    const m = mark as Mark;
+      const m = mark as Mark;
 
-    setSelectedMarkId(m.mark_id);
-    setSelectedGroupId(null); // 🔹 deselect group when focusing a specific mark
+      setSelectedMarkId(m.mark_id);
 
-    // compute where that page starts
-    const targetTop = pageTopFor(m.page_index);
-    const curTop = container.scrollTop;
-    const pageH = pageHeightsRef.current[m.page_index] || 0;
+      // In QC mode, also highlight the group that owns this mark
+      if (!isMasterMarkSet) {
+        const owningGroup = groups.find((g) =>
+          (g.mark_ids || []).includes(m.mark_id)
+        );
+        setSelectedGroupId(owningGroup ? owningGroup.group_id : null);
+      } else {
+        setSelectedGroupId(null);
+      }
 
-    // robust "same page" check that does NOT rely on currentPage state
-    const samePage = curTop > (targetTop - pageH / 2) && curTop < (targetTop + pageH / 2);
+      // compute where that page starts
+      const targetTop = pageTopFor(m.page_index);
+      const curTop = container.scrollTop;
+      const pageH = pageHeightsRef.current[m.page_index] || 0;
 
-    if (!samePage) {
-      container.scrollTo({ left: 0, top: targetTop, behavior: 'smooth' });
-      setCurrentPage(m.page_index + 1); // sync toolbar right away
-    }
-  }, [pageTopFor]);
+      // robust "same page" check that does NOT rely on currentPage state
+      const samePage =
+        curTop > targetTop - pageH / 2 && curTop < targetTop + pageH / 2;
+
+      if (!samePage) {
+        container.scrollTo({ left: 0, top: targetTop, behavior: 'smooth' });
+        setCurrentPage(m.page_index + 1); // sync toolbar right away
+      }
+    },
+    [pageTopFor, groups, isMasterMarkSet]
+  );
 
 
   const navigateToGroup = useCallback((group: Group) => {
@@ -1066,6 +1082,29 @@ function EditorContent() {
     }
   }, [pdf, zoom, pageTopFor]);
 
+  // Open GroupEditor for an existing group (pencil icon)
+  const handleEditGroup = useCallback(
+    (group: Group) => {
+      setSelectedGroupId(group.group_id);
+      setSelectedMarkId(null);
+      setEditingGroup(group);
+
+      setPendingGroup({
+        pageIndex: group.page_index,
+        rect: {
+          nx: group.nx,
+          ny: group.ny,
+          nw: group.nw,
+          nh: group.nh,
+        },
+      });
+      setGroupEditorOpen(true);
+
+      // Also scroll / flash this group on the PDF
+      navigateToGroup(group);
+    },
+    [navigateToGroup]
+  );
 
 
   const saveMarks = useCallback(async () => {
@@ -1132,6 +1171,19 @@ function EditorContent() {
     }
   }, [marks, isDemo, addToast, isMasterMarkSet, userMail]);
 
+  // Save marks + close window (old "Save & Submit" behaviour)
+  const saveAndSubmit = useCallback(async () => {
+    await saveMarks();
+
+    // If save failed, we already showed a toast, just don't close
+    try {
+      localStorage.setItem('markset_notice', '✅ Mark set created.');
+    } catch {
+      // ignore storage errors
+    }
+    window.history.back();
+  }, [saveMarks]);
+
   // ✅ NEW: Check for duplicate names and overlapping areas (client-side only - NO API calls)
   // Allow duplicate names; only warn (optionally) on heavy overlap
   const checkDuplicates = useCallback(
@@ -1162,7 +1214,9 @@ function EditorContent() {
   const createMarkFromGroup = useCallback(
     (pageIndex: number, rect: { nx: number; ny: number; nw: number; nh: number }) => {
       const newMark: Mark = {
-        mark_id: `group-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        mark_id: `group-${Date.now()}-${Math.random()
+          .toString(36)
+          .slice(2, 7)}`,
         page_index: pageIndex,
         order_index: marks.length,
         name: '',
@@ -1176,7 +1230,17 @@ function EditorContent() {
       };
 
       setMarks((prev) => [...prev, newMark]);
-      addToast('Mark created in group. Set instrument in the right-hand list.', 'success');
+
+      // remember: this mark was created inside the current GroupEditor session
+      setPendingGroupMarkIds((prev) => [...prev, newMark.mark_id]);
+
+      addToast(
+        'Mark created in group. Set instrument in the right-hand list.',
+        'success'
+      );
+
+      // let GroupEditor auto-select just this mark
+      return newMark.mark_id;
     },
     [marks.length, addToast]
   );
@@ -1743,7 +1807,7 @@ function EditorContent() {
           </button>
           {sidebarOpen && <h3>Marks</h3>}
         </div>
-        {sidebarOpen && (
+                {sidebarOpen && (
           <MarkList
             marks={marks}
             groups={isMasterMarkSet ? [] : groups}
@@ -1751,27 +1815,28 @@ function EditorContent() {
             selectedGroupId={isMasterMarkSet ? null : selectedGroupId}
             onSelect={navigateToMark}
             onGroupSelect={isMasterMarkSet ? undefined : navigateToGroup}
+            onGroupEdit={isMasterMarkSet ? undefined : handleEditGroup}
             onUpdate={updateMark}
             onDelete={deleteMark}
             onDuplicate={duplicateMark}
             onReorder={reorderMark}
           />
         )}
-        {sidebarOpen && (
+                {sidebarOpen && (
           <div className="sidebar-footer">
             <button
               className="save-btn"
-              onClick={saveMarks}
+              onClick={saveAndSubmit}
               disabled={marks.length === 0}
             >
-              Save {marks.length} Mark{marks.length !== 1 ? 's' : ''}
+              Save &amp; Submit ({marks.length})
             </button>
           </div>
         )}
       </div>
 
       <div className="main-content">
-        <ZoomToolbar
+                <ZoomToolbar
           zoom={zoom}
           onZoomIn={zoomIn}
           onZoomOut={zoomOut}
@@ -1780,31 +1845,25 @@ function EditorContent() {
           currentPage={currentPage}
           totalPages={numPages}
           onPageJump={jumpToPage}
-          // ⬇️ rename intent: this still uses the same prop name from toolbar
           onFinalize={finalizeAndDownload}
           // ✅ NEW: enter group mode (disabled on master markset)
           onCreateGroup={() => {
             if (isMasterMarkSet) {
-              addToast('Groups are only available on QC (non-master) mark sets.', 'info');
+              addToast(
+                'Groups are only available on QC (non-master) mark sets.',
+                'info'
+              );
               return;
             }
             setDrawMode('group');
             setPendingGroup(null);
             setCurrentRect(null);
-            addToast('Group mode: draw a rectangle on the PDF to define a group area.', 'info');
-          }}
-          onSaveSubmit={async () => {
-            // 1) save marks
-            await saveMarks();
-            // 2) stash a notice for the setup screen and navigate back
-            try {
-              localStorage.setItem('markset_notice', '✅ Mark set created.');
-            } catch { }
-            // 3) go back to previous screen
-            window.history.back();
+            addToast(
+              'Group mode: draw a rectangle on the PDF to define a group area.',
+              'info'
+            );
           }}
         />
-
 
 
         <div className="pdf-surface-wrap" ref={containerRef} style={{ touchAction: 'pan-y pan-x' }}>
@@ -1858,9 +1917,19 @@ function EditorContent() {
                     }}
                   />
                 )}
-                {markOverlays
+                                {markOverlays
                   .filter((overlay) => overlay.pageIndex === pageNum - 1)
+                  .filter((overlay) => {
+                    // In QC mode, if a group is selected, only show that group's marks
+                    if (isMasterMarkSet || !selectedGroupId) return true;
+                    const g = groups.find(
+                      (gg) => gg.group_id === selectedGroupId
+                    );
+                    if (!g) return true;
+                    return (g.mark_ids || []).includes(overlay.markId);
+                  })
                   .map((overlay) => {
+
                     const mark = marks.find((m) => m.mark_id === overlay.markId);
                     const label = mark?.label ?? indexToLabel(mark?.order_index ?? 0);
 
@@ -1950,6 +2019,10 @@ function EditorContent() {
             pdf={pdf}
             pageIndex={pendingGroup.pageIndex}
             rect={pendingGroup.rect}
+            mode={editingGroup ? 'edit' : 'create'}
+            groupId={editingGroup?.group_id || undefined}
+            initialName={editingGroup?.name}
+            initialSelectedMarkIds={editingGroup?.mark_ids}
             // ✅ marks come from the master mark set (loaded earlier)
             marksOnPage={marks.filter(
               (m) => m.page_index === pendingGroup.pageIndex
@@ -1964,20 +2037,34 @@ function EditorContent() {
             // ✅ QC can create new marks inside this group area
             onCreateMarkInGroup={createMarkFromGroup}
             onClose={() => {
+              // ❌ User cancelled – drop any marks that were created
+              // inside this GroupEditor session and never saved.
+              if (pendingGroupMarkIds.length) {
+                setMarks((prev) =>
+                  prev.filter((m) => !pendingGroupMarkIds.includes(m.mark_id))
+                );
+                setPendingGroupMarkIds([]);
+              }
               setGroupEditorOpen(false);
               setPendingGroup(null);
+              setEditingGroup(null);
               setDrawMode('mark');
             }}
             onSaved={() => {
+              // ✅ User clicked "Save Group" – marks created in this session
+              // become part of the normal mark pool; just clear the tracking list.
               setGroupEditorOpen(false);
               setPendingGroup(null);
+              setEditingGroup(null);
               setDrawMode('mark');
+              setPendingGroupMarkIds([]);
               addToast('Group saved', 'success');
               // 🔹 refresh sidebar groups for this QC mark-set
               fetchGroups();
             }}
           />
         )}
+
       </div>
       <div className="toast-container">
         {toasts.map((toast) => (
