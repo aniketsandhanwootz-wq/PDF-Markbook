@@ -201,8 +201,6 @@ async def list_marks(
 
 
 # ---------- Master-only: replace all marks for a mark set ----------
-
-
 @router.put("/mark-sets/{mark_set_id}/marks", status_code=200)
 async def update_marks(
     mark_set_id: str,
@@ -215,14 +213,16 @@ async def update_marks(
     ),
 ):
     """
-    Replace all marks in a mark set.
+    Replace or extend marks in a MASTER mark set.
 
-    For Sheets backend this rewrites all rows in the `marks` tab
-    for the given mark_set_id.
-
-    PERMISSIONS:
-    - Only allowed if mark_set.is_master == TRUE AND
-      user_mail is allowed by documents.master_editors.
+    Behaviour:
+    - If caller is a master editor (documents.master_editors contains user_mail):
+        → full rewrite allowed (add/move/delete marks).
+    - If caller is NOT a master editor (QC flow):
+        → append-only:
+           * existing MASTER marks cannot be changed or deleted
+           * request may contain copies of existing marks – those are ignored
+           * only new marks (no existing mark_id) are appended at the end
     """
     if not hasattr(storage, "update_marks"):
         raise HTTPException(
@@ -230,7 +230,7 @@ async def update_marks(
             detail="Marks update not supported by this backend",
         )
 
-    # Load mark_set + document and enforce master permissions
+    # --- 1) Load mark_set + document and enforce 'must be MASTER' ---
     ms_row, doc = _load_markset_and_doc(storage, mark_set_id)
     is_master = _bool(ms_row.get("is_master"))
     if not is_master:
@@ -239,37 +239,92 @@ async def update_marks(
             detail="ONLY_MASTER_MARKSET_CAN_UPDATE_MARKS",
         )
 
-    if not _user_can_edit_master(doc, user_mail):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="USER_NOT_ALLOWED_TO_EDIT_MASTER_MARKSET",
-        )
+    can_full_edit = _user_can_edit_master(doc, user_mail)
 
-    logger.info(f"Updating {len(marks)} marks for set {mark_set_id} by {user_mail}")
+    # Always need current master marks
+    if hasattr(storage, "list_marks"):
+        existing_marks = storage.list_marks(mark_set_id)
+    elif hasattr(storage, "get_marks"):
+        existing_marks = storage.get_marks(mark_set_id)
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Marks listing not supported by this backend",
+        )
 
     marks_data = [mark.model_dump() for mark in marks]
 
-    # Validate unique order_index
-    ensure_unique_order_index(marks_data)
+    # ---------- MASTER EDITOR FLOW: full rewrite ----------
+    if can_full_edit:
+        ensure_unique_order_index(marks_data)
+        for m in marks_data:
+            validate_normalized_rect(m["nx"], m["ny"], m["nw"], m["nh"])
 
-    # Validate each mark's coordinates
-    for mark_data in marks_data:
-        validate_normalized_rect(
-            mark_data["nx"],
-            mark_data["ny"],
-            mark_data["nw"],
-            mark_data["nh"],
+        logger.info(
+            f"[MASTER EDIT] Updating {len(marks_data)} marks for set {mark_set_id} by {user_mail}"
         )
+        try:
+            storage.update_marks(mark_set_id, marks_data)
+        except ValueError as e:
+            if "MARK_SET_NOT_FOUND" in str(e):
+                raise HTTPException(status_code=404, detail="MARK_SET_NOT_FOUND")
+            raise HTTPException(status_code=400, detail=str(e))
+
+        return {"status": "ok", "message": f"Updated {len(marks_data)} marks"}
+
+    # ---------- QC FLOW: append-only into MASTER ----------
+    # Map existing mark_ids for quick lookup
+    existing_ids = {
+        (m.get("mark_id") or "").strip()
+        for m in existing_marks
+        if (m.get("mark_id") or "").strip()
+    }
+
+    # Treat any mark that references an existing master mark_id as
+    # "just a copy" and ignore it. Only marks with no existing id are new.
+    new_marks: list[dict[str, Any]] = []
+    for m in marks_data:
+        mid = (m.get("mark_id") or "").strip()
+        if mid and mid in existing_ids:
+            # QC is not allowed to change this; ignore their copy
+            continue
+        new_marks.append(m)
+
+    if not new_marks:
+        logger.info(
+            f"[QC APPEND] No new marks to append for set {mark_set_id} by {user_mail}"
+        )
+        return {"status": "ok", "message": "No new marks to append"}
+
+    # Determine current max order_index in master
+    if existing_marks:
+        max_order = max(int(m.get("order_index", 0)) for m in existing_marks)
+    else:
+        max_order = -1
+
+    # Validate and assign order_index for NEW marks only
+    for nm in new_marks:
+        validate_normalized_rect(nm["nx"], nm["ny"], nm["nw"], nm["nh"])
+        max_order += 1
+        nm["order_index"] = max_order
+        # Force backend to generate new IDs; don't reuse any client-provided id
+        nm["mark_id"] = (nm.get("mark_id") or "").strip() or None
+
+    combined = list(existing_marks) + new_marks
+    ensure_unique_order_index(combined)
+
+    logger.info(
+        f"[QC APPEND] Appending {len(new_marks)} new marks into master set {mark_set_id} by {user_mail}"
+    )
 
     try:
-        storage.update_marks(mark_set_id, marks_data)
+        storage.update_marks(mark_set_id, combined)
     except ValueError as e:
         if "MARK_SET_NOT_FOUND" in str(e):
             raise HTTPException(status_code=404, detail="MARK_SET_NOT_FOUND")
         raise HTTPException(status_code=400, detail=str(e))
 
-    return {"status": "ok", "message": f"Updated {len(marks)} marks"}
-
+    return {"status": "ok", "message": f"Appended {len(new_marks)} new marks into master"}
 
 # ---------- Master-only: patch a single mark (instrument / required) ----------
 

@@ -263,8 +263,14 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
     params.set('mark_set_id', markSetId);
     params.set('is_master', isMaster ? '1' : '0');
     params.set('master_mark_set_id', masterForViewer);
-    if (userMail) {
+        if (userMail) {
       params.set('user_mail', userMail);
+      // cache it so the viewer can still use it even if URL loses the param
+      try {
+        localStorage.setItem('markbook_user_mail', userMail);
+      } catch {
+        // ignore storage errors
+      }
     }
 
     // Hard redirect so Viewer boots with correct params
@@ -380,7 +386,7 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
     }
   };
 
-   // ----- helper to render a single mark-set card -----
+  // ----- helper to render a single mark-set card -----
   const renderMarkSetCard = (ms: BootstrapDoc['mark_sets'][number]) => {
     // MASTER cannot be renamed, so we never go into "editing" state for it
     const isEditing = !ms.is_master && editingId === ms.mark_set_id;
@@ -429,9 +435,17 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
               {ms.is_master ? ' ⭐' : ''}
             </div>
           )}
+
           <div style={{ color: '#666', fontSize: 12 }}>
             {(ms.marks_count ?? 0)} mark{(ms.marks_count ?? 0) === 1 ? '' : 's'}
           </div>
+
+          {ms.created_by && (
+            <div style={{ color: '#777', fontSize: 11, marginTop: 2 }}>
+              {ms.created_by}
+            </div>
+          )}
+
           {ms.description && (
             <div style={{ color: '#999', fontSize: 11, marginTop: 2 }}>
               {ms.description}
@@ -725,7 +739,19 @@ function EditorContent() {
   const urlMarkSetId = searchParams?.get('mark_set_id') || '';
   const isMasterMarkSet = searchParams?.get('is_master') === '1';
   const masterMarkSetIdFromUrl = searchParams?.get('master_mark_set_id') || '';
-  const userMail = searchParams?.get('user_mail') || '';
+  // Prefer URL param; fall back to cached value if param is missing
+  let userMail = searchParams?.get('user_mail') || '';
+  if (!userMail && typeof window !== 'undefined') {
+    try {
+      const cached = localStorage.getItem('markbook_user_mail');
+      if (cached) {
+        userMail = cached;
+      }
+    } catch {
+      // ignore storage errors
+    }
+  }
+  console.log('[Viewer] userMail used for saving:', userMail);
 
 
   // Check if we should show setup screen
