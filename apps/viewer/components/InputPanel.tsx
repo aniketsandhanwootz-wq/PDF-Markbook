@@ -102,6 +102,7 @@ export default function InputPanel({
 
   return (
     <div
+    id="mobile-input-panel"   // 👈 ADD THIS
       style={{
         height: 'auto',
         minHeight: 160,

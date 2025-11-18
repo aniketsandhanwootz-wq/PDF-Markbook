@@ -146,6 +146,12 @@ type GroupWindowMeta = {
 const SWIPE_TO_STEP_ENABLED = false;
 // === Touch gestures master switch (leave OFF to allow native scroll) ===
 const TOUCH_GESTURES_ENABLED = false;
+// Reserve some space so PDF content doesn't hide under the floating HUD buttons
+const HUD_TOP_SAFE_PX = 72;   // approx height of top HUD bar
+const HUD_SIDE_SAFE_PX = 90;  // approx width taken by right zoom buttons
+
+// Reserve space at the bottom for the blue InputPanel (mostly mobile)
+const INPUT_PANEL_SAFE_PX_MOBILE = 190; // ≈ height of InputPanel + padding
 
 // ------- New types for bootstrap + markset summary -------
 type BootstrapDoc = {
@@ -659,7 +665,7 @@ function ViewerContent() {
   const [entries, setEntries] = useState<Record<string, string>>({});
   const [showReview, setShowReview] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-    // Markset meta + grouping for QC flows
+  // Markset meta + grouping for QC flows
   const [isMasterMarkSet, setIsMasterMarkSet] = useState<boolean | null>(null);
   const [groupWindows, setGroupWindows] = useState<GroupWindowMeta[] | null>(null);
   const [markToGroupIndex, setMarkToGroupIndex] = useState<number[]>([]);
@@ -1279,10 +1285,17 @@ function ViewerContent() {
       const containerW = container.clientWidth;
       const containerH = container.clientHeight;
 
-      const isMaster = isMasterMarkSet === true || isMasterMarkSet === null;
+      // Only true when we *know* it is a master markset
+      const isMaster = isMasterMarkSet === true;
 
-      // ---------- MASTER / UNKNOWN → old mark-wise auto zoom ----------
-      if (isMaster || !groupWindows || markToGroupIndex[index] == null || markToGroupIndex[index] < 0) {
+      // Does this mark belong to a QC group?
+      const hasGroup =
+        !!groupWindows &&
+        markToGroupIndex[index] != null &&
+        markToGroupIndex[index] >= 0;
+
+      // ---------- MASTER / LEGACY (no group info) → old mark-wise auto zoom ----------
+      if (isMaster || !hasGroup) {
         // Rect at scale=1
         const rectAt1 = {
           x: mark.nx * base.w,
@@ -1344,9 +1357,9 @@ function ViewerContent() {
         return;
       }
 
-      // ---------- QC FLOW: group-wise vertical fit ----------
+      // ---------- QC FLOW: group-wise handling ----------
       const gi = markToGroupIndex[index];
-      const gMeta = groupWindows[gi];
+      const gMeta = groupWindows![gi];
       const groupBase = basePageSizeRef.current[gMeta.page_index];
       if (!groupBase) {
         setCurrentMarkIndex(index);
@@ -1361,6 +1374,7 @@ function ViewerContent() {
         h: gMeta.nh * groupBase.h,
       };
 
+      // Which group were we on *before*?
       const prevIdx = currentMarkIndex;
       const prevGroupIdx =
         prevIdx >= 0 && prevIdx < marks.length && markToGroupIndex[prevIdx] != null
@@ -1369,22 +1383,59 @@ function ViewerContent() {
 
       const groupChanged = gi !== prevGroupIdx;
 
-      // Only recompute zoom when changing groups; otherwise keep existing zoom
+       // ✅ 1) Choose zoom:
+      //    - first time / switching groups → fit group vertically in the
+      //      area between the HUD and the (floating) InputPanel on mobile
+      //    - within same group → keep current zoom (only slide in X)
       let targetZoom = zoomRef.current || 1.0;
       if (groupChanged || !zoomRef.current) {
-        const rawZoom = (containerH * 0.8) / (groupRectAt1.h || 1);
+        const isMobileViewport =
+          typeof window !== 'undefined' && window.innerWidth < 900;
+
+        let bottomSafe = 0;
+
+        if (isMobileViewport && typeof document !== 'undefined') {
+          // Try to use the REAL InputPanel height if present (mobile mode)
+          const panel = document.getElementById('mobile-input-panel');
+          if (panel) {
+            const rect = panel.getBoundingClientRect();
+            bottomSafe = rect.height + 16; // small extra padding
+          } else {
+            // Fallback if panel not yet mounted
+            bottomSafe = INPUT_PANEL_SAFE_PX_MOBILE;
+          }
+        }
+
+        // Available vertical space for the group (inside the scroll container)
+        let usableHeight = containerH - HUD_TOP_SAFE_PX - bottomSafe;
+
+        // Safety guard so we don't explode the zoom on tiny windows
+        if (usableHeight < containerH * 0.4) {
+          usableHeight = containerH * 0.4;
+        }
+
+        const rawZoom = usableHeight / (groupRectAt1.h || 1);
         targetZoom = setZoomQ(rawZoom, zoomRef);
       }
 
-      // Rect for this mark at current group zoom
-      const baseForMark = groupBase; // assume same page; if not, this still behaves reasonably
+
+      // Rect for THIS MARK at target zoom (for yellow outline)
       const rectAtZ = {
-        x: mark.nx * baseForMark.w * targetZoom,
-        y: mark.ny * baseForMark.h * targetZoom,
-        w: mark.nw * baseForMark.w * targetZoom,
-        h: mark.nh * baseForMark.h * targetZoom,
+        x: mark.nx * groupBase.w * targetZoom,
+        y: mark.ny * groupBase.h * targetZoom,
+        w: mark.nw * groupBase.w * targetZoom,
+        h: mark.nh * groupBase.h * targetZoom,
       };
 
+      // Group rect at target zoom (for scroll anchoring when group changes)
+      const groupRectAtZ = {
+        x: groupRectAt1.x * targetZoom,
+        y: groupRectAt1.y * targetZoom,
+        w: groupRectAt1.w * targetZoom,
+        h: groupRectAt1.h * targetZoom,
+      };
+
+      // Highlight current mark
       setFlashRect({ pageNumber, ...rectAtZ });
       setTimeout(() => setFlashRect(null), 1200);
       const keepAliveRect = { pageNumber, ...rectAtZ };
@@ -1392,10 +1443,13 @@ function ViewerContent() {
       setTimeout(() => setSelectedRect(keepAliveRect), 1250);
 
       requestAnimationFrame(async () => {
-        const expectedW = baseForMark.w * targetZoom;
-        const expectedH = baseForMark.h * targetZoom;
+        const expectedW = groupBase.w * targetZoom;
+        const expectedH = groupBase.h * targetZoom;
 
-        await waitForCanvasLayout(pageEl, expectedW, expectedH, 1500);
+        // When zoom changed (new group / first time), wait for canvas to settle
+        if (groupChanged) {
+          await waitForCanvasLayout(pageEl, expectedW, expectedH, 1500);
+        }
 
         const containerRect = container.getBoundingClientRect();
         const pageRect = pageEl.getBoundingClientRect();
@@ -1403,11 +1457,22 @@ function ViewerContent() {
         const pageOffsetLeft = container.scrollLeft + (pageRect.left - containerRect.left);
         const pageOffsetTop = container.scrollTop + (pageRect.top - containerRect.top);
 
+        // ✅ 2) X: center on mark, but bias slightly away from right HUD
         const markCenterX = pageOffsetLeft + rectAtZ.x + rectAtZ.w / 2;
-        const markCenterY = pageOffsetTop + rectAtZ.y + rectAtZ.h / 2;
+        const effectiveViewWidth = containerW - HUD_SIDE_SAFE_PX; // keep away from right zoom buttons
+        const targetScrollLeft = markCenterX - effectiveViewWidth / 2;
 
-        const targetScrollLeft = markCenterX - containerW / 2;
-        const targetScrollTop = markCenterY - containerH / 2;
+        // ✅ 3) Y:
+        //    - if group changed → align GROUP TOP just under HUD
+        //    - if same group   → keep current scrollTop (pure X motion)
+        let targetScrollTop: number;
+        if (groupChanged) {
+          const paddingTopPx = HUD_TOP_SAFE_PX;
+          const groupTop = pageOffsetTop + groupRectAtZ.y;
+          targetScrollTop = groupTop - paddingTopPx;
+        } else {
+          targetScrollTop = container.scrollTop; // preserve current Y
+        }
 
         const { left: clampedL, top: clampedT } = clampScroll(
           container,
@@ -1422,6 +1487,7 @@ function ViewerContent() {
     },
     [marks, pdf, isMasterMarkSet, groupWindows, markToGroupIndex, currentMarkIndex]
   );
+
 
 
 
@@ -1893,7 +1959,7 @@ function ViewerContent() {
             onClose={() => setSidebarOpen(false)}
             title="Marks"
           >
-                       <MarkList
+            <MarkList
               marks={marks}
               currentIndex={currentMarkIndex}
               entries={entries}
