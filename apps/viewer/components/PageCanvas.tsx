@@ -197,12 +197,12 @@ setCurrentCanvas(currentCanvasRef.current);
   }
 };
 
-// PATCH[PageCanvas.tsx] — slightly higher hysteresis to reduce churn
 const zoomDiff = Math.abs(zoom - lastRenderedZoomRef.current);
-// PATCH[PageCanvas.tsx] — slightly higher hysteresis to cut mid-gesture churn
-if (zoomDiff > 0.035 || lastRenderedZoomRef.current === 0) {
+// Avoid churn during tiny zoom deltas or while a task is in-flight
+if ((zoomDiff > 0.035 || lastRenderedZoomRef.current === 0) && !renderTaskRef.current) {
   renderPage();
 }
+
 
 
 

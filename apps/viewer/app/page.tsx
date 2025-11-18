@@ -130,6 +130,19 @@ type MarkSetInfo = {
   pdf_url: string;
   name: string;
 };
+
+type GroupWindowMeta = {
+  group_id: string;
+  name: string;
+  startIndex: number;  // inclusive in marks[]
+  endIndex: number;    // inclusive in marks[]
+  page_index: number;
+  nx: number;
+  ny: number;
+  nw: number;
+  nh: number;
+};
+
 const SWIPE_TO_STEP_ENABLED = false;
 // === Touch gestures master switch (leave OFF to allow native scroll) ===
 const TOUCH_GESTURES_ENABLED = false;
@@ -153,11 +166,13 @@ type BootstrapDoc = {
     created_at: string;
     updated_by: string;
     marks_count?: number;
+    description?: string | null;   // 👈 NEW
   }>;
   master_mark_set_id?: string | null;
   mark_set_count: number;
   status?: string;
 };
+
 
 type CreateDocMarkSetBody = {
   project_name: string;
@@ -167,7 +182,6 @@ type CreateDocMarkSetBody = {
   created_by?: string | null;
   is_master?: boolean;
 };
-
 function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string) => void }) {
   const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
   const params = useSearchParams();
@@ -183,6 +197,9 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
   const [boot, setBoot] = useState<BootstrapDoc | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string>('');
+
+  // 👉 NEW: computed marks count for QC marksets
+  const [qcMarkCounts, setQcMarkCounts] = useState<Record<string, number>>({});
 
   const hasBootstrapKeys =
     projectName.trim() && extId.trim() && partNumber.trim() && assemblyDrawing.trim();
@@ -214,11 +231,60 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
     }
   };
 
+  // Auto-bootstrap when keys present
   useEffect(() => {
     if (!boot && hasBootstrapKeys && !loading) {
       runBootstrap();
     }
   }, [hasBootstrapKeys]);
+
+  // 👉 NEW: for each QC markset, fetch groups and compute unique mark ids
+  useEffect(() => {
+    if (!boot) return;
+
+    const qcSets = boot.mark_sets.filter((ms) => !ms.is_master);
+    if (qcSets.length === 0) {
+      setQcMarkCounts({});
+      return;
+    }
+
+    let cancelled = false;
+
+    (async () => {
+      const result: Record<string, number> = {};
+
+      await Promise.all(
+        qcSets.map(async (ms) => {
+          try {
+            const res = await fetch(`${apiBase}/viewer/groups/${ms.mark_set_id}`);
+            if (!res.ok) return;
+
+            const data = await res.json();
+            const groups: any[] = data.groups || [];
+            const ids = new Set<string>();
+
+            for (const g of groups) {
+              for (const m of (g.marks || []) as any[]) {
+                if (m.mark_id) ids.add(String(m.mark_id));
+              }
+            }
+
+            result[ms.mark_set_id] = ids.size;
+          } catch (e) {
+            console.warn('Failed to compute QC mark count for', ms.mark_set_id, e);
+          }
+        })
+      );
+
+      if (!cancelled) {
+        setQcMarkCounts(result);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [boot, apiBase]);
 
   const handleOpenMarkset = (markSetId: string) => {
     if (!boot?.document?.pdf_url) {
@@ -228,32 +294,93 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
     onStart(boot.document.pdf_url, markSetId);
   };
 
-  const masterMarkset = boot?.mark_sets.find(ms => ms.is_master);
-  const otherMarksets = boot?.mark_sets.filter(ms => !ms.is_master) || [];
+  const masterMarkset = boot?.mark_sets.find((ms) => ms.is_master);
+  const otherMarksets = boot?.mark_sets.filter((ms) => !ms.is_master) || [];
 
   return (
-    <div style={{ minHeight: '100vh', background: '#f5f5f5', padding: 20, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div style={{ background: '#fff', width: '100%', maxWidth: 860, borderRadius: 8, boxShadow: '0 2px 12px rgba(0,0,0,0.1)', padding: 24 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 6 }}>PDF Mark Viewer — Markbook</h1>
-        <p style={{ color: '#666', marginBottom: 18 }}>Pick a mark set to start reviewing.</p>
+    <div
+      style={{
+        minHeight: '100vh',
+        background: '#f5f5f5',
+        padding: 20,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+    >
+      <div
+        style={{
+          background: '#fff',
+          width: '100%',
+          maxWidth: 860,
+          borderRadius: 8,
+          boxShadow: '0 2px 12px rgba(0,0,0,0.1)',
+          padding: 24,
+        }}
+      >
+        <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 6 }}>
+          PDF Mark Viewer — Markbook
+        </h1>
+        <p style={{ color: '#666', marginBottom: 18 }}>
+          Pick a mark set to start reviewing.
+        </p>
 
         {!hasBootstrapKeys && (
           <>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 12, marginBottom: 12 }}>
-              <input placeholder="Project Name" value={projectName} onChange={e => setProjectName(e.target.value)} style={inp} />
-              <input placeholder="ID (Business ID)" value={extId} onChange={e => setExtId(e.target.value)} style={inp} />
-              <input placeholder="Part Number" value={partNumber} onChange={e => setPartNumber(e.target.value)} style={inp} />
-              <input placeholder="Your Email (optional)" value={userMail} onChange={e => setUserMail(e.target.value)} style={inp} />
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '1fr 1fr 1fr 1fr',
+                gap: 12,
+                marginBottom: 12,
+              }}
+            >
+              <input
+                placeholder="Project Name"
+                value={projectName}
+                onChange={(e) => setProjectName(e.target.value)}
+                style={inp}
+              />
+              <input
+                placeholder="ID (Business ID)"
+                value={extId}
+                onChange={(e) => setExtId(e.target.value)}
+                style={inp}
+              />
+              <input
+                placeholder="Part Number"
+                value={partNumber}
+                onChange={(e) => setPartNumber(e.target.value)}
+                style={inp}
+              />
+              <input
+                placeholder="Your Email (optional)"
+                value={userMail}
+                onChange={(e) => setUserMail(e.target.value)}
+                style={inp}
+              />
             </div>
 
             <input
               placeholder="assembly_drawing / PDF URL"
               value={assemblyDrawing}
-              onChange={e => setAssemblyDrawing(e.target.value)}
+              onChange={(e) => setAssemblyDrawing(e.target.value)}
               style={{ ...inp, width: '100%', marginBottom: 12 }}
             />
 
-            {err && <div style={{ background: '#ffebee', color: '#c62828', padding: 10, borderRadius: 4, marginBottom: 12 }}>{err}</div>}
+            {err && (
+              <div
+                style={{
+                  background: '#ffebee',
+                  color: '#c62828',
+                  padding: 10,
+                  borderRadius: 4,
+                  marginBottom: 12,
+                }}
+              >
+                {err}
+              </div>
+            )}
 
             {!boot ? (
               <button onClick={runBootstrap} disabled={loading} style={btnPrimary}>
@@ -264,28 +391,115 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
         )}
 
         {hasBootstrapKeys && !boot && (
-          <div style={{ padding: 12, borderRadius: 6, background: '#f9f9f9', border: '1px solid #eee' }}>
+          <div
+            style={{
+              padding: 12,
+              borderRadius: 6,
+              background: '#f9f9f9',
+              border: '1px solid #eee',
+            }}
+          >
             Initializing document… please wait.
           </div>
         )}
 
         {boot && (
           <>
-            {err && <div style={{ background: '#ffebee', color: '#c62828', padding: 10, borderRadius: 4, marginTop: 12 }}>{err}</div>}
+            {err && (
+              <div
+                style={{
+                  background: '#ffebee',
+                  color: '#c62828',
+                  padding: 10,
+                  borderRadius: 4,
+                  marginTop: 12,
+                }}
+              >
+                {err}
+              </div>
+            )}
 
-            {/* Master Mark Set (Pinned) */}
+            {/* Master Mark Set */}
             {masterMarkset && (
               <div style={{ marginTop: 16 }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start', marginBottom: 8 }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'flex-start',
+                    marginBottom: 8,
+                  }}
+                >
                   <div style={{ fontWeight: 600 }}>⭐ Master Mark Set</div>
                 </div>
-                <div style={{ border: '2px solid #ffc107', borderRadius: 6, padding: 12, background: '#fffde7' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div
+                  style={{
+                    border: '2px solid #ffc107',
+                    borderRadius: 6,
+                    padding: 12,
+                    background: '#fffde7',
+                  }}
+                >
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                    }}
+                  >
                     <div>
-                      <div style={{ fontWeight: 700, fontSize: 16, color: '#333' }}>{masterMarkset.label}</div>
-                      <div style={{ color: '#666', fontSize: 12 }}>{(masterMarkset.marks_count ?? 0)} marks</div>
+                      <div
+                        style={{
+                          fontWeight: 700,
+                          fontSize: 16,
+                          color: '#333',
+                        }}
+                      >
+                        {masterMarkset.label}
+                      </div>
+
+                      {masterMarkset.description && (
+                        <div
+                          style={{
+                            color: '#444',
+                            fontSize: 12,
+                            marginTop: 4,
+                            whiteSpace: 'normal',
+                            wordBreak: 'break-word',
+                          }}
+                        >
+                          {masterMarkset.description}
+                        </div>
+                      )}
+
+                      <div
+                        style={{
+                          marginTop: 6,
+                          fontSize: 12,
+                          color: '#666',
+                          display: 'flex',
+                          gap: 8,
+                          flexWrap: 'wrap',
+                        }}
+                      >
+                        <span>
+                          {(masterMarkset.marks_count ?? 0)} marks
+                        </span>
+                        {masterMarkset.created_by && (
+                          <span>• by {masterMarkset.created_by}</span>
+                        )}
+                      </div>
                     </div>
-                    <button onClick={() => handleOpenMarkset(masterMarkset.mark_set_id)} style={{ ...btn, background: '#1976d2', color: '#fff', border: 'none' }}>
+
+                    <button
+                      onClick={() => handleOpenMarkset(masterMarkset.mark_set_id)}
+                      style={{
+                        ...btn,
+                        background: '#1976d2',
+                        color: '#fff',
+                        border: 'none',
+                      }}
+                    >
                       Open
                     </button>
                   </div>
@@ -296,28 +510,104 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
             {/* Other Mark Sets */}
             {otherMarksets.length > 0 && (
               <div style={{ marginTop: 16 }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    marginBottom: 8,
+                  }}
+                >
                   <div style={{ fontWeight: 600 }}>Other Mark Sets</div>
                 </div>
-                <div style={{ display: 'grid', gap: 8, maxHeight: 320, overflowY: 'auto' }}>
-                  {otherMarksets.map(ms => (
-                    <div key={ms.mark_set_id} style={{ border: '1px solid #ddd', borderRadius: 6, padding: 10, background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <div>
-                        <div style={{ fontWeight: 600 }}>{ms.label}</div>
-                        <div style={{ color: '#666', fontSize: 12 }}>{(ms.marks_count ?? 0)} marks</div>
+                <div
+                  style={{
+                    display: 'grid',
+                    gap: 8,
+                    maxHeight: 320,
+                    overflowY: 'auto',
+                  }}
+                >
+                  {otherMarksets.map((ms) => {
+                    const count =
+                      ms.is_master
+                        ? ms.marks_count ?? 0
+                        : qcMarkCounts[ms.mark_set_id] ??
+                        ms.marks_count ??
+                        0;
+
+                    return (
+                      <div
+                        key={ms.mark_set_id}
+                        style={{
+                          border: '1px solid #ddd',
+                          borderRadius: 6,
+                          padding: 10,
+                          background: '#fff',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                        }}
+                      >
+                        <div>
+                          <div
+                            style={{ fontWeight: 600, color: '#333' }}
+                          >
+                            {ms.label}
+                          </div>
+
+                          {ms.description && (
+                            <div
+                              style={{
+                                color: '#444',
+                                fontSize: 12,
+                                marginTop: 4,
+                                whiteSpace: 'normal',
+                                wordBreak: 'break-word',
+                              }}
+                            >
+                              {ms.description}
+                            </div>
+                          )}
+
+                          <div
+                            style={{
+                              marginTop: 6,
+                              fontSize: 12,
+                              color: '#666',
+                              display: 'flex',
+                              gap: 8,
+                              flexWrap: 'wrap',
+                            }}
+                          >
+                            <span>{count} marks</span>
+                            {ms.created_by && (
+                              <span>• by {ms.created_by}</span>
+                            )}
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={() => handleOpenMarkset(ms.mark_set_id)}
+                          style={btn}
+                        >
+                          Open
+                        </button>
                       </div>
-                      <button onClick={() => handleOpenMarkset(ms.mark_set_id)} style={btn}>
-                        Open
-                      </button>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
 
-            {/* No mark sets at all */}
             {!masterMarkset && otherMarksets.length === 0 && (
-              <div style={{ marginTop: 16, textAlign: 'center', color: '#666' }}>
+              <div
+                style={{
+                  marginTop: 16,
+                  textAlign: 'center',
+                  color: '#666',
+                }}
+              >
                 No mark sets yet.
               </div>
             )}
@@ -327,6 +617,7 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
     </div>
   );
 }
+
 
 // small styles for setup
 const inp: CSSProperties = { padding: '10px 12px', border: '1px solid #ddd', borderRadius: 4, fontSize: 14, outline: 'none' };
@@ -368,6 +659,11 @@ function ViewerContent() {
   const [entries, setEntries] = useState<Record<string, string>>({});
   const [showReview, setShowReview] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+    // Markset meta + grouping for QC flows
+  const [isMasterMarkSet, setIsMasterMarkSet] = useState<boolean | null>(null);
+  const [groupWindows, setGroupWindows] = useState<GroupWindowMeta[] | null>(null);
+  const [markToGroupIndex, setMarkToGroupIndex] = useState<number[]>([]);
+
   // Refs used by the viewer and smooth zoom
   const containerRef = useRef<HTMLDivElement>(null);
   const pageHeightsRef = useRef<number[]>([]);
@@ -710,48 +1006,201 @@ function ViewerContent() {
       });
   }, [pdfUrl, showSetup]);
 
-  // Load marks
+  // Load marks (MASTER vs QC, group-wise for QC)
   useEffect(() => {
     if (showSetup) return;
 
+    // Demo
     if (isDemo) {
       setMarks(demoMarks);
+      setIsMasterMarkSet(null);
+      setGroupWindows(null);
+      setMarkToGroupIndex([]);
       return;
     }
 
+    // No markset -> reset
     if (!markSetId) {
       setMarks([]);
+      setEntries({});
+      setIsMasterMarkSet(null);
+      setGroupWindows(null);
+      setMarkToGroupIndex([]);
       setIsMobileInputMode(false);
       return;
     }
 
-    fetch(`${apiBase}/mark-sets/${markSetId}/marks`)
-      .then((res) => {
-        if (!res.ok) throw new Error('Failed to fetch marks');
-        return res.json();
-      })
-      .then((data: Mark[]) => {
-        const sorted = [...data].sort((a, b) => a.order_index - b.order_index);
+    const loadMarks = async () => {
+      try {
+        // ---------- 1) Figure out if this mark set is MASTER or QC ----------
+        let markSetMeta: any | null = null;
+
+        if (qProject && qExtId && qPartNumber) {
+          const qs = new URLSearchParams({
+            project_name: qProject,
+            id: qExtId,
+            part_number: qPartNumber,
+          });
+          if (qUser) qs.set('user_mail', qUser);
+
+          const metaRes = await fetch(`${apiBase}/documents/by-identifier?${qs.toString()}`);
+          if (metaRes.ok) {
+            const meta = await metaRes.json();
+            const msets: any[] = meta.mark_sets || [];
+            markSetMeta = msets.find((m) => m.mark_set_id === markSetId) || null;
+          } else {
+            console.warn('by-identifier failed, falling back to legacy marks loader');
+          }
+        }
+
+        // ========== MASTER MARKSET (old behaviour) ==========
+        if (markSetMeta && markSetMeta.is_master) {
+          setIsMasterMarkSet(true);
+          setGroupWindows(null);
+          setMarkToGroupIndex([]);
+
+          const res = await fetch(`${apiBase}/mark-sets/${markSetId}/marks`);
+          if (!res.ok) throw new Error('Failed to fetch master marks');
+          const marksData: Mark[] = await res.json();
+
+          const sorted = [...marksData].sort((a, b) => a.order_index - b.order_index);
+          setMarks(sorted);
+
+          const initialEntries: Record<string, string> = {};
+          sorted.forEach((mark) => {
+            if (mark.mark_id) initialEntries[mark.mark_id] = '';
+          });
+          setEntries(initialEntries);
+
+          const isMobile =
+            sorted.length > 0 &&
+            (window.innerWidth < 900 ||
+              ('ontouchstart' in window && window.innerWidth < 1024));
+          setIsMobileInputMode(isMobile);
+          return;
+        }
+
+        // ========== QC MARKSET: group-wise, instrument-sorted ==========
+        if (markSetMeta && !markSetMeta.is_master) {
+          setIsMasterMarkSet(false);
+
+          const res = await fetch(`${apiBase}/viewer/groups/${markSetId}`);
+          if (!res.ok) throw new Error('Failed to fetch QC groups');
+
+          const wrapper = await res.json();
+          const groups: any[] = wrapper.groups || [];
+
+          const orderedMarks: Mark[] = [];
+          const groupMeta: GroupWindowMeta[] = [];
+          const groupIndexForMark: number[] = [];
+
+          groups.forEach((g, gi) => {
+            const gm = ((g.marks || []) as any[]).slice();
+            if (!gm.length) return;
+
+            // Sort marks INSIDE the group by instrument, then by order_index
+            gm.sort((a: any, b: any) => {
+              const ai = (a.instrument || '').toLowerCase();
+              const bi = (b.instrument || '').toLowerCase();
+              if (ai && bi && ai !== bi) return ai.localeCompare(bi);
+              return (a.order_index ?? 0) - (b.order_index ?? 0);
+            });
+
+            const startIndex = orderedMarks.length;
+
+            gm.forEach((m: any) => {
+              const cloned: Mark = { ...m };
+              cloned.order_index = orderedMarks.length; // global order index
+              orderedMarks.push(cloned);
+              groupIndexForMark.push(gi);
+            });
+
+            const endIndex = orderedMarks.length - 1;
+            if (startIndex > endIndex) return;
+
+            // If group has its own bbox, use it; else derive from marks
+            const pageIndex =
+              g.page_index ??
+              (gm[0]?.page_index ?? 0);
+
+            const nxVals = gm.map((m: any) => m.nx ?? 0);
+            const nyVals = gm.map((m: any) => m.ny ?? 0);
+            const x2Vals = gm.map((m: any) => (m.nx ?? 0) + (m.nw ?? 0));
+            const y2Vals = gm.map((m: any) => (m.ny ?? 0) + (m.nh ?? 0));
+
+            const minNx = g.nx ?? Math.min(...nxVals);
+            const minNy = g.ny ?? Math.min(...nyVals);
+            const maxNx = g.nw ? minNx + g.nw : Math.max(...x2Vals);
+            const maxNy = g.nh ? minNy + g.nh : Math.max(...y2Vals);
+
+            groupMeta.push({
+              group_id: String(g.group_id ?? gi),
+              name: g.name || `Group ${gi + 1}`,
+              startIndex,
+              endIndex,
+              page_index: pageIndex,
+              nx: minNx,
+              ny: minNy,
+              nw: Math.max(0.01, maxNx - minNx),
+              nh: Math.max(0.01, maxNy - minNy),
+            });
+          });
+
+          setMarks(orderedMarks);
+          setGroupWindows(groupMeta);
+          setMarkToGroupIndex(groupIndexForMark);
+
+          const initialEntries: Record<string, string> = {};
+          orderedMarks.forEach((mark) => {
+            if (mark.mark_id) initialEntries[mark.mark_id] = '';
+          });
+          setEntries(initialEntries);
+
+          const isMobile =
+            orderedMarks.length > 0 &&
+            (window.innerWidth < 900 ||
+              ('ontouchstart' in window && window.innerWidth < 1024));
+          setIsMobileInputMode(isMobile);
+          return;
+        }
+
+        // ========== Unknown meta → legacy fallback ==========
+        setIsMasterMarkSet(null);
+        setGroupWindows(null);
+        setMarkToGroupIndex([]);
+
+        const res = await fetch(`${apiBase}/mark-sets/${markSetId}/marks`);
+        if (!res.ok) throw new Error('Failed to fetch marks (fallback)');
+        const marksData: Mark[] = await res.json();
+
+        const sorted = [...marksData].sort((a, b) => a.order_index - b.order_index);
         setMarks(sorted);
 
         const initialEntries: Record<string, string> = {};
-        sorted.forEach(mark => {
-          if (mark.mark_id) {
-            initialEntries[mark.mark_id] = '';
-          }
+        sorted.forEach((mark) => {
+          if (mark.mark_id) initialEntries[mark.mark_id] = '';
         });
         setEntries(initialEntries);
 
-        // Force mobile mode if marks exist AND screen is narrow
-        const isMobile = window.innerWidth < 900 || ('ontouchstart' in window && window.innerWidth < 1024);
+        const isMobile =
+          sorted.length > 0 &&
+          (window.innerWidth < 900 ||
+            ('ontouchstart' in window && window.innerWidth < 1024));
         setIsMobileInputMode(isMobile);
-      })
-      .catch((err) => {
+      } catch (err) {
         console.error('Marks fetch error:', err);
         setMarks([]);
+        setEntries({});
         setIsMobileInputMode(false);
-      });
-  }, [markSetId, isDemo, showSetup, apiBase]);
+        setIsMasterMarkSet(null);
+        setGroupWindows(null);
+        setMarkToGroupIndex([]);
+      }
+    };
+
+    loadMarks();
+  }, [markSetId, isDemo, showSetup, apiBase, qProject, qExtId, qPartNumber, qUser]);
+
   useEffect(() => {
     if (marks.length > 0 && pdf && currentMarkIndex === 0) {
       const timer = setTimeout(() => {
@@ -819,56 +1268,133 @@ function ViewerContent() {
       if (!pdf || index < 0 || index >= marks.length) return;
 
       const mark = marks[index];
-      setCurrentMarkIndex(index);
-
       const pageNumber = mark.page_index + 1;
       const container = containerRef.current;
       const pageEl = pageElsRef.current[mark.page_index];
       if (!container || !pageEl) return;
 
-      // Use precomputed base size (scale=1) — no getPage here
       const base = basePageSizeRef.current[mark.page_index];
       if (!base) return;
-
-      // Rect at scale=1
-      const rectAt1 = {
-        x: mark.nx * base.w,
-        y: mark.ny * base.h,
-        w: mark.nw * base.w,
-        h: mark.nh * base.h,
-      };
 
       const containerW = container.clientWidth;
       const containerH = container.clientHeight;
 
-      let targetZoom = Math.min((containerW * 0.8) / rectAt1.w, (containerH * 0.8) / rectAt1.h);
-      targetZoom = Math.min(targetZoom, 4);
-      if (containerW < 600) targetZoom = Math.min(targetZoom, 3);
+      const isMaster = isMasterMarkSet === true || isMasterMarkSet === null;
 
-      const qZoom = setZoomQ(targetZoom, zoomRef);
+      // ---------- MASTER / UNKNOWN → old mark-wise auto zoom ----------
+      if (isMaster || !groupWindows || markToGroupIndex[index] == null || markToGroupIndex[index] < 0) {
+        // Rect at scale=1
+        const rectAt1 = {
+          x: mark.nx * base.w,
+          y: mark.ny * base.h,
+          w: mark.nw * base.w,
+          h: mark.nh * base.h,
+        };
 
-      // Rect directly at qZoom (no layout wait)
-      const rectAtZ = {
-        x: mark.nx * base.w * qZoom,
-        y: mark.ny * base.h * qZoom,
-        w: mark.nw * base.w * qZoom,
-        h: mark.nh * base.h * qZoom,
+        let targetZoom = Math.min(
+          (containerW * 0.8) / rectAt1.w,
+          (containerH * 0.8) / rectAt1.h
+        );
+        targetZoom = Math.min(targetZoom, 4);
+        if (containerW < 600) targetZoom = Math.min(targetZoom, 3);
+
+        const qZoom = setZoomQ(targetZoom, zoomRef);
+
+        const rectAtZ = {
+          x: mark.nx * base.w * qZoom,
+          y: mark.ny * base.h * qZoom,
+          w: mark.nw * base.w * qZoom,
+          h: mark.nh * base.h * qZoom,
+        };
+
+        setFlashRect({ pageNumber, ...rectAtZ });
+        setTimeout(() => setFlashRect(null), 1200);
+        const keepAliveRect = { pageNumber, ...rectAtZ };
+        setSelectedRect(keepAliveRect);
+        setTimeout(() => setSelectedRect(keepAliveRect), 1250);
+
+        requestAnimationFrame(async () => {
+          const expectedW = base.w * qZoom;
+          const expectedH = base.h * qZoom;
+
+          await waitForCanvasLayout(pageEl, expectedW, expectedH, 1500);
+
+          const containerRect = container.getBoundingClientRect();
+          const pageRect = pageEl.getBoundingClientRect();
+
+          const pageOffsetLeft = container.scrollLeft + (pageRect.left - containerRect.left);
+          const pageOffsetTop = container.scrollTop + (pageRect.top - containerRect.top);
+
+          const markCenterX = pageOffsetLeft + rectAtZ.x + rectAtZ.w / 2;
+          const markCenterY = pageOffsetTop + rectAtZ.y + rectAtZ.h / 2;
+
+          const targetScrollLeft = markCenterX - containerW / 2;
+          const targetScrollTop = markCenterY - containerH / 2;
+
+          const { left: clampedL, top: clampedT } = clampScroll(
+            container,
+            targetScrollLeft,
+            targetScrollTop
+          );
+
+          container.scrollTo({ left: clampedL, top: clampedT, behavior: 'smooth' });
+        });
+
+        setCurrentMarkIndex(index);
+        return;
+      }
+
+      // ---------- QC FLOW: group-wise vertical fit ----------
+      const gi = markToGroupIndex[index];
+      const gMeta = groupWindows[gi];
+      const groupBase = basePageSizeRef.current[gMeta.page_index];
+      if (!groupBase) {
+        setCurrentMarkIndex(index);
+        return;
+      }
+
+      // Group rect at scale=1 (normalized → px)
+      const groupRectAt1 = {
+        x: gMeta.nx * groupBase.w,
+        y: gMeta.ny * groupBase.h,
+        w: gMeta.nw * groupBase.w,
+        h: gMeta.nh * groupBase.h,
       };
 
-      // Flash + persistent outline
+      const prevIdx = currentMarkIndex;
+      const prevGroupIdx =
+        prevIdx >= 0 && prevIdx < marks.length && markToGroupIndex[prevIdx] != null
+          ? markToGroupIndex[prevIdx]
+          : gi;
+
+      const groupChanged = gi !== prevGroupIdx;
+
+      // Only recompute zoom when changing groups; otherwise keep existing zoom
+      let targetZoom = zoomRef.current || 1.0;
+      if (groupChanged || !zoomRef.current) {
+        const rawZoom = (containerH * 0.8) / (groupRectAt1.h || 1);
+        targetZoom = setZoomQ(rawZoom, zoomRef);
+      }
+
+      // Rect for this mark at current group zoom
+      const baseForMark = groupBase; // assume same page; if not, this still behaves reasonably
+      const rectAtZ = {
+        x: mark.nx * baseForMark.w * targetZoom,
+        y: mark.ny * baseForMark.h * targetZoom,
+        w: mark.nw * baseForMark.w * targetZoom,
+        h: mark.nh * baseForMark.h * targetZoom,
+      };
+
       setFlashRect({ pageNumber, ...rectAtZ });
       setTimeout(() => setFlashRect(null), 1200);
       const keepAliveRect = { pageNumber, ...rectAtZ };
       setSelectedRect(keepAliveRect);
       setTimeout(() => setSelectedRect(keepAliveRect), 1250);
 
-      // Center after next frame, but ensure the canvas layout has settled (important for far jumps)
       requestAnimationFrame(async () => {
-        const base = basePageSizeRef.current[mark.page_index];
-        const expectedW = base.w * qZoom;
-        const expectedH = base.h * qZoom;
+        const expectedW = baseForMark.w * targetZoom;
+        const expectedH = baseForMark.h * targetZoom;
 
-        // ✅ wait for canvas to actually reach expected dimensions
         await waitForCanvasLayout(pageEl, expectedW, expectedH, 1500);
 
         const containerRect = container.getBoundingClientRect();
@@ -883,15 +1409,20 @@ function ViewerContent() {
         const targetScrollLeft = markCenterX - containerW / 2;
         const targetScrollTop = markCenterY - containerH / 2;
 
-        const { left: clampedL, top: clampedT } = clampScroll(container, targetScrollLeft, targetScrollTop);
+        const { left: clampedL, top: clampedT } = clampScroll(
+          container,
+          targetScrollLeft,
+          targetScrollTop
+        );
 
-        // ✅ do a guaranteed smooth scroll now that layout is stable
         container.scrollTo({ left: clampedL, top: clampedT, behavior: 'smooth' });
       });
 
+      setCurrentMarkIndex(index);
     },
-    [marks, pdf]
+    [marks, pdf, isMasterMarkSet, groupWindows, markToGroupIndex, currentMarkIndex]
   );
+
 
 
   useEffect(() => {
@@ -986,7 +1517,7 @@ function ViewerContent() {
     }
   }, [currentMarkIndex, marks]);
 
-   const handleSubmit = useCallback(async () => {
+  const handleSubmit = useCallback(async () => {
     if (!markSetId) {
       toast.error('No mark set ID provided');
       return;
@@ -1362,16 +1893,22 @@ function ViewerContent() {
             onClose={() => setSidebarOpen(false)}
             title="Marks"
           >
-            <MarkList
+                       <MarkList
               marks={marks}
               currentIndex={currentMarkIndex}
               entries={entries}
+              groupsMeta={
+                isMasterMarkSet === false && groupWindows
+                  ? groupWindows
+                  : undefined
+              }
               onSelect={(index) => {
                 setCurrentMarkIndex(index);
                 setSidebarOpen(false);
                 setTimeout(() => selectFromList(index), 80);
               }}
             />
+
 
           </SlideSidebar>
 
@@ -1508,12 +2045,18 @@ function ViewerContent() {
             marks={marks}
             currentIndex={currentMarkIndex}
             entries={entries}
+            groupsMeta={
+              isMasterMarkSet === false && groupWindows
+                ? groupWindows
+                : undefined
+            }
             onSelect={(index) => {
               setCurrentMarkIndex(index);
               setSidebarOpen(false);
               setTimeout(() => selectFromList(index), 80);
             }}
           />
+
         </SlideSidebar>
       )}
 

@@ -13,6 +13,7 @@ type Mark = {
   nh: number;
   zoom_hint?: number | null;
   label?: string;
+  instrument?: string;   // 👈 add this
 };
 
 type InputPanelProps = {
@@ -95,7 +96,9 @@ export default function InputPanel({
     );
   }
 
-  const displayLabel = currentMark.label?.trim() || indexToLabel(currentIndex);
+  const headingText = currentMark.instrument?.trim() || currentMark.name;
+  // 👇 FIX: define displayLabel (prefer mark.label, fallback to A/B/C… from index)
+  const displayLabel = currentMark.label ?? indexToLabel(currentIndex);
 
   return (
     <div
@@ -166,7 +169,7 @@ export default function InputPanel({
             textAlign: 'left',
           }}
         >
-          {currentMark.name}
+          {headingText}
         </div>
 
         <div style={{ fontSize: 12, opacity: 0.9, whiteSpace: 'nowrap', justifySelf: 'end' }}>
