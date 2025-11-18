@@ -13,10 +13,8 @@ type Mark = {
   nh: number;
   zoom_hint?: number | null;
   label?: string;
-  instrument?: string;   // 👈 add this
+  instrument?: string;
 };
-
-
 
 type MarkListProps = {
   marks: Mark[];
@@ -41,7 +39,7 @@ export default function MarkList({
   const [searchQuery, setSearchQuery] = useState('');
   const listRef = useRef<HTMLDivElement>(null);
 
-  // index lookup to avoid findIndex on every render
+  // index lookup (kept in case you reuse later)
   const indexById = useMemo(() => {
     const map: Record<string, number> = {};
     marks.forEach((m, idx) => {
@@ -50,7 +48,7 @@ export default function MarkList({
     return map;
   }, [marks]);
 
-  // DSA-wise: build a boolean mask once
+  // Build filter mask once per change
   const { filteredMask, filteredCount } = useMemo(() => {
     const mask: boolean[] = new Array(marks.length).fill(true);
     if (!searchQuery.trim()) {
@@ -59,37 +57,57 @@ export default function MarkList({
 
     const q = searchQuery.toLowerCase();
     let count = 0;
+
     marks.forEach((m, idx) => {
+      const name = (m.name || '').toLowerCase();
+      const label = (m.label || '').toLowerCase();
+      const instrument = (m.instrument || '').toLowerCase();
+      const pageStr = `page ${m.page_index + 1}`.toLowerCase();
+
       const match =
-        m.name.toLowerCase().includes(q) ||
-        (m.label?.toLowerCase() ?? '').includes(q) ||
-        (m.instrument?.toLowerCase() ?? '').includes(q) ||
-        `page ${m.page_index + 1}`.includes(q);
+        name.includes(q) ||
+        label.includes(q) ||
+        instrument.includes(q) ||
+        pageStr.includes(q);
 
       mask[idx] = match;
       if (match) count++;
     });
+
     return { filteredMask: mask, filteredCount: count };
   }, [marks, searchQuery]);
 
-  // Auto-scroll to the active item
+  // Auto-scroll to active mark
   useEffect(() => {
     const el = listRef.current?.querySelector('.mark-item.active') as HTMLElement | null;
-    if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    if (el) {
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
   }, [currentIndex, marks.length, searchQuery]);
 
   const handleClearSearch = () => setSearchQuery('');
 
-
   return (
-    <div className="mark-list" ref={listRef}>
-          {/* Sticky search directly under the sidebar header (no top gap) */}
+        <div
+      className="mark-list"
+      ref={listRef}
+      // Make this the scroll container so sticky header works
+      style={{
+        height: '100%',
+        maxHeight: '100%',
+        overflowY: 'auto',
+        WebkitOverflowScrolling: 'touch',
+        background: '#fff',
+        padding: 0,              // 👈 override global .mark-list padding
+      }}
+    >
+      {/* Sticky search area */}
       <div
         style={{
           position: 'sticky',
-          top: 0,                 // sits at the very top of the scroll area
+          top: 0,
           zIndex: 3,
-          padding: '0 12px 8px',  // 👈 top padding = 0 so it touches the header
+          padding: '0 12px 8px',
           borderBottom: '1px solid #eee',
           background: '#fff',
         }}
@@ -109,8 +127,12 @@ export default function MarkList({
               outline: 'none',
               background: '#fff',
             }}
-            onFocus={(e) => { e.currentTarget.style.borderColor = '#1976d2'; }}
-            onBlur={(e) => { e.currentTarget.style.borderColor = '#ddd'; }}
+            onFocus={(e) => {
+              e.currentTarget.style.borderColor = '#1976d2';
+            }}
+            onBlur={(e) => {
+              e.currentTarget.style.borderColor = '#ddd';
+            }}
           />
           {searchQuery && (
             <button
@@ -140,7 +162,7 @@ export default function MarkList({
           )}
         </div>
 
-               <div style={{ fontSize: 12, color: '#666', marginTop: 8, fontWeight: 500 }}>
+        <div style={{ fontSize: 12, color: '#666', marginTop: 8, fontWeight: 500 }}>
           {searchQuery ? (
             <>
               <span style={{ color: '#1976d2' }}>{filteredCount}</span> of {marks.length} marks
@@ -151,10 +173,8 @@ export default function MarkList({
         </div>
       </div>
 
-
-      {/* Mark List */}
+      {/* List items */}
       <div className="mark-list-items">
-        {/* Helper to render a single mark button */}
         {(() => {
           const renderMarkItem = (mark: Mark, originalIndex: number) => {
             const isActive = originalIndex === currentIndex;
@@ -175,7 +195,9 @@ export default function MarkList({
                   background: isActive ? '#E3F2FD' : '#FFFFFF',
                   border: isActive
                     ? '2px solid #1976d2'
-                    : (isFilled ? '1.5px solid #c5e1a5' : '1.5px solid #E0E0E0'),
+                    : isFilled
+                    ? '1.5px solid #c5e1a5'
+                    : '1.5px solid #E0E0E0',
                   boxShadow: 'none',
                   cursor: 'pointer',
                   transition:
@@ -192,7 +214,7 @@ export default function MarkList({
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  {/* Left: label bubble (A/B/…) */}
+                  {/* Label bubble */}
                   <div
                     style={{
                       minWidth: 24,
@@ -213,7 +235,7 @@ export default function MarkList({
                     {mark.label ?? '–'}
                   </div>
 
-                  {/* Middle: instrument/name & page */}
+                  {/* Text */}
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div
                       style={{
@@ -234,7 +256,7 @@ export default function MarkList({
                     </div>
                   </div>
 
-                  {/* Right: status circle */}
+                  {/* Status circle */}
                   <div
                     title={isFilled ? 'Done' : 'Pending'}
                     style={{
@@ -258,7 +280,7 @@ export default function MarkList({
             );
           };
 
-          // If we have group metadata -> render grouped
+          // Grouped list
           if (groupsMeta && groupsMeta.length > 0) {
             let anyVisible = false;
 
@@ -267,11 +289,10 @@ export default function MarkList({
               const items: JSX.Element[] = [];
 
               for (let i = g.startIndex; i <= g.endIndex; i++) {
-                if (!filteredMask[i]) continue; // filtered out by search
+                if (!filteredMask[i]) continue;
                 groupHasAny = true;
                 anyVisible = true;
-                const mark = marks[i];
-                items.push(renderMarkItem(mark, i));
+                items.push(renderMarkItem(marks[i], i));
               }
 
               if (!groupHasAny) return null;
@@ -326,7 +347,7 @@ export default function MarkList({
             return groupBlocks;
           }
 
-          // Fallback: flat list
+          // Flat list
           const flatItems: JSX.Element[] = [];
           marks.forEach((mark, idx) => {
             if (!filteredMask[idx]) return;

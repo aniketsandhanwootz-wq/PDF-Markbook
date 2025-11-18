@@ -244,7 +244,8 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
     }
   }, [hasBootstrapKeys]);
 
-  // 👉 NEW: for each QC markset, fetch groups and compute unique mark ids
+  // 👉 For each QC markset, fetch groups and compute TOTAL mark steps
+  //     (no de-duplication) so this matches what the viewer/HUD sees.
   useEffect(() => {
     if (!boot) return;
 
@@ -267,15 +268,14 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
 
             const data = await res.json();
             const groups: any[] = data.groups || [];
-            const ids = new Set<string>();
 
+            // count ALL marks in all groups (steps in the viewer)
+            let total = 0;
             for (const g of groups) {
-              for (const m of (g.marks || []) as any[]) {
-                if (m.mark_id) ids.add(String(m.mark_id));
-              }
+              total += (g.marks || []).length;
             }
 
-            result[ms.mark_set_id] = ids.size;
+            result[ms.mark_set_id] = total;
           } catch (e) {
             console.warn('Failed to compute QC mark count for', ms.mark_set_id, e);
           }

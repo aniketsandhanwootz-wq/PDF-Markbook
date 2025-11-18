@@ -96,21 +96,33 @@ export default function SlideSidebar({
           <h3 style={{ margin: 0, fontSize: 18 }}>{title}</h3>
         </div>
 
-        {/* Body — NO TOP PADDING so search sits flush, and kill first-child margins */}
-                <div
+ 
+         {/* Body — dedicated scroll area so search stays, list scrolls */}
+        <div
           style={{
             flex: 1,
-            overflowY: 'auto',
-            paddingTop: 0,                 // no gap under the header
+            overflow: 'hidden',          // outer body doesn't scroll
+            paddingTop: 0,
             paddingBottom: 12,
             paddingLeft: 12,
             paddingRight: 12,
-            WebkitOverflowScrolling: 'touch',
+            display: 'flex',
+            flexDirection: 'column',
           }}
         >
-          {/* Wrapper prevents margin-collapsing of the first child (e.g., search box) */}
-          <div style={{ marginTop: 0 }}>{children}</div>
+          {/* This inner div is the scroll container */}
+          <div
+            style={{
+              flex: 1,
+              overflowY: 'auto',
+              WebkitOverflowScrolling: 'touch',
+              marginTop: 0,
+            }}
+          >
+            {children}
+          </div>
         </div>
+
       </aside>
     </>
   );
