@@ -18,48 +18,6 @@ import { bootstrapPagesForDoc } from '../lib/pagesApi';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 // Clean nested Cloudinary URLs
-// Clean nested Cloudinary URLs - DEBUG VERSION
-// Clean nested Cloudinary / Glide URLs into a real GCS PDF URL
-function cleanPdfUrl(url: string): string {
-  console.log('🔍 [cleanPdfUrl] INPUT:', url);
-
-  if (!url) {
-    console.log('❌ [cleanPdfUrl] Empty URL');
-    return url;
-  }
-
-  let decoded = url;
-  try {
-    // Peel multiple layers of % encoding, but stop if nothing changes
-    for (let i = 0; i < 5; i++) {
-      const next = decodeURIComponent(decoded);
-      if (next === decoded) break;
-      decoded = next;
-      console.log(`🔄 [cleanPdfUrl] decode #${i + 1}:`, decoded.slice(0, 140) + '...');
-    }
-  } catch (e) {
-    console.warn('⚠️ [cleanPdfUrl] decode failed, using original');
-    decoded = url;
-  }
-
-  // Look for the first occurrence of a storage.googleapis.com PDF
-  const lower = decoded.toLowerCase();
-  const needle = 'https://storage.googleapis.com/';
-  const idx = lower.indexOf(needle);
-  if (idx !== -1) {
-    // Take chars from that index until a whitespace or delimiter
-    const tail = decoded.slice(idx);
-    const end = tail.search(/[\s"'<>)]/);
-    const raw = (end === -1 ? tail : tail.slice(0, end)).trim();
-
-    const cleaned = raw.replace(/ /g, '%20');
-    console.log('✅ [cleanPdfUrl] OUTPUT:', cleaned);
-    return cleaned;
-  }
-
-  console.log('⚠️ [cleanPdfUrl] No GCS PDF found, returning original');
-  return url;
-}
 
 
 type Mark = {
@@ -769,11 +727,14 @@ function EditorContent() {
   }, [isDemo, pdfUrlParam, urlMarkSetId]);
 
   const handleSetupComplete = (url: string, setId: string, isMaster: boolean) => {
-    // Clean URL one more time before adding to query params
-    const finalUrl = cleanPdfUrl(url);
-    const newUrl = `${window.location.pathname}?pdf_url=${encodeURIComponent(finalUrl)}&mark_set_id=${setId}&is_master=${isMaster ? '1' : '0'}`;
+    // URL is already a direct PDF link, just pass it through
+    const finalUrl = url;
+    const newUrl = `${window.location.pathname}?pdf_url=${encodeURIComponent(
+      finalUrl
+    )}&mark_set_id=${setId}&is_master=${isMaster ? '1' : '0'}`;
     window.location.href = newUrl;
   };
+
 
   const demoMarks: Mark[] = [
     {
@@ -846,7 +807,7 @@ function EditorContent() {
           setLoading(false);
         });
     } else {
-      const targetPdfUrl = cleanPdfUrl(pdfUrlParam);
+      const targetPdfUrl = pdfUrlParam; // already a direct PDF URL
       const apiBase =
         process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
       const proxiedUrl = `${apiBase}/proxy-pdf?url=${encodeURIComponent(
