@@ -343,20 +343,20 @@ async def init_document(
                 "page_count": doc.page_count,
                 "master_editors": (doc_raw.get("master_editors") or "").strip(),
             },
-            "mark_sets": [
-                {
-                    "mark_set_id": ms.mark_set_id,
-                    "label": ms.label,
-                    "is_master": ms.is_master,
-                    "is_active": ms.is_active,
-                    "created_by": ms.created_by or "",
-                    "created_at": ms.created_at or "",
-                    "updated_by": ms.updated_by or "",
-                    "marks_count": counts.get(ms.mark_set_id, 0),
-                    "description": getattr(ms, "description", None) or "",
-                }
-                for ms in mark_set_models
-            ],
+        "mark_sets": [
+            {
+                "mark_set_id": ms.mark_set_id,
+                "label": ms.label,
+                "is_master": ms.is_master,
+                "is_active": ms.is_active,
+                "created_by": ms.created_by or "",
+                "created_at": ms.created_at or "",
+                "updated_by": ms.updated_by or "",
+                "marks_count": counts.get(ms.mark_set_id, 0),
+                "description": getattr(ms, "description", None) or "",
+            }
+            for ms in mark_set_models
+        ],
 
             "master_mark_set_id": master_id,
             "mark_set_count": len(mark_set_models),

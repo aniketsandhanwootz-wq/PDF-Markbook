@@ -630,12 +630,9 @@ async def proxy_pdf(url: str):
         raise HTTPException(status_code=500, detail=f"Proxy error: {str(e)}")
 
 # ========== End of PDF Proxy ==========
-# ========== End of PDF Proxy ==========
-
 # ========== NEW: Submissions Endpoint ==========
 
 from pydantic import BaseModel as PydanticBaseModel
-
 class SubmissionEntry(PydanticBaseModel):
     """Single entry in a submission"""
     mark_id: str
