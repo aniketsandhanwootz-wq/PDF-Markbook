@@ -60,28 +60,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-import re
-import urllib.parse
-def clean_pdf_url(url: str) -> str:
-    """Extract Google Storage URL from nested Cloudinary URLs"""
-    if not url or 'cloudinary.com' not in url:
-        return url
-    
-    decoded = url
-    try:
-        for _ in range(5):
-            prev = decoded
-            decoded = urllib.parse.unquote(decoded)
-            if decoded == prev:
-                break
-    except:
-        decoded = url
-    
-    match = re.search(r'https://storage\.googleapis\.com/[^\s"\'<>)]+\.pdf', decoded, re.IGNORECASE)
-    if match:
-        return match.group(0).replace(' ', '%20')
-    
-    return url
+
 # ============================================================================
 # BACKEND CONFIGURATION
 # ============================================================================
@@ -562,15 +541,15 @@ async def root():
 async def proxy_pdf(url: str):
     """
     Proxy PDF files to avoid CORS issues.
-    Supports Google Drive, ArXiv, nested Cloudinary/Glide URLs, etc.
+
+    Assumes the frontend already passes a clean, direct PDF URL
+    (typically a GCS link). Still supports Google Drive file URLs.
     """
     try:
         original_url = url
-        # 🔹 Clean nested Cloudinary / Glide → direct GCS PDF if possible
-        url = clean_pdf_url(url)
-        logger.info(f"[proxy-pdf] cleaned URL: {url} (from {original_url})")
+        logger.info(f"[proxy-pdf] incoming URL: {original_url}")
 
-        # Convert Google Drive URLs to direct download format
+        # 🔹 Convert Google Drive URLs to direct download format (still useful)
         if "drive.google.com" in url:
             # Extract file ID from various Google Drive URL formats
             if "/file/d/" in url:
@@ -580,54 +559,63 @@ async def proxy_pdf(url: str):
             elif "/folders/" in url:
                 # ERROR: User provided a folder URL instead of file URL
                 raise HTTPException(
-                    status_code=400, 
-                    detail="❌ This is a Google Drive FOLDER URL. Please provide a FILE URL instead. Right-click the file → 'Get link' → Use that URL."
+                    status_code=400,
+                    detail="❌ This is a Google Drive FOLDER URL. Please provide a FILE URL instead. "
+                           "Right-click the file → 'Get link' → use that URL."
                 )
             else:
-                raise HTTPException(status_code=400, detail="Invalid Google Drive URL format. Please use a direct file link.")
-            
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid Google Drive URL format. Please use a direct file link.",
+                )
+
             # Use direct download URL
             url = f"https://drive.google.com/uc?export=download&id={file_id}"
-            logger.info(f"Converted Google Drive URL to: {url}")
-        
-        # Fetch PDF with timeout
+            logger.info(f"[proxy-pdf] converted Google Drive URL to: {url}")
+
+        # 🔹 Fetch PDF with timeout
         async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
             response = await client.get(url)
-            
+
             if response.status_code != 200:
-                logger.error(f"Failed to fetch PDF: {response.status_code}")
+                logger.error(f"[proxy-pdf] failed to fetch PDF: HTTP {response.status_code}")
                 raise HTTPException(
                     status_code=response.status_code,
-                    detail=f"Failed to fetch PDF: HTTP {response.status_code}"
+                    detail=f"Failed to fetch PDF: HTTP {response.status_code}",
                 )
-            
-            # Check if response is actually a PDF
+
+            # Content-type sanity check (not strict)
             content_type = response.headers.get("content-type", "")
             if "pdf" not in content_type.lower() and "octet-stream" not in content_type.lower():
-                logger.warning(f"URL returned non-PDF content: {content_type}")
-                # Still try to serve it, might be a PDF without correct headers
-            
-            logger.info(f"Successfully proxied PDF from {url} ({len(response.content)} bytes)")
-            
+                logger.warning(f"[proxy-pdf] URL returned non-PDF content-type: {content_type}")
+
+            logger.info(
+                f"[proxy-pdf] successfully proxied PDF from {url} "
+                f"({len(response.content)} bytes)"
+            )
+
             return StreamingResponse(
                 iter([response.content]),
                 media_type="application/pdf",
                 headers={
                     "Access-Control-Allow-Origin": "*",
                     "Cache-Control": "public, max-age=3600",
-                    "Content-Length": str(len(response.content))
-                }
+                    "Content-Length": str(len(response.content)),
+                },
             )
-    
+
     except httpx.TimeoutException:
-        logger.error(f"Timeout fetching PDF: {url}")
+        logger.error(f"[proxy-pdf] timeout fetching PDF: {url}")
         raise HTTPException(status_code=504, detail="PDF fetch timeout")
     except httpx.RequestError as e:
-        logger.error(f"Error fetching PDF: {str(e)}")
-        raise HTTPException(status_code=502, detail=f"Failed to fetch PDF: {str(e)}")
+        logger.error(f"[proxy-pdf] request error fetching PDF: {e}")
+        raise HTTPException(status_code=502, detail=f"Failed to fetch PDF: {e}")
+    except HTTPException:
+        # Let explicit HTTPException bubble up as-is
+        raise
     except Exception as e:
-        logger.error(f"Unexpected error proxying PDF: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Proxy error: {str(e)}")
+        logger.error(f"[proxy-pdf] unexpected error: {e}")
+        raise HTTPException(status_code=500, detail=f"Proxy error: {e}")
 
 # ========== End of PDF Proxy ==========
 # ========== NEW: Submissions Endpoint ==========

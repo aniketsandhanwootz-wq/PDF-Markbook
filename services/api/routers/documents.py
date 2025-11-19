@@ -5,7 +5,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from typing import Annotated, Optional, Dict, Any, List
 from pydantic import BaseModel, Field
 
-from main import clean_pdf_url
+# clean_pdf_url removed from backend; viewer now sends clean URL directly.
+def clean_pdf_url(url: str) -> str:
+    return url   # passthrough
 from main import get_storage_adapter  # DI helper from main
 from models import Document, MarkSet
 from models.converters import document_from_sheets, markset_from_sheets
@@ -264,18 +266,17 @@ async def init_document(
 
         if not doc_raw:
             # 2) Resolve/clean the PDF URL to store
-            pdf_url = payload.pdf_url
-            if not pdf_url:
-                # if only assembly_drawing provided, clean it
-                if payload.assembly_drawing:
-                    pdf_url = clean_pdf_url(payload.assembly_drawing)
-                else:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Provide pdf_url or assembly_drawing",
-                    )
+                        # PDF URL now comes already cleaned from frontend.
+            pdf_url = payload.pdf_url or payload.assembly_drawing
 
-            cleaned = clean_pdf_url(pdf_url)
+            if not pdf_url:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Provide pdf_url or assembly_drawing",
+                )
+
+            cleaned = pdf_url.strip()
+
             if not cleaned.lower().endswith(".pdf"):
                 raise HTTPException(
                     status_code=400,
