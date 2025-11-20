@@ -699,6 +699,11 @@ function ViewerContent() {
   const prefixHeightsRef = useRef<number[]>([]);   // top offsets of each page at current zoom
   const totalHeightRef = useRef<number>(0);
   const [visibleRange, setVisibleRange] = useState<[number, number]>([1, 3]); // 1-based inclusive
+  // Whenever the document/page-count changes, reset to a safe initial window
+  useEffect(() => {
+    if (!numPages) return;
+    setVisibleRange([1, Math.min(3, numPages)]);
+  }, [numPages]);
 
   function lowerBound(a: number[], x: number) { // first idx with a[idx] >= x
     let l = 0, r = a.length;
@@ -1888,6 +1893,18 @@ function ViewerContent() {
     jumpToPage(pageNumber);
   }, [jumpToPage]);
 
+  // Clamp the windowed page range so we never ask pdf.js for an invalid page
+  const safeStart = Math.max(1, Math.min(visibleRange[0], numPages || 1));
+  const safeEnd =
+    numPages === 0
+      ? safeStart
+      : Math.max(safeStart, Math.min(visibleRange[1], numPages));
+
+  const pagesToRender =
+    numPages === 0
+      ? []
+      : Array.from({ length: safeEnd - safeStart + 1 }, (_, i) => safeStart + i);
+
   if (showSetup) {
     return <ViewerSetupScreen onStart={handleSetupComplete} />;
   }
@@ -2021,7 +2038,7 @@ function ViewerContent() {
 
 
               <div className="pdf-surface" style={{ position: 'relative', height: totalHeightRef.current }}>
-                {Array.from({ length: visibleRange[1] - visibleRange[0] + 1 }, (_, i) => visibleRange[0] + i).map((pageNum) => {
+                {pagesToRender.map((pageNum) => {
                   const top = prefixHeightsRef.current[pageNum - 1] || 0;
                   return (
                     <div
@@ -2144,7 +2161,7 @@ function ViewerContent() {
 
 
         <div className="pdf-surface" style={{ position: 'relative', height: totalHeightRef.current }}>
-          {Array.from({ length: visibleRange[1] - visibleRange[0] + 1 }, (_, i) => visibleRange[0] + i).map((pageNum) => {
+          {pagesToRender.map((pageNum) => {
             const top = prefixHeightsRef.current[pageNum - 1] || 0;
             return (
               <div
