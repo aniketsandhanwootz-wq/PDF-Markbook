@@ -198,44 +198,44 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
     }
   };
 
-const handleOpenMarkset = (markSetId: string, isMaster: boolean) => {
-  if (!boot?.document?.pdf_url) {
-    setErr('No PDF URL on document.');
-    return;
-  }
-  if (!boot.document.doc_id) {
-    setErr('Document not initialized correctly (missing doc_id). Try bootstrapping again.');
-    return;
-  }
+  const handleOpenMarkset = (markSetId: string, isMaster: boolean) => {
+    if (!boot?.document?.pdf_url) {
+      setErr('No PDF URL on document.');
+      return;
+    }
+    if (!boot.document.doc_id) {
+      setErr('Document not initialized correctly (missing doc_id). Try bootstrapping again.');
+      return;
+    }
 
-  // ✅ For master sets: master_for_viewer = itself
-  // ✅ For QC sets: MUST point to the real master mark-set
-  if (!isMaster && !boot.master_mark_set_id) {
-    setErr('No master mark-set for this document. Please open or create the MASTER first.');
-    return;
-  }
+    // ✅ For master sets: master_for_viewer = itself
+    // ✅ For QC sets: MUST point to the real master mark-set
+    if (!isMaster && !boot.master_mark_set_id) {
+      setErr('No master mark-set for this document. Please open or create the MASTER first.');
+      return;
+    }
 
-  const masterForViewer = isMaster
-    ? markSetId
-    : (boot.master_mark_set_id as string);
+    const masterForViewer = isMaster
+      ? markSetId
+      : (boot.master_mark_set_id as string);
 
-  const finalPdfUrl = boot.document.pdf_url;
+    const finalPdfUrl = boot.document.pdf_url;
 
-  const params = new URLSearchParams();
-  params.set('pdf_url', finalPdfUrl);
-  params.set('doc_id', boot.document.doc_id);        // 👈 NEW
-  params.set('mark_set_id', markSetId);
-  params.set('is_master', isMaster ? '1' : '0');
-  params.set('master_mark_set_id', masterForViewer);
-  if (userMail) {
-    params.set('user_mail', userMail);
-    try {
-      localStorage.setItem('markbook_user_mail', userMail);
-    } catch { }
-  }
+    const params = new URLSearchParams();
+    params.set('pdf_url', finalPdfUrl);
+    params.set('doc_id', boot.document.doc_id);        // 👈 NEW
+    params.set('mark_set_id', markSetId);
+    params.set('is_master', isMaster ? '1' : '0');
+    params.set('master_mark_set_id', masterForViewer);
+    if (userMail) {
+      params.set('user_mail', userMail);
+      try {
+        localStorage.setItem('markbook_user_mail', userMail);
+      } catch { }
+    }
 
-  window.location.href = `${window.location.pathname}?${params.toString()}`;
-};
+    window.location.href = `${window.location.pathname}?${params.toString()}`;
+  };
 
 
   const handleCreateMarkset = async () => {
@@ -340,7 +340,7 @@ const handleOpenMarkset = (markSetId: string, isMaster: boolean) => {
       await runBootstrap();
       setEditingId(null);
       setEditingName('');
-     } catch (e) {
+    } catch (e) {
       console.error(e);
       setErr('Failed to rename mark set.');
     }
@@ -465,8 +465,8 @@ const handleOpenMarkset = (markSetId: string, isMaster: boolean) => {
   return (
     <div style={{ minHeight: '100vh', background: '#f5f5f5', padding: 20, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <div style={{ background: '#fff', width: '100%', maxWidth: 860, borderRadius: 8, boxShadow: '0 2px 12px rgba(0,0,0,0.1)', padding: 24 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 6 }}>PDF Mark Editor — Map Creation</h1>
-        <p style={{ color: '#666', marginBottom: 18 }}>Enter keys → Bootstrap the document → Pick or create a mark set.</p>
+        <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 6 }}>{extId} - {partNumber}</h1>
+        {/* <p style={{ color: '#666', marginBottom: 18 }}>Enter keys → Bootstrap the document → Pick or create a mark set.</p> */}
         {notice && (
           <div
             style={{
@@ -513,7 +513,7 @@ const handleOpenMarkset = (markSetId: string, isMaster: boolean) => {
 
             {/* Markset picker */}
             <div style={{ marginTop: 16 }}>
-              <div style={{ fontWeight: 600, marginBottom: 6 }}>Available Mark Sets</div>
+              {/* <div style={{ fontWeight: 600, marginBottom: 6 }}>Available Mark Sets</div> */}
 
               {/* MASTER pinned at top (not in scroll) */}
               {masterMarkSet && (
@@ -532,6 +532,36 @@ const handleOpenMarkset = (markSetId: string, isMaster: boolean) => {
                   {renderMarkSetCard(masterMarkSet)}
                 </div>
               )}
+
+            {/* Create new markset */}
+            <div style={{ marginTop: 16, borderTop: '1px dashed #ddd', paddingTop: 12 }}>
+              <div style={{ fontWeight: 600, marginBottom: 6 }}>Create New Mark Set</div>
+              <div style={{ marginBottom: 8 }}>
+                <input
+                  placeholder="Label (e.g., QC – Dimensions)"
+                  value={newLabel}
+                  onChange={e => setNewLabel(e.target.value)}
+                  style={inp}
+                />
+              </div>
+
+
+              {/* ✅ NEW: Description field */}
+              <textarea
+                placeholder="Description (optional) – e.g., 'QC for first article inspection, batch #123'"
+                value={newDescription}
+                onChange={e => setNewDescription(e.target.value)}
+                style={{ ...inp, width: '100%', minHeight: 60, resize: 'vertical', fontSize: 13, marginBottom: 4 }}
+              />
+
+              <button
+                onClick={handleCreateMarkset}
+                disabled={creating}
+                style={{ ...btnPrimary, marginTop: 10 }}
+              >
+                {creating ? 'Creating…' : 'Create & Open'}
+              </button>
+            </div>
 
               {/* QC / other mark-sets in scrollable list */}
               <div>
@@ -567,36 +597,6 @@ const handleOpenMarkset = (markSetId: string, isMaster: boolean) => {
               </div>
             </div>
 
-
-            {/* Create new markset */}
-            <div style={{ marginTop: 16, borderTop: '1px dashed #ddd', paddingTop: 12 }}>
-              <div style={{ fontWeight: 600, marginBottom: 6 }}>Create New Mark Set</div>
-              <div style={{ marginBottom:8 }}>
-  <input
-    placeholder="Label (e.g., QC – Dimensions)"
-    value={newLabel}
-    onChange={e => setNewLabel(e.target.value)}
-    style={inp}
-  />
-</div>
-
-
-              {/* ✅ NEW: Description field */}
-              <textarea
-                placeholder="Description (optional) – e.g., 'QC for first article inspection, batch #123'"
-                value={newDescription}
-                onChange={e => setNewDescription(e.target.value)}
-                style={{ ...inp, width: '100%', minHeight: 60, resize: 'vertical', fontSize: 13, marginBottom: 4 }}
-              />
-
-              <button
-                onClick={handleCreateMarkset}
-                disabled={creating}
-                style={{ ...btnPrimary, marginTop: 10 }}
-              >
-                {creating ? 'Creating…' : 'Create & Open'}
-              </button>
-            </div>
           </>
         )}
       </div>
@@ -612,7 +612,7 @@ const btnPrimary: React.CSSProperties = { ...btn, borderColor: '#1976d2', color:
 
 // Main Editor Component
 function EditorContent() {
-  const searchParams = useSearchParams();  
+  const searchParams = useSearchParams();
   const router = useRouter();
   const [showSetup, setShowSetup] = useState(true);
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
@@ -1781,7 +1781,7 @@ function EditorContent() {
           </button>
           {sidebarOpen && <h3>Marks</h3>}
         </div>
-                {sidebarOpen && (
+        {sidebarOpen && (
           <MarkList
             marks={marks}
             groups={isMasterMarkSet ? [] : groups}
@@ -1796,7 +1796,7 @@ function EditorContent() {
             onReorder={reorderMark}
           />
         )}
-                {sidebarOpen && (
+        {sidebarOpen && (
           <div className="sidebar-footer">
             <button
               className="save-btn"
@@ -1810,7 +1810,7 @@ function EditorContent() {
       </div>
 
       <div className="main-content">
-                <ZoomToolbar
+        <ZoomToolbar
           zoom={zoom}
           onZoomIn={zoomIn}
           onZoomOut={zoomOut}
@@ -1891,7 +1891,7 @@ function EditorContent() {
                     }}
                   />
                 )}
-                                {markOverlays
+                {markOverlays
                   .filter((overlay) => overlay.pageIndex === pageNum - 1)
                   .filter((overlay) => {
                     // In QC mode, if a group is selected, only show that group's marks

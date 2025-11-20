@@ -313,21 +313,21 @@ async def _send_excel_email(
             or doc.get("doc_id")
             or "Document"
         )
-        master_label = master_ms.get("name", "Master")
+        # master_label = master_ms.get("name", "Master")
         qc_label = qc_ms.get("name", "QC Run")
 
-        subject = f"[Markbook] QC Report – {report_name}"
+        subject = f"Dimensional Inspection Report for {doc_label}"
 
         body_html = (
             f"<p>Hello,</p>"
-            f"<p>Your QC report for document <b>{doc_label}</b> is ready.</p>"
+            f"<p>Your Dimensional Inspection report for Part <b>{doc_label}</b> is ready.</p>"
             f"<ul>"
-            f"<li>Master set: {master_label}</li>"
-            f"<li>QC set: {qc_label}</li>"
+            # f"<li>Master set: {master_label}</li>"
+            f"<li>Inspection Map: {qc_label}</li>"
             f"<li>Completed marks: {completed_marks} of {total_marks}</li>"
             f"</ul>"
-            f"<p>The Excel report is attached.</p>"
-            f"<p>Regards,<br/>Markbook</p>"
+            f"<p>Please find the attached Dimensional Inspection report as Excel file.</p>"
+            f"<p>Regards,<br/>Wootz.Inspect</p>"
         )
 
         filename = f"{report_name or 'inspection-report'}.xlsx"
