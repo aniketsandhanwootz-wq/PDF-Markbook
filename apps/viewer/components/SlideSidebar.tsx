@@ -24,7 +24,6 @@ export default function SlideSidebar({
     document.body.style.overflow = 'hidden';
     return () => { document.body.style.overflow = prev; };
   }, [open]);
-
   return (
     <>
       {/* Scrim */}
@@ -96,7 +95,6 @@ export default function SlideSidebar({
           <h3 style={{ margin: 0, fontSize: 18 }}>{title}</h3>
         </div>
 
- 
          {/* Body — dedicated scroll area so search stays, list scrolls */}
         <div
           style={{

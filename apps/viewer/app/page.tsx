@@ -14,7 +14,6 @@ import InputPanel from '../components/InputPanel';
 import ReviewScreen from '../components/ReviewScreen';
 import { clampZoom } from '../lib/pdf';
 import PDFSearch from '../components/PDFSearch';
-import usePinchZoom from '../hooks/usePinchZoom';
 import SlideSidebar from '../components/SlideSidebar';
 
 
@@ -652,7 +651,18 @@ function ViewerContent() {
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [sidebarOpen, setSidebarOpen] = useState(false); // Start closed on mobile
+    // Sidebar: start open only on large *non-touch* screens (real desktop)
+  const [sidebarOpen, setSidebarOpen] = useState(() => {
+    if (typeof window === 'undefined') return false;
+
+    const w = window.innerWidth;
+    const isTouch =
+      'ontouchstart' in window || (navigator as any).maxTouchPoints > 0;
+
+    // Only auto-open on big, non-touch displays
+    return !isTouch && w >= 1024;
+  });
+
   const [flashRect, setFlashRect] = useState<FlashRect>(null);
   const [selectedRect, setSelectedRect] = useState<FlashRect>(null);
   const [currentPage, setCurrentPage] = useState(1);
@@ -1217,10 +1227,6 @@ function ViewerContent() {
   }, [marks, pdf]);
 
 
-  // Set initial sidebar state based on screen size
-  useEffect(() => {
-    setSidebarOpen(window.innerWidth > 768);
-  }, []);
   useEffect(() => {
     const handleResize = () => {
       if (marks.length > 0) {
@@ -1975,7 +1981,6 @@ function ViewerContent() {
               }}
             />
 
-
           </SlideSidebar>
 
 
@@ -2001,8 +2006,6 @@ function ViewerContent() {
               onZoomIn={zoomIn}
               onZoomOut={zoomOut}
             />
-
-
 
             <div
               style={{
