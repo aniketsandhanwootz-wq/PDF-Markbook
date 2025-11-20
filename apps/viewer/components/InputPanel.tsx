@@ -13,7 +13,7 @@ type Mark = {
   nh: number;
   zoom_hint?: number | null;
   label?: string;
-  instrument?: string;   // 👈 add this
+  instrument?: string;
 };
 
 type InputPanelProps = {
@@ -29,7 +29,8 @@ type InputPanelProps = {
 };
 
 function indexToLabel(idx: number): string {
-  let n = idx + 1, s = '';
+  let n = idx + 1,
+    s = '';
   while (n > 0) {
     const rem = (n - 1) % 26;
     s = String.fromCharCode(65 + rem) + s;
@@ -50,10 +51,10 @@ export default function InputPanel({
   canPrev,
 }: InputPanelProps) {
   // --- Keyboard overlap handling (mobile) ------------------------------
-  const [kbOverlap, setKbOverlap] = useState(0);    // pixels to lift the panel
+  const [kbOverlap, setKbOverlap] = useState(0); // pixels to lift the panel
   const [vvSupported, setVvSupported] = useState(false);
 
-  // NEW: float only when OUR input is focused (prevents sidebar search from triggering it)
+  // Float only when OUR input is focused
   const [selfFocused, setSelfFocused] = useState(false);
 
   useEffect(() => {
@@ -63,7 +64,9 @@ export default function InputPanel({
 
     const update = () => {
       const hidden = Math.max(0, window.innerHeight - (vv.height + vv.offsetTop));
-      const safe = (window as any).CSS?.supports?.('padding', 'env(safe-area-inset-bottom)') ? 0 : 8;
+      const safe = (window as any).CSS?.supports?.('padding', 'env(safe-area-inset-bottom)')
+        ? 0
+        : 8;
       setKbOverlap(hidden + safe);
     };
 
@@ -76,7 +79,6 @@ export default function InputPanel({
     };
   }, []);
 
-  // Float ONLY when our own input has focus
   const floating = vvSupported && kbOverlap > 0 && selfFocused;
 
   if (!currentMark) {
@@ -97,12 +99,11 @@ export default function InputPanel({
   }
 
   const headingText = currentMark.instrument?.trim() || currentMark.name;
-  // 👇 FIX: define displayLabel (prefer mark.label, fallback to A/B/C… from index)
   const displayLabel = currentMark.label ?? indexToLabel(currentIndex);
 
   return (
     <div
-    id="mobile-input-panel"   // 👈 ADD THIS
+      id="mobile-input-panel"
       style={{
         height: 'auto',
         minHeight: 160,
@@ -115,7 +116,7 @@ export default function InputPanel({
         borderTopRightRadius: 12,
         overflow: 'hidden',
         boxShadow: '0 -2px 10px rgba(0,0,0,0.08)',
-        position: floating ? 'fixed' as const : 'static',
+        position: floating ? ('fixed' as const) : 'static',
         left: floating ? 0 : undefined,
         right: floating ? 0 : undefined,
         bottom: floating ? kbOverlap : undefined,
@@ -182,7 +183,7 @@ export default function InputPanel({
       <div style={{ padding: '4px 10px', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
         <input
           type="text"
-          inputMode="decimal"          // numeric keypad (with decimal) on mobile
+          inputMode="decimal"
           enterKeyHint="next"
           pattern="[0-9]*[.,]?[0-9]*"
           value={value}
@@ -199,12 +200,23 @@ export default function InputPanel({
             height: 44,
           }}
           onFocus={(e) => {
-            setSelfFocused(true);            // key line
+            setSelfFocused(true);
             e.target.style.borderColor = '#1976d2';
           }}
+          // IMPORTANT FIX: delay turning off selfFocused so the first tap on "Next"
+          // actually clicks the button instead of just closing the keyboard.
           onBlur={(e) => {
-            setSelfFocused(false);           // key line
             e.target.style.borderColor = '#ddd';
+            setTimeout(() => {
+              setSelfFocused(false);
+            }, 80); // small delay is enough
+          }}
+          // EXTRA: allow pressing Enter/Next key on the keyboard to trigger onNext()
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              onNext();
+            }
           }}
         />
       </div>
