@@ -421,7 +421,6 @@ async def health_check():
             content={"status": "unhealthy", "backend": STORAGE_BACKEND, "error": str(e)}
         )
 
-
 # ========== NEW: Production Health Endpoints ==========
 
 @app.get("/healthz")

@@ -1,305 +1,566 @@
 # services/api/routers/reports_bundle.py
 
-
 #---------------------------------------------------------------
 #
-#  Warning: This endpoint is DEPRECATED and will be removed in future. Don't use it for new integrations.
-#  But don't delete it yet, as the existing frontend depends on it. Before making any changes here, consult Aniket.
-#  This endpoint used to bundles PDF + Excel generation and emails the results instead of returning files directly.
-#  But due to less availability of time for rewiring the frontend, we are keeping it as-is for now and just modifying the script to send email only.
+#  Warning: This endpoint is DEPRECATED and will be removed in future. 
+#  Don't use it for new integrations.
+#  Existing frontend depends on it; we're only modifying it to:
+#  - use master markset for total count
+#  - use QC markset for user inputs
+#  - generate Excel only and email it.
 #
 #--------------------------------------------------------------
-from __future__ import annotations
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
-from typing import Dict, Optional
-import json
-from datetime import datetime
-import logging
-from urllib.parse import unquote
 
-from core.report_pdf import generate_report_pdf
-from core.report_excel import generate_report_excel
+from __future__ import annotations
+
+from io import BytesIO
+from typing import Any, Dict, List, Optional
+import logging
+import inspect
+
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
+from pydantic import BaseModel, EmailStr
+from openpyxl import Workbook
+import asyncio
 from core.email_sender import send_email_with_attachments
 from settings import get_settings
 
+# Set up logger
 logger = logging.getLogger(__name__)
 
-def get_storage():
-    from main import get_storage_adapter
-    return get_storage_adapter(get_settings())
+router = APIRouter(prefix="/reports/bundle", tags=["reports-bundle"])
 
-router = APIRouter(prefix="/reports", tags=["reports-bundle"])
 
-class BundleGenerateBody(BaseModel):
-    mark_set_id: str = Field(..., min_length=8)
-    entries: Dict[str, str] = Field(default_factory=dict)
-    pdf_url: Optional[str] = None
-    # Accept both `user_email` (JSON) and `user_mail` (alias commonly used in query strings)
-    user_email: Optional[str] = Field(default=None, alias="user_mail")
-    padding_pct: float = 0.25
-    office_variant: str = "o365"  # kept for compatibility
+# ========== Request / Response Models ==========
 
-    model_config = {
-        "populate_by_name": True,
-        "extra": "allow",
-    }
-
-def validate_email(email: str) -> Optional[str]:
-    if not email or not isinstance(email, str):
-        return None
-    email = email.strip()
-    if '@' not in email:
-        logger.warning(f"Invalid email format (missing @): {email}")
-        return None
-    local, _, domain = email.partition('@')
-    if not local or not domain or '.' not in domain:
-        logger.warning(f"Invalid email format (local/domain): {email}")
-        return None
-    invalid_patterns = ['viewer_user', 'test@test', 'example', 'placeholder']
-    if any(p in email.lower() for p in invalid_patterns):
-        logger.warning(f"Placeholder email detected: {email}")
-        return None
-    return email.lower()
-
-@router.post("/generate-bundle")
-async def generate_bundle(
-    body: BundleGenerateBody,
-    background_tasks: BackgroundTasks,
-    storage=Depends(get_storage)
-):
+class ReportBundleRequest(BaseModel):
     """
-    EMAIL-ONLY MODE:
-    - Persist entries to storage (best-effort).
-    - Generate PDF and Excel in-memory.
-    - Queue an email with both files attached (if SMTP & email are valid).
-    - RETURN JSON (no file/zip download).
+    Request body for generating & emailing a report bundle.
 
-    This endpoint name is kept for compatibility with the existing frontend.
+    Semantics:
+    - doc_id:      the document being inspected
+    - mark_set_id: the *QC* mark_set_id (where user inputs & groups live)
+    - email_to:    recipient email
+    - submitted_by: (optional) who filled the QC; used to filter inputs
     """
-    settings = get_settings()
+    doc_id: str
+    mark_set_id: str
+    email_to: EmailStr
+    submitted_by: Optional[str] = None
+    report_name: Optional[str] = None
 
-    raw_email = body.user_email
-    if raw_email:
-        raw_email = unquote(raw_email)
 
-    valid_email = validate_email(raw_email) if raw_email else None
-    if raw_email and not valid_email:
-        logger.warning(f"Invalid email provided, will skip email: {raw_email}")
+class ReportBundleQueuedResponse(BaseModel):
+    status: str
+    message: str
 
-    # Resolve mark set and document
-    ms_all = storage._get_all_dicts("mark_sets")
-    ms = next((x for x in ms_all if x.get("mark_set_id") == body.mark_set_id), None)
-    if not ms:
-        raise HTTPException(status_code=404, detail="MARK_SET_NOT_FOUND")
 
-    doc = storage.get_document(ms["doc_id"])
-    if not doc:
-        raise HTTPException(status_code=400, detail="DOCUMENT_NOT_FOUND")
+# ========== Helpers to resolve master vs QC mark sets ==========
 
-    pdf_url = body.pdf_url or doc.get("pdf_url")
-    if not pdf_url:
-        raise HTTPException(status_code=400, detail="Missing pdf_url")
+def _normalize_bool_str(v: Any) -> str:
+    """
+    Normalize a Sheets boolean-ish cell to "TRUE" / "FALSE".
+    """
+    try:
+        s = (str(v or "")).strip().upper()
+        if s in ("TRUE", "1", "YES", "Y"):
+            return "TRUE"
+        if s in ("FALSE", "0", "NO", "N"):
+            return "FALSE"
+        return "FALSE"
+    except Exception as e:
+        logger.warning(f"Error normalizing bool value '{v}': {e}")
+        return "FALSE"
 
-    marks = storage.list_marks(body.mark_set_id)
-    entries = body.entries or {}
-    part_number = doc.get("part_number", "Unknown")
 
-    # Persist entries (best-effort)
-    if entries and hasattr(storage, "create_user_inputs_batch"):
+def _find_master_and_qc_mark_sets(
+    storage: Any,
+    doc_id: str,
+    qc_mark_set_id: str,
+) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    """
+    Given a doc_id and a QC mark_set_id:
+    - Find the QC mark_set row.
+    - Find the master mark_set row for the same document (is_master == TRUE).
+    """
+    try:
+        mark_sets = storage.list_mark_sets_by_document(doc_id)
+    except AttributeError as e:
+        logger.error(f"Storage missing list_mark_sets_by_document: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Storage adapter configuration error",
+        )
+    except Exception as e:
+        logger.error(f"Failed to list mark sets for doc {doc_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve mark sets: {str(e)}",
+        )
+
+    qc_ms: Optional[Dict[str, Any]] = None
+    master_ms: Optional[Dict[str, Any]] = None
+
+    try:
+        for ms in mark_sets:
+            if ms.get("mark_set_id") == qc_mark_set_id:
+                qc_ms = ms
+            if _normalize_bool_str(ms.get("is_master")) == "TRUE":
+                master_ms = ms
+    except Exception as e:
+        logger.error(f"Error processing mark sets: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error processing mark sets: {str(e)}",
+        )
+
+    if qc_ms is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"QC_MARK_SET_NOT_FOUND: {qc_mark_set_id}",
+        )
+
+    if master_ms is None:
+        # Fallback: if no master explicitly set, treat the QC as master
+        logger.warning(f"No master mark set found for doc {doc_id}, using QC as fallback")
+        master_ms = qc_ms
+
+    return master_ms, qc_ms
+
+
+def _count_master_marks(storage: Any, doc_id: str, master_mark_set_id: str) -> int:
+    """
+    Use the Sheets adapter's count_marks_by_mark_set(doc_id) which only counts rows
+    in the `marks` sheet (master marks only).
+    """
+    try:
+        counts = storage.count_marks_by_mark_set(doc_id)
+        return int(counts.get(master_mark_set_id, 0))
+    except AttributeError as e:
+        logger.error(f"Storage missing count_marks_by_mark_set: {e}")
+        return 0
+    except (ValueError, TypeError) as e:
+        logger.warning(f"Error converting mark count to int: {e}")
+        return 0
+    except Exception as e:
+        logger.error(f"Error counting marks for {master_mark_set_id}: {e}")
+        return 0
+
+
+# ========== Excel Generation (master marks + QC results) ==========
+
+def _build_excel_bytes_for_qc(
+    storage: Any,
+    doc_id: str,
+    master_mark_set_id: str,
+    qc_mark_set_id: str,
+    submitted_by: Optional[str],
+    report_title: str,
+) -> bytes:
+    """
+    Build a single-sheet Excel report that joins:
+    - master marks  (from `marks` for master_mark_set_id)
+    - QC user inputs (from mark_user_input for qc_mark_set_id)
+    - groups (from groups for qc_mark_set_id)
+
+    Returns raw XLSX bytes.
+    """
+    try:
+        doc = storage.get_document(doc_id) or {}
+    except Exception as e:
+        logger.error(f"Failed to get document {doc_id}: {e}")
+        doc = {}
+
+    # --- Fetch data from Sheets ---
+
+    # Master marks (one row per mark, ordered)
+    try:
+        master_marks = storage.list_marks(master_mark_set_id)
+    except Exception as e:
+        logger.error(f"Failed to list marks for {master_mark_set_id}: {e}")
+        master_marks = []
+
+    # User inputs for this QC run
+    try:
+        user_inputs = storage.get_user_inputs(
+            mark_set_id=qc_mark_set_id, 
+            submitted_by=submitted_by
+        )
+    except Exception as e:
+        logger.error(f"Failed to get user inputs for {qc_mark_set_id}: {e}")
+        user_inputs = []
+
+    # Groups for this QC mark set
+    try:
+        groups = storage.list_groups_for_mark_set(qc_mark_set_id)
+    except Exception as e:
+        logger.error(f"Failed to list groups for {qc_mark_set_id}: {e}")
+        groups = []
+
+    # Build maps for quick joins
+    mark_id_to_value: Dict[str, str] = {}
+    for ui in user_inputs:
         try:
-            storage.create_user_inputs_batch(
-                mark_set_id=body.mark_set_id,
-                entries=entries,
-                submitted_by=valid_email or "viewer_user"
-            )
-            logger.info(f"✓ Saved {len(entries)} entries to Sheets/DB")
+            mid = ui.get("mark_id")
+            if not mid:
+                continue
+            mark_id_to_value[mid] = ui.get("user_value", "")
         except Exception as e:
-            logger.error(f"Failed to save entries to Sheets/DB: {e}")
+            logger.warning(f"Error processing user input: {e}")
+            continue
 
-    # Generate PDF
+    # mark_id -> list of group names
+    mark_id_to_groups: Dict[str, List[str]] = {}
+    for g in groups:
+        try:
+            name = g.get("name", "")
+            mark_ids = g.get("mark_ids", []) or []
+            for mid in mark_ids:
+                if not mid:
+                    continue
+                mark_id_to_groups.setdefault(mid, []).append(name)
+        except Exception as e:
+            logger.warning(f"Error processing group: {e}")
+            continue
+
+    # --- Build workbook ---
+
     try:
-        pdf_bytes = await generate_report_pdf(
-            pdf_url=pdf_url,
-            marks=marks,
-            entries=entries,
-            padding_pct=body.padding_pct,
-            render_zoom=2.0,
-            title=f"Inspection Report - {part_number}",
-            author=valid_email or "Viewer",
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Inspection"
+
+        # Header row
+        ws.append(
+            [
+                "#",
+                "Mark Label",
+                "Instrument",
+                "Required",
+                "Page Index",
+                "User Value",
+                "Groups",
+            ]
         )
-        logger.info(f"✓ PDF generated: {len(pdf_bytes)} bytes")
+
+        # Data rows from master marks
+        for idx, m in enumerate(master_marks, start=1):
+            try:
+                mark_id = m.get("mark_id", "")
+                label = m.get("label", "")
+                instrument = m.get("instrument", "")
+                is_required = "YES" if m.get("is_required") else "NO"
+                page_index = m.get("page_index", 0)
+
+                user_val = mark_id_to_value.get(mark_id, "")
+                group_list = mark_id_to_groups.get(mark_id, [])
+                groups_str = ", ".join(group_list)
+
+                ws.append(
+                    [
+                        idx,
+                        label,
+                        instrument,
+                        is_required,
+                        page_index,
+                        user_val,
+                        groups_str,
+                    ]
+                )
+            except Exception as e:
+                logger.warning(f"Error adding mark row {idx}: {e}")
+                continue
+
+        # Save to bytes
+        bio = BytesIO()
+        wb.save(bio)
+        return bio.getvalue()
+
     except Exception as e:
-        logger.error(f"PDF generation failed: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"PDF generation failed: {str(e)}")
-
-    # Generate Excel
-    try:
-        excel_bytes = await generate_report_excel(
-            pdf_url=pdf_url,
-            marks=marks,
-            entries=entries,
-            user_email=valid_email,
-            mark_set_id=body.mark_set_id,
-            mark_set_label=ms.get("label", ""),
-            part_number=part_number,
-            padding_pct=body.padding_pct,
+        logger.error(f"Failed to build Excel workbook: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate Excel report: {str(e)}",
         )
-        logger.info(f"✓ Excel generated: {len(excel_bytes)} bytes")
-    except Exception as e:
-        logger.error(f"Excel generation failed: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Excel generation failed: {str(e)}")
 
-    # Build metadata for email body
-    filled = len([v for v in entries.values() if (v or '').strip()])
-    metadata = {
-        "submission_id": body.mark_set_id,
-        "part_number": part_number,
-        "submitted_by": valid_email or "viewer_user",
-        "submitted_at_utc": datetime.utcnow().isoformat() + "Z",
-        "total_marks": len(marks),
-        "filled_marks": filled
-    }
 
-    # Queue email
-    email_status = "skipped"
-    if valid_email and settings.smtp_user and settings.smtp_password:
-        background_tasks.add_task(
-            send_report_email,
-            to_email=valid_email,
-            part_number=part_number,
-            mark_set_id=body.mark_set_id,
-            pdf_bytes=pdf_bytes,
-            excel_bytes=excel_bytes,
-            metadata=metadata,
-            settings=settings
-        )
-        email_status = "queued"
-        logger.info(f"✓ Email queued for {valid_email}")
-    elif not valid_email:
-        logger.info("Email skipped: no valid email provided")
-    elif not settings.smtp_user or not settings.smtp_password:
-        logger.warning("Email skipped: SMTP not configured")
-        email_status = "not_configured"
+# ========== Email Helper ==========
 
-    # RETURN JSON (no file download)
-    payload = {
-        "status": "ok",
-        "email_status": email_status,
-        "submission": {
-            "mark_set_id": body.mark_set_id,
-            "part_number": part_number,
-            "submitted_by": metadata["submitted_by"],
-            "submitted_at_utc": metadata["submitted_at_utc"],
-            "total_marks": metadata["total_marks"],
-            "filled_marks": metadata["filled_marks"],
-        },
-        "artifacts": {
-            "pdf_size": len(pdf_bytes),
-            "excel_size": len(excel_bytes)
-        }
-    }
-    return JSONResponse(payload, status_code=200)
-
-async def send_report_email(
+async def _send_excel_email(
     to_email: str,
-    part_number: str,
-    mark_set_id: str,
-    pdf_bytes: bytes,
+    report_name: str,
+    doc: Dict[str, Any],
+    master_ms: Dict[str, Any],
+    qc_ms: Dict[str, Any],
+    total_marks: int,
+    completed_marks: int,
     excel_bytes: bytes,
-    metadata: dict,
-    settings
-):
-    """Background task to send email with PDF + Excel attachments."""
-    try:
-        subject = f"Inspection Submission – {part_number} – {mark_set_id}"
-        body_html = f"""
-        <html>
-        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-            <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-                <h2 style="color: #1976d2; border-bottom: 3px solid #1976d2; padding-bottom: 10px;">
-                    Inspection Submission Report
-                </h2>
-                <p style="font-size: 16px; color: #666;">
-                    A new inspection submission has been completed. Details below:
-                </p>
-                <table style="border-collapse: collapse; width: 100%; margin: 20px 0;">
-                    <tr style="background: #f5f5f5;">
-                        <td style="padding: 12px; border: 1px solid #ddd; font-weight: bold;">Part Number</td>
-                        <td style="padding: 12px; border: 1px solid #ddd;">{part_number}</td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 12px; border: 1px solid #ddd; font-weight: bold;">Mark Set ID</td>
-                        <td style="padding: 12px; border: 1px solid #ddd; font-family: monospace;">{mark_set_id}</td>
-                    </tr>
-                    <tr style="background: #f5f5f5;">
-                        <td style="padding: 12px; border: 1px solid #ddd; font-weight: bold;">Submitted By</td>
-                        <td style="padding: 12px; border: 1px solid #ddd;">{metadata['submitted_by']}</td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 12px; border: 1px solid #ddd; font-weight: bold;">Submitted At (UTC)</td>
-                        <td style="padding: 12px; border: 1px solid #ddd;">{metadata['submitted_at_utc']}</td>
-                    </tr>
-                    <tr style="background: #f5f5f5;">
-                        <td style="padding: 12px; border: 1px solid #ddd; font-weight: bold;">Total Marks</td>
-                        <td style="padding: 12px; border: 1px solid #ddd;">{metadata['total_marks']}</td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 12px; border: 1px solid #ddd; font-weight: bold;">Filled Marks</td>
-                        <td style="padding: 12px; border: 1px solid #ddd;">
-                            <strong>{metadata['filled_marks']}</strong> of {metadata['total_marks']}
-                            <span style="color: #4caf50; margin-left: 8px;">
-                                ({round(metadata['filled_marks'] / metadata['total_marks'] * 100) if metadata['total_marks'] > 0 else 0}% complete)
-                            </span>
-                        </td>
-                    </tr>
-                </table>
-                <div style="background: #e3f2fd; border-left: 4px solid #1976d2; padding: 15px; margin: 20px 0;">
-                    <p style="margin: 0; font-size: 14px;">
-                        📎 <strong>Attachments:</strong> This email contains 2 files:
-                    </p>
-                    <ul style="margin: 10px 0 0 20px; font-size: 14px;">
-                        <li><code>submission_{mark_set_id}.pdf</code> - Visual inspection report</li>
-                        <li><code>submission_{mark_set_id}.xlsx</code> - Detailed data spreadsheet</li>
-                    </ul>
-                </div>
-                <p style="margin-top: 20px; color: #666; font-size: 14px;">
-                    Please review the attached reports. If you have any questions or notice any discrepancies, 
-                    please contact the tech team.
-                </p>
-                <hr style="margin: 30px 0; border: none; border-top: 1px solid #ddd;">
-                <p style="color: #999; font-size: 12px; text-align: center;">
-                    This is an automated message from <strong>Wootz Markbook System</strong><br>
-                    For support: <a href="mailto:aniket.sandhan@wootz.work" style="color: #1976d2;">aniket.sandhan@wootz.work</a>
-                </p>
-            </div>
-        </body>
-        </html>
-        """
+) -> None:
+    """
+    Send an email with a *single* Excel attachment,
+    describing completed vs total marks using master marks count.
+    Uses core.email_sender.send_email_with_attachments (async).
+    """
+    from settings import get_settings
+    from core.email_sender import send_email_with_attachments
 
+    try:
+        settings = get_settings()
+
+        doc_label = (
+            doc.get("part_number")
+            or doc.get("external_id")
+            or doc.get("doc_id")
+            or "Document"
+        )
+        master_label = master_ms.get("name", "Master")
+        qc_label = qc_ms.get("name", "QC Run")
+
+        subject = f"[Markbook] QC Report – {report_name}"
+
+        body_html = (
+            f"<p>Hello,</p>"
+            f"<p>Your QC report for document <b>{doc_label}</b> is ready.</p>"
+            f"<ul>"
+            f"<li>Master set: {master_label}</li>"
+            f"<li>QC set: {qc_label}</li>"
+            f"<li>Completed marks: {completed_marks} of {total_marks}</li>"
+            f"</ul>"
+            f"<p>The Excel report is attached.</p>"
+            f"<p>Regards,<br/>Markbook</p>"
+        )
+
+        filename = f"{report_name or 'inspection-report'}.xlsx"
+
+        # NOTE: email_sender expects "data" key here
         attachments = [
-            {"filename": f"submission_{mark_set_id}.pdf", "data": pdf_bytes},
-            {"filename": f"submission_{mark_set_id}.xlsx", "data": excel_bytes},
+            {
+                "filename": filename,
+                "data": excel_bytes,
+            }
         ]
 
-        success = await send_email_with_attachments(
+        # Pull SMTP config from settings.py
+        smtp_host = settings.smtp_host
+        smtp_port = settings.smtp_port
+        smtp_user = settings.smtp_user
+        smtp_password = settings.smtp_password
+        from_email = settings.smtp_from_email or smtp_user
+        from_name = settings.smtp_from_name or "Wootz Markbook System"
+
+        ok = await send_email_with_attachments(
             to_email=to_email,
             subject=subject,
             body_html=body_html,
             attachments=attachments,
-            smtp_host=settings.smtp_host,
-            smtp_port=settings.smtp_port,
-            smtp_user=settings.smtp_user,
-            smtp_password=settings.smtp_password,
-            from_email=settings.smtp_from_email,
-            from_name=settings.smtp_from_name,
+            smtp_host=smtp_host,
+            smtp_port=smtp_port,
+            smtp_user=smtp_user,
+            smtp_password=smtp_password,
+            from_email=from_email,
+            from_name=from_name,
         )
 
-        if success:
-            logger.info(f"✓ Email sent successfully to {to_email}")
+        if ok:
+            logger.info(f"Successfully sent email to {to_email}")
         else:
-            logger.error(f"✗ Email delivery failed to {to_email}")
+            logger.error(f"Email send returned False for {to_email}")
 
     except Exception as e:
-        logger.error(f"✗ Email send error for {to_email}: {e}", exc_info=True)
+        logger.exception(f"Failed to send email to {to_email}: {e}")
+        # Don't raise – this is called from background job
+
+# ========== Background Task ==========
+# ========== Background Task ==========
+
+async def _generate_and_send_excel_bundle(
+    app,
+    req: ReportBundleRequest,
+) -> None:
+    """
+    Background job:
+    - Resolve master vs QC mark sets.
+    - Count master marks.
+    - Generate Excel (master marks + QC inputs).
+    - Send email with ONLY Excel attached.
+
+    Uses app.state.storage_adapter (Sheets adapter) configured in main.py.
+    """
+
+    try:
+        storage_backend = getattr(app.state, "storage_backend", None)
+        if storage_backend != "sheets":
+            logger.info("Skipping bundle generation - not using sheets backend")
+            return
+
+        storage = getattr(app.state, "storage_adapter", None)
+        if storage is None:
+            logger.error("Storage adapter not available")
+            return
+
+        try:
+            doc = storage.get_document(req.doc_id)
+        except Exception as e:
+            logger.error(f"Failed to get document {req.doc_id}: {e}")
+            return
+
+        if not doc:
+            logger.error(f"Document not found: {req.doc_id}")
+            return
+
+        # 1) Resolve master + QC mark sets
+        try:
+            master_ms, qc_ms = _find_master_and_qc_mark_sets(
+                storage=storage,
+                doc_id=req.doc_id,
+                qc_mark_set_id=req.mark_set_id,
+            )
+        except HTTPException as e:
+            logger.error(f"Failed to find mark sets: {e.detail}")
+            return
+        except Exception as e:
+            logger.exception(f"Unexpected error finding mark sets: {e}")
+            return
+
+        master_mark_set_id = master_ms["mark_set_id"]
+        qc_mark_set_id = qc_ms["mark_set_id"]
+
+        # 2) Count master marks (fixes "62 of 0 marks" bug)
+        total_marks = _count_master_marks(storage, req.doc_id, master_mark_set_id)
+
+        # 3) Get user inputs and compute completed count
+        try:
+            user_inputs = storage.get_user_inputs(
+                mark_set_id=qc_mark_set_id,
+                submitted_by=req.submitted_by,
+            )
+            completed_marks = len(
+                {
+                    ui.get("mark_id")
+                    for ui in user_inputs
+                    if ui.get("mark_id") and (ui.get("user_value") or "").strip() != ""
+                }
+            )
+        except Exception as e:
+            logger.error(f"Failed to get user inputs: {e}")
+            user_inputs = []
+            completed_marks = 0
+
+        # 4) Build Excel bytes (master marks + QC results)
+        report_name = req.report_name or f"{doc.get('part_number') or 'inspection'}-QC"
+
+        try:
+            excel_bytes = _build_excel_bytes_for_qc(
+                storage=storage,
+                doc_id=req.doc_id,
+                master_mark_set_id=master_mark_set_id,
+                qc_mark_set_id=qc_mark_set_id,
+                submitted_by=req.submitted_by,
+                report_title=report_name,
+            )
+        except Exception as e:
+            logger.exception(f"Failed to build Excel: {e}")
+            return
+
+        # 5) Send email with ONLY Excel attached (async)
+        await _send_excel_email(
+            to_email=req.email_to,
+            report_name=report_name,
+            doc=doc,
+            master_ms=master_ms,
+            qc_ms=qc_ms,
+            total_marks=total_marks,
+            completed_marks=completed_marks,
+            excel_bytes=excel_bytes,
+        )
+
+    except Exception as e:
+        logger.exception(f"Unexpected error in background task: {e}")
+
+
+# ========== Public Endpoint ==========
+
+@router.post(
+    "/generate",
+    response_model=ReportBundleQueuedResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def queue_report_bundle(
+    req: ReportBundleRequest,
+    background_tasks: BackgroundTasks,
+    request: Request,
+) -> ReportBundleQueuedResponse:
+    """
+    Queue a background Excel-only QC report generation + email.
+
+    - Uses the master mark set (is_master=TRUE) for total_marks and row definitions.
+    - Uses the given mark_set_id as the QC run for user inputs & groups.
+    - Produces ONE Excel file and sends via email.
+    """
+
+    try:
+        app = request.app
+        storage_backend = getattr(app.state, "storage_backend", None)
+
+        if storage_backend != "sheets":
+            raise HTTPException(
+                status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                detail="reports/bundle is only supported with the Google Sheets backend",
+            )
+
+        storage = getattr(app.state, "storage_adapter", None)
+        if storage is None:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Sheets adapter not initialized",
+            )
+
+        # quick validation in foreground
+        try:
+            doc = storage.get_document(req.doc_id)
+        except Exception as e:
+            logger.error(f"Failed to get document {req.doc_id}: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to retrieve document: {str(e)}",
+            )
+
+        if not doc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"DOCUMENT_NOT_FOUND: {req.doc_id}",
+            )
+
+        # Validate that QC + master mark sets exist; errors here are surfaced to frontend
+        try:
+            _find_master_and_qc_mark_sets(
+                storage=storage, 
+                doc_id=req.doc_id, 
+                qc_mark_set_id=req.mark_set_id
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error validating mark sets: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error validating mark sets: {str(e)}",
+            )
+
+        # Background task (Excel-only, no PDF)
+        background_tasks.add_task(_generate_and_send_excel_bundle, app, req)
+
+
+        return ReportBundleQueuedResponse(
+            status="queued",
+            message="Report bundle generation has been queued (Excel-only).",
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Unexpected error in queue_report_bundle: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Internal server error: {str(e)}",
+        )

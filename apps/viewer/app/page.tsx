@@ -1280,18 +1280,30 @@ function ViewerContent() {
     updateVisibleRange();
   }, [zoom, recomputePrefix]);
 
-  const navigateToMark = useCallback(
-    async (index: number) => {
-      if (!pdf || index < 0 || index >= marks.length) return;
+const navigateToMark = useCallback(
+  async (index: number) => {
+    if (!pdf) return;
 
-      const mark = marks[index];
-      const pageNumber = mark.page_index + 1;
-      const container = containerRef.current;
-      const pageEl = pageElsRef.current[mark.page_index];
-      if (!container || !pageEl) return;
+    // Defensive: re-check bounds and mark existence
+    if (index < 0 || index >= marks.length) {
+      console.warn('[navigateToMark] invalid index', index, 'marks length:', marks.length);
+      return;
+    }
 
-      const base = basePageSizeRef.current[mark.page_index];
-      if (!base) return;
+    const mark = marks[index];
+    if (!mark) {
+      console.warn('[navigateToMark] mark at index is undefined', index);
+      return;
+    }
+
+    const pageNumber = (mark.page_index ?? 0) + 1;
+    const container = containerRef.current;
+    const pageEl = pageElsRef.current[mark.page_index ?? 0];
+    if (!container || !pageEl) return;
+
+    const base = basePageSizeRef.current[mark.page_index ?? 0];
+    if (!base) return;
+
 
       const containerW = container.clientWidth;
       const containerH = container.clientHeight;
