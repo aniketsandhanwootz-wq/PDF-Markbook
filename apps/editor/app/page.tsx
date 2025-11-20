@@ -122,18 +122,33 @@ type CreateDocMarkSetBody = {
   description?: string | null;   // ✅ NEW
 };
 
-
 // ------- NEW Setup Screen (doc bootstrap + markset picker) -------
 function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string, isMaster: boolean) => void }) {
   const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
   const params = useSearchParams();
 
-  // Query inputs
+  // 👉 Detect if URL already has everything needed for auto-bootstrap
+  const hasAutoParams =
+    !!params?.get('project_name') &&
+    !!params?.get('id') &&
+    !!params?.get('part_number') &&
+    !!params?.get('assembly_drawing');
+
+  // Query inputs (initialised from URL, but user can still edit in manual mode)
   const [projectName, setProjectName] = useState<string>(params?.get('project_name') || '');
   const [extId, setExtId] = useState<string>(params?.get('id') || '');
   const [partNumber, setPartNumber] = useState<string>(params?.get('part_number') || '');
   const [userMail, setUserMail] = useState<string>(params?.get('user_mail') || '');
   const [assemblyDrawing, setAssemblyDrawing] = useState<string>(params?.get('assembly_drawing') || '');
+
+
+  // New markset modal-ish fields
+  const [newLabel, setNewLabel] = useState('');
+  const [newDescription, setNewDescription] = useState('');  // ✅ NEW
+  const [creating, setCreating] = useState(false);
+
+  // 🔽 NEW: collapse toggle for Available Inspection Maps
+  const [mapsCollapsed, setMapsCollapsed] = useState(false);
 
   // Bootstrap state
   const [boot, setBoot] = useState<BootstrapDoc | null>(null);
@@ -143,12 +158,6 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
   // Inline rename state
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState<string>('');
-
-  // New markset modal-ish fields
-  const [newLabel, setNewLabel] = useState('');
-  const [newDescription, setNewDescription] = useState('');  // ✅ NEW
-  const [creating, setCreating] = useState(false);
-
 
   // one-time notice after Save & Submit
   const [notice, setNotice] = useState<string>('');
@@ -161,6 +170,33 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
       }
     } catch { }
   }, []);
+  // ---------------- master_editors visibility ----------------
+  // backend is expected to send document.master_editors
+  // as either an array of emails or a comma/semicolon separated string.
+  const canSeeMaster = (() => {
+    if (!boot?.document) return true; // default: show if nothing configured
+
+    const docAny = boot.document as any;
+    const editors = docAny.master_editors;
+    const email = (userMail || '').toLowerCase().trim();
+
+    // if no email or no whitelist => show master
+    if (!email || !editors) return true;
+
+    if (Array.isArray(editors)) {
+      return editors.map((e: string) => e.toLowerCase().trim()).includes(email);
+    }
+
+    if (typeof editors === 'string') {
+      return editors
+        .split(/[;,]/)
+        .map((s: string) => s.toLowerCase().trim())
+        .filter(Boolean)
+        .includes(email);
+    }
+
+    return true;
+  })();
 
   const runBootstrap = async () => {
     setErr('');
@@ -221,22 +257,21 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
 
     const finalPdfUrl = boot.document.pdf_url;
 
-    const params = new URLSearchParams();
-    params.set('pdf_url', finalPdfUrl);
-    params.set('doc_id', boot.document.doc_id);        // 👈 NEW
-    params.set('mark_set_id', markSetId);
-    params.set('is_master', isMaster ? '1' : '0');
-    params.set('master_mark_set_id', masterForViewer);
+    const search = new URLSearchParams();
+    search.set('pdf_url', finalPdfUrl);
+    search.set('doc_id', boot.document.doc_id);        // 👈 NEW
+    search.set('mark_set_id', markSetId);
+    search.set('is_master', isMaster ? '1' : '0');
+    search.set('master_mark_set_id', masterForViewer);
     if (userMail) {
-      params.set('user_mail', userMail);
+      search.set('user_mail', userMail);
       try {
         localStorage.setItem('markbook_user_mail', userMail);
       } catch { }
     }
 
-    window.location.href = `${window.location.pathname}?${params.toString()}`;
+    window.location.href = `${window.location.pathname}?${search.toString()}`;
   };
-
 
   const handleCreateMarkset = async () => {
     if (!boot?.document?.doc_id) {
@@ -274,7 +309,6 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
       setCreating(false);
     }
   };
-
 
   const handleDuplicateMarkset = async (srcId: string, srcLabel: string) => {
     try {
@@ -315,7 +349,6 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
     }
   };
 
-
   const handleRenameMarkset = async (markSetId: string, currentLabel: string) => {
     setEditingId(markSetId);
     setEditingName(currentLabel);
@@ -345,12 +378,18 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
       setErr('Failed to rename mark set.');
     }
   };
-
   // ----- helper to render a single mark-set card -----
   const renderMarkSetCard = (ms: BootstrapDoc['mark_sets'][number]) => {
     // MASTER cannot be renamed, so we never go into "editing" state for it
     const isEditing = !ms.is_master && editingId === ms.mark_set_id;
     const effectiveLabel = ms.is_master ? 'MASTER' : ms.label;
+
+    // allow for backend naming differences: marks_count / marks etc.
+    const balloonCount =
+      ms.marks_count ??
+      (ms as any).marks_count ??
+      (ms as any).marks ??
+      0;
 
     return (
       <div
@@ -396,17 +435,27 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
             </div>
           )}
 
-          <div style={{ color: '#666', fontSize: 12 }}>
-            {(ms.marks_count ?? 0)} mark{(ms.marks_count ?? 0) === 1 ? '' : 's'}
+          {/* balloons + (for non-master) created_by */}
+          <div style={{ fontSize: 12, color: '#666', marginTop: 2 }}>
+            {balloonCount} balloon{balloonCount === 1 ? '' : 's'}
+            {!ms.is_master && ms.created_by && (
+              <>
+                <span>{' | '}</span>
+                <span
+                  style={{
+                    color: '#777',
+                    fontSize: 11,
+                    marginLeft: 2,
+                  }}
+                >
+                  {ms.created_by}
+                </span>
+              </>
+            )}
           </div>
 
-          {ms.created_by && (
-            <div style={{ color: '#777', fontSize: 11, marginTop: 2 }}>
-              {ms.created_by}
-            </div>
-          )}
-
-          {ms.description && (
+          {/* Description only for non-master sets */}
+          {!ms.is_master && ms.description && (
             <div style={{ color: '#999', fontSize: 11, marginTop: 2 }}>
               {ms.description}
             </div>
@@ -426,7 +475,9 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
             {!ms.is_master && (
               <>
                 <button
-                  onClick={() => handleDuplicateMarkset(ms.mark_set_id, ms.label)}
+                  onClick={() =>
+                    handleDuplicateMarkset(ms.mark_set_id, ms.label)
+                  }
                   style={btn}
                 >
                   Duplicate
@@ -448,11 +499,16 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
 
   // split MASTER vs QC/other mark-sets
   const masterMarkSet = boot?.mark_sets.find(ms => ms.is_master) || null;
-  const nonMasterMarkSets = boot?.mark_sets.filter(ms => !ms.is_master) || [];
+  const nonMasterMarkSets = boot
+    ? [...boot.mark_sets.filter(ms => !ms.is_master)].sort(
+      (a, b) =>
+        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    )
+    : [];
+
 
   // 🔁 Auto-bootstrap on first load if URL already has keys + assembly_drawing
   useEffect(() => {
-
     const hasKeys = projectName && extId && partNumber;
     const hasUrl = !!assemblyDrawing; // backend will clean it
     if (!boot && !loading && hasKeys && hasUrl) {
@@ -461,12 +517,72 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectName, extId, partNumber, assemblyDrawing]);
 
-  // UI
+  // ⚡ AUTO-FLOW UI:
+  // If we came with full params in URL and bootstrap hasn't finished yet,
+  // show a clean full-screen loader instead of the form.
+  if (!boot && hasAutoParams) {
+    return (
+      <div
+        style={{
+          minHeight: '100vh',
+          background: '#f5f5f5',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        <div
+          style={{
+            background: '#fff',
+            padding: 24,
+            borderRadius: 8,
+            boxShadow: '0 2px 12px rgba(0,0,0,0.12)',
+            minWidth: 260,
+            textAlign: 'center',
+          }}
+        >
+          <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 6 }}>
+            Preparing Inspection Maps…
+          </div>
+          {!err && (
+            <div style={{ fontSize: 13, color: '#555' }}>
+              Bootstrapping Drawings &amp; Infornation. Please wait....
+            </div>
+          )}
+          {err && (
+            <div
+              style={{
+                marginTop: 10,
+                padding: 8,
+                borderRadius: 4,
+                background: '#ffebee',
+                color: '#c62828',
+                fontSize: 13,
+              }}
+            >
+              {err}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // 🧩 MANUAL + POST-BOOT UI (same as before)
   return (
     <div style={{ minHeight: '100vh', background: '#f5f5f5', padding: 20, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <div style={{ background: '#fff', width: '100%', maxWidth: 860, borderRadius: 8, boxShadow: '0 2px 12px rgba(0,0,0,0.1)', padding: 24 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 6 }}>{extId} - {partNumber}</h1>
-        {/* <p style={{ color: '#666', marginBottom: 18 }}>Enter keys → Bootstrap the document → Pick or create a mark set.</p> */}
+        <h1
+          style={{
+            fontSize: 22,
+            fontWeight: 700,
+            marginBottom: 6,
+            textAlign: 'center',        // ✅ center heading
+          }}
+        >
+          {extId} - {partNumber}
+        </h1>
+
         {notice && (
           <div
             style={{
@@ -482,7 +598,7 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
           </div>
         )}
 
-        {/* Keys + URL + errors are ONLY visible before bootstrap */}
+        {/* Keys + URL + errors are ONLY visible before bootstrap in MANUAL mode */}
         {!boot && (
           <>
             {/* Keys row */}
@@ -500,7 +616,11 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
               style={{ ...inp, width: '100%', marginBottom: 12 }}
             />
 
-            {err && <div style={{ background: '#ffebee', color: '#c62828', padding: 10, borderRadius: 4, marginBottom: 12 }}>{err}</div>}
+            {err && (
+              <div style={{ background: '#ffebee', color: '#c62828', padding: 10, borderRadius: 4, marginBottom: 12 }}>
+                {err}
+              </div>
+            )}
           </>
         )}
 
@@ -510,13 +630,10 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
           </button>
         ) : (
           <>
-
             {/* Markset picker */}
             <div style={{ marginTop: 16 }}>
-              {/* <div style={{ fontWeight: 600, marginBottom: 6 }}>Available Mark Sets</div> */}
-
-              {/* MASTER pinned at top (not in scroll) */}
-              {masterMarkSet && (
+              {/* MASTER pinned at top (only for master_editors) */}
+              {masterMarkSet && canSeeMaster && (
                 <div style={{ marginBottom: 12 }}>
                   <div
                     style={{
@@ -527,82 +644,120 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
                       textTransform: 'uppercase',
                     }}
                   >
-                    MASTER mark set
+                    Master Set
                   </div>
                   {renderMarkSetCard(masterMarkSet)}
                 </div>
               )}
 
-            {/* Create new markset */}
-            <div style={{ marginTop: 16, borderTop: '1px dashed #ddd', paddingTop: 12 }}>
-              <div style={{ fontWeight: 600, marginBottom: 6 }}>Create New Mark Set</div>
-              <div style={{ marginBottom: 8 }}>
-                <input
-                  placeholder="Label (e.g., QC – Dimensions)"
-                  value={newLabel}
-                  onChange={e => setNewLabel(e.target.value)}
-                  style={inp}
+              {/* Create new markset */}
+              <div style={{ marginTop: 16, borderTop: '1px dashed #ddd', paddingTop: 12 }}>
+                <div style={{ fontWeight: 600, marginBottom: 6 }}>Create Inspection Map</div>
+                <div style={{ marginBottom: 8 }}>
+                  <input
+                    placeholder="Title (e.g., Pre Fitment Inspection Map)"
+                    value={newLabel}
+                    onChange={e => setNewLabel(e.target.value)}
+                    style={{ ...inp, width: '100%' }}
+                  />
+                </div>
+
+                {/* ✅ NEW: Description field */}
+                <textarea
+                  placeholder="Inspection Plan  (e.g. 'QC for first article inspection, batch #123'"
+                  value={newDescription}
+                  onChange={e => setNewDescription(e.target.value)}
+                  style={{ ...inp, width: '100%', minHeight: 60, resize: 'vertical', fontSize: 13, marginBottom: 4 }}
                 />
-              </div>
-
-
-              {/* ✅ NEW: Description field */}
-              <textarea
-                placeholder="Description (optional) – e.g., 'QC for first article inspection, batch #123'"
-                value={newDescription}
-                onChange={e => setNewDescription(e.target.value)}
-                style={{ ...inp, width: '100%', minHeight: 60, resize: 'vertical', fontSize: 13, marginBottom: 4 }}
-              />
-
-              <button
-                onClick={handleCreateMarkset}
-                disabled={creating}
-                style={{ ...btnPrimary, marginTop: 10 }}
-              >
-                {creating ? 'Creating…' : 'Create & Open'}
-              </button>
-            </div>
-
-              {/* QC / other mark-sets in scrollable list */}
-              <div>
-                <div
-                  style={{
-                    fontSize: 12,
-                    fontWeight: 600,
-                    color: '#555',
-                    margin: '4px 0 6px',
-                    textTransform: 'uppercase',
-                  }}
-                >
-                  QC / other mark sets
-                </div>
 
                 <div
                   style={{
-                    display: 'grid',
-                    gap: 8,
-                    maxHeight: 280, // rest of the list scrolls
-                    overflow: 'auto',
-                    paddingRight: 4,
+                    display: 'flex',
+                    justifyContent: 'flex-end',
+                    marginTop: 10,
+                    marginBottom: 20, // ✅ space before "Available Inspection Maps"
                   }}
                 >
-                  {nonMasterMarkSets.map(ms => renderMarkSetCard(ms))}
-
-                  {nonMasterMarkSets.length === 0 && (
-                    <div style={{ color: '#666', fontSize: 13, padding: '6px 2px' }}>
-                      No QC mark sets yet.
-                    </div>
-                  )}
+                  <button
+                    onClick={handleCreateMarkset}
+                    disabled={creating}
+                    style={btnPrimary}
+                  >
+                    {creating ? 'Starting…' : 'Start Ballooning'}
+                  </button>
                 </div>
+
+              </div>
+
+              {/* QC / other mark-sets in scrollable, collapsible list */}
+              <div style={{ marginTop: 8 }}>
+                {/* Header bar – clickable to collapse/expand */}
+                <div
+                  onClick={() => setMapsCollapsed(prev => !prev)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '10px 12px',
+                    background: '#fafafa',
+                    borderRadius: 6,
+                    border: '1px solid #eee',
+                    cursor: 'pointer',
+                    userSelect: 'none',
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: 12,
+                      fontWeight: 600,
+                      color: '#555',
+                      textTransform: 'uppercase',
+                    }}
+                  >
+                    Available Inspection Maps
+                  </span>
+                  <span style={{ fontSize: 18, fontWeight: 600 }}>
+                    {mapsCollapsed ? '▼' : '▲'}
+                  </span>
+
+                </div>
+
+                {/* Collapsible content */}
+                {!mapsCollapsed && (
+                  <div
+                    style={{
+                      marginTop: 8,
+                      display: 'grid',
+                      gap: 8,
+                      maxHeight: 280, // scrollable area
+                      overflow: 'auto',
+                      paddingRight: 4,
+                    }}
+                  >
+                    {nonMasterMarkSets.map(ms => renderMarkSetCard(ms))}
+
+                    {nonMasterMarkSets.length === 0 && (
+                      <div
+                        style={{
+                          color: '#666',
+                          fontSize: 13,
+                          padding: '6px 2px',
+                        }}
+                      >
+                        No Inspection Maps available, create one.
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
-
           </>
         )}
       </div>
     </div>
   );
 }
+
 
 // small styles for setup
 const inp: React.CSSProperties = { padding: '10px 12px', border: '1px solid #ddd', borderRadius: 4, fontSize: 14, outline: 'none' };
@@ -1779,7 +1934,7 @@ function EditorContent() {
           <button className="sidebar-toggle" onClick={() => setSidebarOpen(!sidebarOpen)}>
             {sidebarOpen ? '◀' : '▶'}
           </button>
-          {sidebarOpen && <h3>Marks</h3>}
+          {sidebarOpen && <h3>Part Number - tbd</h3>}
         </div>
         {sidebarOpen && (
           <MarkList
@@ -1803,7 +1958,7 @@ function EditorContent() {
               onClick={saveAndSubmit}
               disabled={marks.length === 0}
             >
-              Save &amp; Submit ({marks.length})
+              Save &amp; Finish
             </button>
           </div>
         )}

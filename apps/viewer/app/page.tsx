@@ -324,10 +324,10 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
         }}
       >
         <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 6 }}>
-          PDF Mark Viewer — Markbook
+          {extId}
         </h1>
         <p style={{ color: '#666', marginBottom: 18 }}>
-          Pick a mark set to start reviewing.
+          {partNumber}
         </p>
 
         {!hasBootstrapKeys && (
@@ -424,7 +424,7 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
               </div>
             )}
 
-            {/* Master Mark Set */}
+            {/* Master Mark Set
             {masterMarkset && (
               <div style={{ marginTop: 16 }}>
                 <div
@@ -510,7 +510,7 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
                   </div>
                 </div>
               </div>
-            )}
+            )} */}
 
             {/* Other Mark Sets */}
             {otherMarksets.length > 0 && (
@@ -523,7 +523,7 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
                     marginBottom: 8,
                   }}
                 >
-                  <div style={{ fontWeight: 600 }}>Other Mark Sets</div>
+                  <div style={{ fontWeight: 600 }}>Inspection Maps</div>
                 </div>
                 <div
                   style={{
