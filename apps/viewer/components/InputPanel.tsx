@@ -14,7 +14,9 @@ type Mark = {
   zoom_hint?: number | null;
   label?: string;
   instrument?: string;
+  is_required?: boolean;
 };
+
 
 type InputPanelProps = {
   currentMark: Mark | null;
@@ -168,15 +170,26 @@ export default function InputPanel({
             whiteSpace: 'normal',
             overflowWrap: 'anywhere',
             wordBreak: 'break-word',
-            textAlign: 'left',
+            textAlign: 'center',
+            justifySelf: 'center',
           }}
         >
           {headingText}
         </div>
 
-        <div style={{ fontSize: 12, opacity: 0.9, whiteSpace: 'nowrap', justifySelf: 'end' }}>
-          {Math.round(((currentIndex + 1) / totalMarks) * 100)}%
+
+        <div
+          style={{
+            fontSize: 18,
+            opacity: 0.95,
+            whiteSpace: 'nowrap',
+            justifySelf: 'end',
+            color: currentMark.is_required !== false ? '#FF3B3B' : 'transparent',
+          }}
+        >
+          ‼
         </div>
+
       </div>
 
       {/* Input */}

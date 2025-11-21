@@ -298,9 +298,18 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
     }
     onStart(boot.document.pdf_url, markSetId);
   };
-
   const masterMarkset = boot?.mark_sets.find((ms) => ms.is_master);
-  const otherMarksets = boot?.mark_sets.filter((ms) => !ms.is_master) || [];
+  const otherMarksets =
+    boot?.mark_sets
+      ?.filter((ms) => !ms.is_master)
+      .slice()
+      .sort((a, b) => {
+        const at = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const bt = b.created_at ? new Date(b.created_at).getTime() : 0;
+        // newest first
+        return bt - at;
+      }) || [];
+
 
   return (
     <div
@@ -323,12 +332,31 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
           padding: 24,
         }}
       >
-        <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 6 }}>
-          {extId}
-        </h1>
-        <p style={{ color: '#666', marginBottom: 18 }}>
-          {partNumber}
-        </p>
+        <div
+          style={{
+            textAlign: 'center',
+            marginBottom: 18,
+          }}
+        >
+          <h1
+            style={{
+              fontSize: 22,
+              fontWeight: 700,
+              marginBottom: 4,
+            }}
+          >
+            {extId}
+          </h1>
+          <p
+            style={{
+              color: '#666',
+              margin: 0,
+            }}
+          >
+            {partNumber}
+          </p>
+        </div>
+
 
         {!hasBootstrapKeys && (
           <>
