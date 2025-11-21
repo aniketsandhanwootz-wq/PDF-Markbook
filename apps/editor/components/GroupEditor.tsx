@@ -37,6 +37,8 @@ type GroupEditorProps = {
     mode?: 'create' | 'edit';
     groupId?: string;
     initialName?: string;
+    // next group number for auto names: Group 1, Group 2, ...
+    nextGroupNumber?: number;
     initialSelectedMarkIds?: string[];
     onClose: () => void;
     onSaved: () => void;
@@ -92,11 +94,10 @@ export default function GroupEditor({
     onUpdateMark,
     onFocusMark,
     onCreateMarkInGroup,
+    nextGroupNumber,
 }: GroupEditorProps) {
-    const [name, setName] = useState<string>(
-        initialName ?? `Group p${pageIndex + 1}`
-    );
     const [saving, setSaving] = useState(false);
+
 
 
     // marks that geometrically lie inside this area
@@ -414,8 +415,13 @@ export default function GroupEditor({
             return;
         }
 
-        const groupName = name.trim() || `Group p${pageIndex + 1}`;
+        const groupName =
+            mode === 'edit'
+                ? (initialName && initialName.trim()) || `Group ${pageIndex + 1}`
+                : `Group ${nextGroupNumber ?? 1}`;
+
         const mark_ids = Array.from(selected);
+
 
         if (mark_ids.length === 0) {
             const ok = window.confirm(
@@ -543,32 +549,7 @@ export default function GroupEditor({
                     </button>
                 </div>
 
-                {/* Group name */}
-                <div>
-                    <label
-                        style={{
-                            fontSize: 11,
-                            color: '#555',
-                            display: 'block',
-                            marginBottom: 4,
-                            fontWeight: 500,
-                        }}
-                    >
-                        Group name
-                    </label>
-                    <input
-                        type="text"
-                        value={name}
-                        onChange={(e) => setName(e.target.value)}
-                        style={{
-                            width: '100%',
-                            padding: '8px 10px',
-                            borderRadius: 4,
-                            border: '1px solid #ccc',
-                            fontSize: 13,
-                        }}
-                    />
-                </div>
+
 
                 {/* Body: left preview + right marks */}
                 <div

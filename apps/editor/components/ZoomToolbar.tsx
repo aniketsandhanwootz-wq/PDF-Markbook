@@ -16,16 +16,16 @@ type ZoomToolbarProps = {
   totalPages?: number;
   onPageJump?: (page: number) => void;
 
-  // 🔁 was onFinalize; keep the prop name but clarify its purpose at call-site
-  onFinalize?: () => void;        // Download PDF
-  onSaveSubmit?: () => void;      // Save to backend, go back, show notice
+  // Download PDF (Map PDF)
+  onFinalize?: () => void;
+  onSaveSubmit?: () => void;
 
-  // ✅ NEW: enter "group draw" mode
+  // Enter "group draw" mode (not used in toolbar UI right now)
   onCreateGroup?: () => void;
 };
 
 export default function ZoomToolbar({
-  zoom,
+  zoom,          // kept in props for compatibility (not shown in UI)
   onZoomIn,
   onZoomOut,
   onReset,
@@ -72,84 +72,84 @@ export default function ZoomToolbar({
   };
 
   return (
-    <div className="zoom-toolbar">
-      {/* Page Jump */}
-      {onPageJump && totalPages && (
-        <div
-          className="page-nav"
-          style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 12px' }}
-        >
-          <span style={{ fontSize: 14, color: '#666', fontWeight: 500 }}>Page</span>
-          <input
-            type="text"
-            value={pageInput}
-            onChange={handlePageInputChange}
-            onKeyDown={handleKeyDown}
-            onBlur={handlePageJump}
-            placeholder={currentPage?.toString() || '1'}
-            style={{
-              width: 50,
-              padding: '6px 8px',
-              border: '1px solid #ccc',
-              borderRadius: 4,
-              textAlign: 'center',
-              fontSize: 14,
-              fontWeight: 500,
-            }}
-            title="Jump to page (press Enter)"
-          />
-          <span style={{ fontSize: 14, color: '#666', fontWeight: 500 }}>/ {totalPages}</span>
-        </div>
-      )}
+    <div
+      className="zoom-toolbar"
+      style={{
+        position: 'relative',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'flex-end',
+        gap: 8,
+      }}
+    >
+      {/* Center heading */}
+      <div
+        style={{
+          position: 'absolute',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          fontSize: 14,
+          fontWeight: 600,
+          color: '#333',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        Select a view to create group
+      </div>
 
-      {/* Zoom + Actions */}
-      <div className="zoom-controls">
-        <button onClick={onZoomOut} className="toolbar-btn" title="Zoom out">
-          −
-        </button>
-        <span className="zoom-label">{Math.round(zoom * 100)}%</span>
-        <button onClick={onZoomIn} className="toolbar-btn" title="Zoom in">
-          +
-        </button>
-        <button onClick={onReset} className="toolbar-btn" title="Reset zoom (100%)">
-          Reset
-        </button>
+      {/* Right-side controls: Page nav + Fit + Map PDF */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+        }}
+      >
+        {onPageJump && totalPages && (
+          <div
+            className="page-nav"
+            style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+          >
+            <span style={{ fontSize: 14, color: '#666', fontWeight: 500 }}>
+              Page
+            </span>
+            <input
+              type="text"
+              value={pageInput}
+              onChange={handlePageInputChange}
+              onKeyDown={handleKeyDown}
+              onBlur={handlePageJump}
+              placeholder={currentPage?.toString() || '1'}
+              style={{
+                width: 50,
+                padding: '6px 8px',
+                border: '1px solid #ccc',
+                borderRadius: 4,
+                textAlign: 'center',
+                fontSize: 14,
+                fontWeight: 500,
+              }}
+              title="Jump to page (press Enter)"
+            />
+            <span style={{ fontSize: 14, color: '#666', fontWeight: 500 }}>
+              / {totalPages}
+            </span>
+          </div>
+        )}
+
         <button onClick={onFit} className="toolbar-btn" title="Fit to width">
           Fit
         </button>
 
-        {/* ✅ NEW: Create group button
-        {onCreateGroup && (
-          <button
-            onClick={onCreateGroup}
-            className="toolbar-btn"
-            title="Create group: draw a rectangle on the PDF"
-            style={{ marginLeft: 8, borderColor: '#6a1b9a', color: '#6a1b9a', fontWeight: 600 }}
-          >
-            Create Group
-          </button>
-        )} */}
-
-        {/* Primary actions on the RIGHT */}
         {onFinalize && (
           <button
             onClick={onFinalize}
             className="toolbar-btn toolbar-primary"
-            title="Download PDF"
-            style={{ marginLeft: 8 }}
+            title="Download mapped PDF"
+            style={{ marginLeft: 4, display: 'inline-flex', alignItems: 'center', gap: 6 }}
           >
-            Download PDF
-          </button>
-        )}
-
-        {onSaveSubmit && (
-          <button
-            onClick={onSaveSubmit}
-            className="toolbar-btn"
-            title="Save marks, submit and go back"
-            style={{ marginLeft: 8, borderColor: '#2e7d32', color: '#2e7d32', fontWeight: 700 }}
-          >
-            Save &amp; Submit
+            <span style={{ fontSize: 14 }}>⬇︎</span>
+            <span>Map PDF</span>
           </button>
         )}
       </div>

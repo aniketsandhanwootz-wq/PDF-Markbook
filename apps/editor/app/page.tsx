@@ -259,10 +259,16 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
 
     const search = new URLSearchParams();
     search.set('pdf_url', finalPdfUrl);
-    search.set('doc_id', boot.document.doc_id);        // 👈 NEW
+    search.set('doc_id', boot.document.doc_id);
     search.set('mark_set_id', markSetId);
     search.set('is_master', isMaster ? '1' : '0');
     search.set('master_mark_set_id', masterForViewer);
+
+    // 👉 pass part_number so editor sidebar can show it
+    if (boot.document.part_number) {
+      search.set('part_number', boot.document.part_number);
+    }
+
     if (userMail) {
       search.set('user_mail', userMail);
       try {
@@ -384,12 +390,7 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
     const isEditing = !ms.is_master && editingId === ms.mark_set_id;
     const effectiveLabel = ms.is_master ? 'MASTER' : ms.label;
 
-    // allow for backend naming differences: marks_count / marks etc.
-    const balloonCount =
-      ms.marks_count ??
-      (ms as any).marks_count ??
-      (ms as any).marks ??
-      0;
+
 
     return (
       <div
@@ -435,10 +436,12 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
             </div>
           )}
 
-          {/* balloons + (for non-master) created_by */}
+           {/* Description + created_by (no balloon count) */}
           <div style={{ fontSize: 12, color: '#666', marginTop: 2 }}>
-            {balloonCount} balloon{balloonCount === 1 ? '' : 's'}
-            {!ms.is_master && ms.created_by && (
+            {ms.description && ms.description.trim() !== ''
+              ? ms.description
+              : 'No description'}
+            {ms.created_by && ms.created_by.trim() !== '' && (
               <>
                 <span>{' | '}</span>
                 <span
@@ -453,13 +456,6 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
               </>
             )}
           </div>
-
-          {/* Description only for non-master sets */}
-          {!ms.is_master && ms.description && (
-            <div style={{ color: '#999', fontSize: 11, marginTop: 2 }}>
-              {ms.description}
-            </div>
-          )}
         </div>
 
         {!isEditing && (
@@ -765,10 +761,13 @@ const btn: React.CSSProperties = { padding: '8px 14px', border: '1px solid #ccc'
 const btnPrimary: React.CSSProperties = { ...btn, borderColor: '#1976d2', color: '#1976d2', fontWeight: 700 };
 
 
-// Main Editor Component
 function EditorContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
+
+  // Part number passed from SetupScreen URL
+  const partNumberFromUrl = searchParams?.get('part_number') || '';
+
   const [showSetup, setShowSetup] = useState(true);
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [numPages, setNumPages] = useState(0);
@@ -1918,7 +1917,6 @@ function EditorContent() {
       </div>
     );
   }
-
   if (error || !pdf) {
     return (
       <div className="editor-container">
@@ -1927,6 +1925,10 @@ function EditorContent() {
     );
   }
 
+  // QC with no groups: don't show marks yet
+  const hideMarksForQcWithoutGroups = !isMasterMarkSet && groups.length === 0;
+  const marksForSidebar = hideMarksForQcWithoutGroups ? [] : marks;
+
   return (
     <div className="editor-container">
       <div className={`sidebar ${sidebarOpen ? 'open' : 'closed'}`}>
@@ -1934,11 +1936,11 @@ function EditorContent() {
           <button className="sidebar-toggle" onClick={() => setSidebarOpen(!sidebarOpen)}>
             {sidebarOpen ? '◀' : '▶'}
           </button>
-          {sidebarOpen && <h3>Part Number - tbd</h3>}
+          {sidebarOpen && <h3>{partNumberFromUrl || 'Part Number'}</h3>}
         </div>
         {sidebarOpen && (
           <MarkList
-            marks={marks}
+            marks={marksForSidebar}
             groups={isMasterMarkSet ? [] : groups}
             selectedMarkId={selectedMarkId}
             selectedGroupId={isMasterMarkSet ? null : selectedGroupId}
@@ -2049,6 +2051,9 @@ function EditorContent() {
                 {markOverlays
                   .filter((overlay) => overlay.pageIndex === pageNum - 1)
                   .filter((overlay) => {
+                    // QC mark-set with no groups yet → hide all marks
+                    if (!isMasterMarkSet && groups.length === 0) return false;
+
                     // In QC mode, if a group is selected, only show that group's marks
                     if (isMasterMarkSet || !selectedGroupId) return true;
                     const g = groups.find(
@@ -2058,6 +2063,7 @@ function EditorContent() {
                     return (g.mark_ids || []).includes(overlay.markId);
                   })
                   .map((overlay) => {
+
 
                     const mark = marks.find((m) => m.mark_id === overlay.markId);
                     const label = mark?.label ?? indexToLabel(mark?.order_index ?? 0);
@@ -2158,6 +2164,7 @@ function EditorContent() {
             )}
             // ✅ groups belong to this QC mark-set
             ownerMarkSetId={ownerMarkSetId.current}
+            nextGroupNumber={groups.length + 1}
             onUpdateMark={updateMark}
             onFocusMark={(markId) => {
               const m = marks.find((mm) => mm.mark_id === markId);
