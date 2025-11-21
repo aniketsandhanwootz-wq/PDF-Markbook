@@ -48,11 +48,13 @@ async def generate_excel_report(body: ExcelReportBody, storage = Depends(get_sto
             entries=entries,
             user_email=body.user_email,
             mark_set_id=body.mark_set_id,
-            mark_set_label=ms.get("label", ""),
-            part_number=doc.get("part_number", ""),
+            mark_set_label=ms.get("name", "") or ms.get("label", ""),
+            part_number=doc.get("part_number", "") or "",
+            external_id=doc.get("external_id", "") or "",
             padding_pct=body.padding_pct,
             logo_url=body.logo_url or "https://res.cloudinary.com/dbwg6zz3l/image/upload/v1753101276/Black_Blue_ctiycp.png",
         )
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"EXCEL_BUILD_FAILED: {e}")
 

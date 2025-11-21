@@ -1308,30 +1308,56 @@ function ViewerContent() {
     updateVisibleRange();
   }, [zoom, recomputePrefix]);
 
-const navigateToMark = useCallback(
-  async (index: number) => {
-    if (!pdf) return;
+  const navigateToMark = useCallback(
+    async (index: number) => {
+      if (!pdf) return;
 
-    // Defensive: re-check bounds and mark existence
-    if (index < 0 || index >= marks.length) {
-      console.warn('[navigateToMark] invalid index', index, 'marks length:', marks.length);
-      return;
-    }
+      // Defensive: re-check bounds and mark existence
+      if (index < 0 || index >= marks.length) {
+        console.warn('[navigateToMark] invalid index', index, 'marks length:', marks.length);
+        return;
+      }
 
-    const mark = marks[index];
-    if (!mark) {
-      console.warn('[navigateToMark] mark at index is undefined', index);
-      return;
-    }
+      const mark = marks[index];
+      if (!mark) {
+        console.warn('[navigateToMark] mark at index is undefined', index);
+        return;
+      }
 
-    const pageNumber = (mark.page_index ?? 0) + 1;
-    const container = containerRef.current;
-    const pageEl = pageElsRef.current[mark.page_index ?? 0];
-    if (!container || !pageEl) return;
+      const pageIndex = mark.page_index ?? 0;
+      const pageNumber = pageIndex + 1;
+      const container = containerRef.current;
+      if (!container) return;
 
-    const base = basePageSizeRef.current[mark.page_index ?? 0];
-    if (!base) return;
+      // ✅ NEW: ensure the DOM element for this page exists even if it was
+      // outside the current windowed range (e.g. jumping from page 1 → 4).
+      let pageEl = pageElsRef.current[pageIndex];
 
+      if (!pageEl) {
+        const pref = prefixHeightsRef.current;
+
+        // Scroll so that this page's top is brought into view → windowing
+        // logic will include it in pagesToRender on the next render.
+        if (pref.length > pageIndex) {
+          const targetTop = pref[pageIndex];
+          container.scrollTo({ top: targetTop, behavior: 'auto' });
+        }
+
+        // Wait one animation frame so React can render the new PageCanvas.
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+        pageEl = pageElsRef.current[pageIndex];
+        if (!pageEl) {
+          console.warn(
+            '[navigateToMark] page element still missing after forcing scroll, pageIndex=',
+            pageIndex
+          );
+          return;
+        }
+      }
+
+      const base = basePageSizeRef.current[pageIndex];
+      if (!base) return;
 
       const containerW = container.clientWidth;
       const containerH = container.clientHeight;
@@ -1369,10 +1395,10 @@ const navigateToMark = useCallback(
           const expectedW = base.w * qZoom;
           const expectedH = base.h * qZoom;
 
-          await waitForCanvasLayout(pageEl, expectedW, expectedH, 1500);
+          await waitForCanvasLayout(pageEl!, expectedW, expectedH, 1500);
 
           const containerRect = container.getBoundingClientRect();
-          const pageRect = pageEl.getBoundingClientRect();
+          const pageRect = pageEl!.getBoundingClientRect();
 
           const pageOffsetLeft =
             container.scrollLeft + (pageRect.left - containerRect.left);
@@ -1416,7 +1442,6 @@ const navigateToMark = useCallback(
         setCurrentMarkIndex(index);
         return;
       }
-
 
       // ---------- QC FLOW: group-wise handling ----------
       const gi = markToGroupIndex[index];
@@ -1479,8 +1504,6 @@ const navigateToMark = useCallback(
         targetZoom = setZoomQ(rawZoom, zoomRef);
       }
 
-
-
       // We defer drawing + scroll until after the canvas has settled
       requestAnimationFrame(async () => {
         const expectedW = groupBase.w * targetZoom;
@@ -1488,11 +1511,11 @@ const navigateToMark = useCallback(
 
         // When zoom changed (new group / first time), wait for canvas to settle
         if (groupChanged) {
-          await waitForCanvasLayout(pageEl, expectedW, expectedH, 1500);
+          await waitForCanvasLayout(pageEl!, expectedW, expectedH, 1500);
         }
 
         const containerRect = container.getBoundingClientRect();
-        const pageRect = pageEl.getBoundingClientRect();
+        const pageRect = pageEl!.getBoundingClientRect();
 
         const pageOffsetLeft =
           container.scrollLeft + (pageRect.left - containerRect.left);
@@ -1554,11 +1577,11 @@ const navigateToMark = useCallback(
         });
       });
 
-
       setCurrentMarkIndex(index);
     },
     [marks, pdf, isMasterMarkSet, groupWindows, markToGroupIndex, currentMarkIndex]
   );
+
 
 
 
@@ -1607,18 +1630,22 @@ const navigateToMark = useCallback(
     }, 0);                          // let ReviewScreen unmount first
   }, [navigateToMark]);
 
-  const selectFromList = useCallback((index: number) => {
-    // If mobile and sidebar is open, we may close it and the container width changes.
-    // Give layout a tick, then navigate so zoom math uses the final width.
-    const needsDelay = window.innerWidth < 900; // narrow screens
+const selectFromList = useCallback((index: number) => {
+    // Always route through navigateToMark only
+    const needsDelay = window.innerWidth < 900;
+
     if (needsDelay) {
-      // Close the sidebar if it's open (mobile UX)
-      if (sidebarOpen) setSidebarOpen(false);
-      setTimeout(() => navigateToMark(index), 80); // one frame on mobile Safari
+        if (sidebarOpen) setSidebarOpen(false);
+        // This allows sidebar closing animation to finish
+        requestAnimationFrame(() => {
+            setTimeout(() => navigateToMark(index), 50);
+        });
     } else {
-      navigateToMark(index);
+        // Desktop = immediate mark jump
+        requestAnimationFrame(() => navigateToMark(index));
     }
-  }, [navigateToMark, sidebarOpen]);
+}, [navigateToMark, sidebarOpen]);
+
 
   const jumpToPage = useCallback((pageNumber: number) => {
     if (!pdf || !containerRef.current) return;
@@ -2053,10 +2080,11 @@ const navigateToMark = useCallback(
                   : undefined
               }
               onSelect={(index) => {
-                setCurrentMarkIndex(index);
-                setSidebarOpen(false);
-                setTimeout(() => selectFromList(index), 80);
-              }}
+    setSidebarOpen(false);
+    // delay helps layout settle on mobile
+    setTimeout(() => selectFromList(index), 60);
+}}
+
             />
 
           </SlideSidebar>
@@ -2197,11 +2225,11 @@ const navigateToMark = useCallback(
                 ? groupWindows
                 : undefined
             }
-            onSelect={(index) => {
-              setCurrentMarkIndex(index);
-              setSidebarOpen(false);
-              setTimeout(() => selectFromList(index), 80);
-            }}
+           onSelect={(index) => {
+    setSidebarOpen(false);
+    setTimeout(() => selectFromList(index), 40);
+}}
+
           />
 
         </SlideSidebar>

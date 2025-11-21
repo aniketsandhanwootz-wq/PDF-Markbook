@@ -24,6 +24,7 @@ from openpyxl import Workbook
 import asyncio
 from core.email_sender import send_email_with_attachments
 from settings import get_settings
+from core.report_excel import generate_report_excel
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -446,21 +447,51 @@ async def _generate_and_send_excel_bundle(
             user_inputs = []
             completed_marks = 0
 
-        # 4) Build Excel bytes (master marks + QC results)
+        # 4) Build Excel bytes using the common template (master marks + QC results)
         report_name = req.report_name or f"{doc.get('part_number') or 'inspection'}-QC"
 
+        # Build mark_id -> user_value map (reuse same user_inputs we used for completed_marks)
+        mark_id_to_value: Dict[str, str] = {}
+        for ui in user_inputs:
+            try:
+                mid = ui.get("mark_id")
+                if not mid:
+                    continue
+                mark_id_to_value[mid] = ui.get("user_value", "")
+            except Exception as e:
+                logger.warning(f"Error processing user input for Excel: {e}")
+                continue
+
+        # Fetch master marks (for geometry, labels, etc.)
         try:
-            excel_bytes = _build_excel_bytes_for_qc(
-                storage=storage,
-                doc_id=req.doc_id,
-                master_mark_set_id=master_mark_set_id,
-                qc_mark_set_id=qc_mark_set_id,
-                submitted_by=req.submitted_by,
-                report_title=report_name,
+            master_marks = storage.list_marks(master_mark_set_id)
+        except Exception as e:
+            logger.error(f"Failed to list marks for {master_mark_set_id}: {e}")
+            return
+
+        pdf_url = doc.get("pdf_url")
+        if not pdf_url:
+            logger.error(f"Missing pdf_url for doc {req.doc_id}, cannot build Excel")
+            return
+
+        try:
+            excel_bytes = await generate_report_excel(
+                pdf_url=pdf_url,
+                marks=master_marks,
+                entries=mark_id_to_value,
+                user_email=req.submitted_by or req.email_to,
+                mark_set_id=qc_mark_set_id,
+                mark_set_label=qc_ms.get("name", "") or qc_ms.get("label", ""),
+                part_number=doc.get("part_number", "") or "",
+                external_id=doc.get("external_id", "") or "",
+                padding_pct=0.25,
+                # Same logo URL as everywhere else
+                logo_url="https://res.cloudinary.com/dbwg6zz3l/image/upload/v1753101276/Black_Blue_ctiycp.png",
             )
         except Exception as e:
             logger.exception(f"Failed to build Excel: {e}")
             return
+
 
         # 5) Send email with ONLY Excel attached (async)
         await _send_excel_email(

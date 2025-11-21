@@ -52,34 +52,65 @@ async def generate_report_excel(
     mark_set_id: str,
     mark_set_label: str = "",
     part_number: str = "",
+    external_id: str = "",
     padding_pct: float = 0.25,
     render_zoom: float = 2.2,
     logo_url: str = "https://res.cloudinary.com/dbwg6zz3l/image/upload/v1753101276/Black_Blue_ctiycp.png",
 ) -> bytes:
-    """Build Excel from template with floating images."""
+    """
+    Build Excel from template with:
+      - Header: Part Number, ID (external_id), MarkSet Name, Created By/At
+      - One row per mark:
+          A: Label
+          B: Thumbnail image of mark region
+          C/D: Tolerance Min/Max (left empty)
+          E: Observed Value (user input)
+          F/G: Status, Comment (left empty)
+    """
     _require_pdfium()
     pdf_bytes = await _fetch_pdf_bytes(pdf_url)
 
-    template_path = os.path.join(os.path.dirname(__file__), "../templates/report_template.xlsm")
+    # Use XLSX template (no macros)
+    template_path = os.path.join(
+        os.path.dirname(__file__),
+        "../templates/report_template.xlsx",
+    )
     if not os.path.exists(template_path):
         raise FileNotFoundError(f"Template not found: {template_path}")
 
-    wb = load_workbook(template_path, keep_vba=True)
+    # No keep_vba – we are on .xlsx
+    wb = load_workbook(template_path)
     ws = wb.active
 
     _tempfiles: List[str] = []
 
     try:
-        # ==== Header (safe for merged cells) ====
-        _write_merged(ws, "B2", mark_set_id)
-        _write_merged(ws, "A4", part_number or "")
+        # ========= HEADER (coordinates assume your new template layout) =========
+        # Row 4: Part Number | ID
+        # Row 5: MarkSet Name | Created By
+        # Row 6: Created At
+        # (All of these can be merged ranges; _write_merged handles that.)
+
+        # Part Number value (next to "Part Number:")
+        _write_merged(ws, "B4", part_number or "")
+
+        # ID: external_id preferred, fallback to mark_set_id
+        _write_merged(ws, "F4", (external_id or mark_set_id or ""))
+
+        # MarkSet Name
+        _write_merged(ws, "B5", mark_set_label or "")
+
+        # Created By
+        _write_merged(ws, "F5", user_email or "viewer_user")
+
+        # Created At
         _write_merged(
             ws,
-            "E4",
-            f"{user_email or 'viewer_user'} | {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}",
+            "F6",
+            datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
         )
 
-        # ==== Logo ====
+        # ========= LOGO (top, same as before) =========
         if logo_url:
             try:
                 logo_bytes = await _fetch_pdf_bytes(logo_url)
@@ -88,18 +119,24 @@ async def generate_report_excel(
                 img = OpenpyxlImage(logo_path)
                 img.width = 150
                 img.height = 60
+                # Anchor near the center top; adjust if needed
                 ws.add_image(img, "C1")
             except Exception as e:
                 print(f"Logo failed: {e}")
 
-        # ==== Rows ====
+        # ========= ROWS (table) =========
+        # Table header is in row 7 in your screenshot:
+        # 7: Label | Required Value | Tolerance (Min/Max) | Observed | Status | Comment
+        # Data starts at row 8.
         start_row = 8
+
+        # Sort marks by order_index then name
         marks_sorted = sorted(
             marks,
             key=lambda m: (int(m.get("order_index", 0)), str(m.get("name", ""))),
         )
 
-        import pypdfium2 as pdfium
+        import pypdfium2 as pdfium  # type: ignore
         doc = pdfium.PdfDocument(pdf_bytes)
 
         for idx, m in enumerate(marks_sorted, start=1):
@@ -111,14 +148,21 @@ async def generate_report_excel(
             label = (m.get("label") or f"Mark {idx}").strip()
             observed = (entries.get(mark_id, "") or "").strip()
 
-            # Text cells
-            ws.cell(row=r, column=1).value = label   # Column A
-            ws.cell(row=r, column=5).value = observed  # Column E
+            # --- Text cells ---
+            # A: Label
+            ws.cell(row=r, column=1).value = label
 
-            # Row height (~100 px)
+            # C/D: Tolerance Min/Max → left empty for user to fill later
+
+            # E: Observed Value
+            ws.cell(row=r, column=5).value = observed
+
+            # F/G: Status, Comment → keep empty
+
+            # Row height ~100 px to match thumbnail
             ws.row_dimensions[r].height = 75
 
-            # Image thumbnail into column B
+            # --- Image thumbnail into column B ("Required Value") ---
             try:
                 crop_img = _render_crop(
                     doc=doc,
@@ -138,7 +182,7 @@ async def generate_report_excel(
                 img = OpenpyxlImage(img_path)
                 img_w_px, img_h_px = crop_img.size
 
-                # Fit into B cell (approx 175x100 px)
+                # Fit into B cell (approx 175x100 px); tweak if you adjust column width
                 cell_w_px = 175
                 cell_h_px = 100
                 scale = min(cell_w_px / img_w_px, cell_h_px / img_h_px) * 0.9
@@ -149,7 +193,7 @@ async def generate_report_excel(
             except Exception as e:
                 print(f"Image failed for mark {idx}: {e}")
 
-        # ==== Save ====
+        # ========= SAVE =========
         out = io.BytesIO()
         wb.save(out)
         out.seek(0)
@@ -160,5 +204,5 @@ async def generate_report_excel(
         for p in _tempfiles:
             try:
                 os.unlink(p)
-            except:
+            except Exception:
                 pass

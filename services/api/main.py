@@ -420,7 +420,6 @@ async def health_check():
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             content={"status": "unhealthy", "backend": STORAGE_BACKEND, "error": str(e)}
         )
-
 # ========== NEW: Production Health Endpoints ==========
 
 @app.get("/healthz")
