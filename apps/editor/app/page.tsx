@@ -2165,41 +2165,55 @@ function EditorContent() {
             // ✅ groups belong to this QC mark-set
             ownerMarkSetId={ownerMarkSetId.current}
             nextGroupNumber={groups.length + 1}
-            onUpdateMark={updateMark}
-            onFocusMark={(markId) => {
-              const m = marks.find((mm) => mm.mark_id === markId);
-              if (m) navigateToMark(m);
-            }}
-            // ✅ QC can create new marks inside this group area
-            onCreateMarkInGroup={createMarkFromGroup}
-            onClose={() => {
-              // ❌ User cancelled – drop any marks that were created
-              // inside this GroupEditor session and never saved.
-              if (pendingGroupMarkIds.length) {
-                setMarks((prev) =>
-                  prev.filter((m) => !pendingGroupMarkIds.includes(m.mark_id))
-                );
-                setPendingGroupMarkIds([]);
-              }
-              setGroupEditorOpen(false);
-              setPendingGroup(null);
-              setEditingGroup(null);
-              setDrawMode('mark');
-            }}
-            onSaved={() => {
-              // ✅ User clicked "Save Group" – marks created in this session
-              // become part of the normal mark pool; just clear the tracking list.
-              setGroupEditorOpen(false);
-              setPendingGroup(null);
-              setEditingGroup(null);
-              setDrawMode('mark');
-              setPendingGroupMarkIds([]);
-              addToast('Group saved', 'success');
-              // 🔹 refresh sidebar groups for this QC mark-set
-              fetchGroups();
-            }}
-          />
-        )}
+                originalMarkIds={originalMarksRef.current.map((m) => m.mark_id)}
+
+    onUpdateMark={updateMark}
+    // ❌ only these marks (created in this GroupEditor session) can be deleted via "×"
+    deletableMarkIds={pendingGroupMarkIds}
+    onDeleteMark={(markId) => {
+      // Only allow deleting marks that were created during this session
+      if (!pendingGroupMarkIds.includes(markId)) return;
+
+      deleteMark(markId);
+      setPendingGroupMarkIds((prev) =>
+        prev.filter((id) => id !== markId)
+      );
+    }}
+    onFocusMark={(markId) => {
+      const m = marks.find((mm) => mm.mark_id === markId);
+      if (m) navigateToMark(m);
+    }}
+    // ✅ QC can create new marks inside this group area
+    onCreateMarkInGroup={createMarkFromGroup}
+    onClose={() => {
+      // ❌ User cancelled – drop any marks that were created
+      // inside this GroupEditor session and never saved.
+      if (pendingGroupMarkIds.length) {
+        setMarks((prev) =>
+          prev.filter((m) => !pendingGroupMarkIds.includes(m.mark_id))
+        );
+        setPendingGroupMarkIds([]);
+      }
+      setGroupEditorOpen(false);
+      setPendingGroup(null);
+      setEditingGroup(null);
+      setDrawMode('mark');
+    }}
+    onSaved={() => {
+      // ✅ User clicked "Save Group" – marks created in this session
+      // become part of the normal mark pool; just clear the tracking list.
+      setGroupEditorOpen(false);
+      setPendingGroup(null);
+      setEditingGroup(null);
+      setDrawMode('mark');
+      setPendingGroupMarkIds([]);
+      addToast('Group saved', 'success');
+      // 🔹 refresh sidebar groups for this QC mark-set
+      fetchGroups();
+    }}
+  />
+)}
+
 
       </div>
       <div className="toast-container">

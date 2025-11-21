@@ -33,13 +33,14 @@ type GroupEditorProps = {
     marksOnPage: Mark[];
     // 👉 This is the mark-set that actually OWNS the groups (QC mark-set)
     ownerMarkSetId: string;
+    // used to auto-name new groups: "Group 1", "Group 2", ...
+    nextGroupNumber?: number;
     // create vs edit existing group
     mode?: 'create' | 'edit';
     groupId?: string;
     initialName?: string;
-    // next group number for auto names: Group 1, Group 2, ...
-    nextGroupNumber?: number;
     initialSelectedMarkIds?: string[];
+    originalMarkIds?: string[];
     onClose: () => void;
     onSaved: () => void;
     onUpdateMark: (markId: string, updates: Partial<Mark>) => void;
@@ -49,6 +50,10 @@ type GroupEditorProps = {
         pageIndex: number,
         rect: { nx: number; ny: number; nw: number; nh: number }
     ) => string | void;
+    // Optional: mark ids that can be deleted (newly created balloons)
+    deletableMarkIds?: string[];
+    // Optional: delete mark (used for newly created balloons)
+    onDeleteMark?: (markId: string) => void;
 };
 
 const apiBase =
@@ -85,19 +90,26 @@ export default function GroupEditor({
     rect,
     marksOnPage,
     ownerMarkSetId,
+    nextGroupNumber,
     mode = 'create',
     groupId,
     initialName,
     initialSelectedMarkIds,
+    originalMarkIds,
     onClose,
     onSaved,
     onUpdateMark,
     onFocusMark,
     onCreateMarkInGroup,
-    nextGroupNumber,
+    deletableMarkIds,
+    onDeleteMark,
 }: GroupEditorProps) {
+
+
     const [saving, setSaving] = useState(false);
 
+    // which mark is currently "highlighted" in yellow (list or preview click)
+    const [highlightedMarkId, setHighlightedMarkId] = useState<string | null>(null);
 
 
     // marks that geometrically lie inside this area
@@ -260,27 +272,20 @@ export default function GroupEditor({
                 const gy = rect.ny * baseViewport.height;
                 const gw = rect.nw * baseViewport.width;
                 const gh = rect.nh * baseViewport.height;
-
                 // --- 3) Decide preview size (scale cropped region) ---
                 // Start from the natural group size at scale=1
                 let cssWidth = gw;
                 let cssHeight = gh;
 
-                // Ensure a minimum width for usability
-                const MIN_WIDTH = 260;
+                // Ensure a minimum width for usability (small areas get zoomed in)
+                const MIN_WIDTH = 360;
                 if (cssWidth < MIN_WIDTH) {
                     const factor = MIN_WIDTH / cssWidth;
                     cssWidth *= factor;
                     cssHeight *= factor;
                 }
+                // ⚠️ Do NOT shrink large areas – let the container scroll instead.
 
-                // Also make sure we don't overflow the container width
-                const maxWidth = Math.max(200, container.clientWidth - 16);
-                if (cssWidth > maxWidth) {
-                    const factor = maxWidth / cssWidth;
-                    cssWidth *= factor;
-                    cssHeight *= factor;
-                }
 
                 // --- 4) Configure visible canvas ---
                 canvas.width = cssWidth * dpr;
@@ -497,18 +502,19 @@ export default function GroupEditor({
         >
             <div
                 style={{
-                    width: '1200px',
-                    maxWidth: '96vw',
-                    maxHeight: '90vh',
+                    width: '1400px',
+                    maxWidth: '98vw',
+                    maxHeight: '94vh',
                     background: '#fff',
                     borderRadius: 10,
                     boxShadow: '0 10px 30px rgba(0,0,0,0.28)',
-                    padding: '16px 20px 14px',
+                    padding: '18px 22px 16px',
                     display: 'flex',
                     flexDirection: 'column',
-                    gap: 10,
+                    gap: 12,
                 }}
             >
+
                 {/* Header */}
                 <div
                     style={{
@@ -565,16 +571,18 @@ export default function GroupEditor({
                     <div
                         ref={previewContainerRef}
                         style={{
-                            flex: '0 0 70%',
-                            border: '1px solid #eee',
+                            flex: '0 0 72%',
+                            border: '1px solid #ddd',
                             borderRadius: 6,
-                            padding: 8,
+                            padding: 4,
                             display: 'flex',
                             flexDirection: 'column',
                             gap: 6,
-                            overflow: 'hidden',
+                            overflow: 'auto',
+                            minHeight: 360,
                         }}
                     >
+
                         {/* <div
               style={{
                 fontSize: 11,
@@ -608,8 +616,11 @@ export default function GroupEditor({
                                         maxWidth: '100%',
                                         height: 'auto',
                                         display: 'block',
+                                        border: '2px solid #ccc',      // 👈 clear border of the selectable area
+                                        boxSizing: 'border-box',
                                     }}
                                 />
+
                                 {/* HTML overlay for marks + drawing */}
                                 <div
                                     ref={overlayRef}
@@ -622,7 +633,6 @@ export default function GroupEditor({
                                     onMouseMove={handleOverlayMouseMove}
                                     onMouseUp={handleOverlayMouseUp}
                                 >
-                                    {/* Existing marks inside group */}
                                     {marksInArea.map((m) => {
                                         const relX = (m.nx - rect.nx) / rect.nw;
                                         const relY = (m.ny - rect.ny) / rect.nh;
@@ -635,6 +645,20 @@ export default function GroupEditor({
                                         const height = relH * overlayH;
 
                                         const required = m.is_required !== false;
+                                        const isSelected = selected.has(m.mark_id);
+                                        const isHighlighted = highlightedMarkId === m.mark_id;
+
+                                        const baseBorder = isSelected
+                                            ? '2px solid rgba(76,175,80,0.95)' // green when in group
+                                            : '2px solid rgba(25,118,210,0.95)'; // blue when NOT selected
+
+                                        const baseBg = isSelected
+                                            ? 'rgba(76,175,80,0.15)'
+                                            : 'rgba(25,118,210,0.10)';
+
+                                        const highlightOutline = isHighlighted
+                                            ? '0 0 0 3px rgba(255,235,59,0.9)'
+                                            : 'none';
 
                                         return (
                                             <div
@@ -645,13 +669,16 @@ export default function GroupEditor({
                                                     top,
                                                     width,
                                                     height,
-                                                    border: '2px solid rgba(76,175,80,0.9)',
-                                                    background: 'rgba(76,175,80,0.15)',
+                                                    border: baseBorder,
+                                                    background: baseBg,
                                                     boxSizing: 'border-box',
+                                                    boxShadow: highlightOutline,
+                                                    transition: 'box-shadow 0.15s ease',
                                                 }}
                                                 onClick={(e) => {
                                                     e.stopPropagation();
                                                     onFocusMark(m.mark_id);
+                                                    setHighlightedMarkId(m.mark_id);
                                                 }}
                                             >
                                                 {/* top-left label circle */}
@@ -714,14 +741,17 @@ export default function GroupEditor({
                     </div>
 
                     {/* Right: marks in area (30%) */}
+                    {/* Right: marks in area (30%) */}
                     <div
                         style={{
-                            flex: '0 0 30%',
+                            flex: '0 0 26%',
+                            maxWidth: 360,
                             display: 'flex',
                             flexDirection: 'column',
                             minHeight: 0,
                         }}
                     >
+
 
                         <div
                             style={{
@@ -752,18 +782,20 @@ export default function GroupEditor({
                                 {selected.size} / {marksInArea.length} selected
                             </span>
                         </div>
+<div
+    style={{
+        border: '1px solid #eee',
+        borderRadius: 4,
+        padding: 6,
+        minHeight: 140,
+        maxHeight: 300,
+        overflow: 'auto',
+        background: '#fafafa',
+        width: '100%',
+        boxSizing: 'border-box',
+    }}
+>
 
-                        <div
-                            style={{
-                                border: '1px solid #eee',
-                                borderRadius: 4,
-                                padding: 6,
-                                minHeight: 140,
-                                maxHeight: 300,
-                                overflow: 'auto',
-                                background: '#fafafa',
-                            }}
-                        >
                             {marksInArea.length === 0 && (
                                 <div
                                     style={{
@@ -781,117 +813,169 @@ export default function GroupEditor({
                                 </div>
                             )}
 
-                            {marksInArea.map((m) => {
-                                const required = m.is_required !== false;
-                                return (
-                                    <div
-                                        key={m.mark_id}
-                                        style={{
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            justifyContent: 'space-between',
-                                            gap: 8,
-                                            padding: '4px 6px',
-                                            borderRadius: 4,
-                                            cursor: 'pointer',
-                                            background: selected.has(m.mark_id)
-                                                ? '#e3f2fd'
-                                                : 'transparent',
-                                            marginBottom: 2,
-                                        }}
-                                        onClick={() => onFocusMark(m.mark_id)}
-                                    >
-                                        <div
-                                            style={{
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                gap: 8,
-                                            }}
-                                        >
-                                            <input
-                                                type="checkbox"
-                                                checked={selected.has(m.mark_id)}
-                                                onChange={(e) => {
-                                                    e.stopPropagation();
-                                                    toggleMarkSelected(m.mark_id);
-                                                }}
-                                            />
-                                            <div>
-                                                <div
-                                                    style={{
-                                                        display: 'flex',
-                                                        alignItems: 'center',
-                                                        gap: 6,
-                                                    }}
-                                                    onClick={(e) => e.stopPropagation()}
-                                                >
-                                                    <span
-                                                        style={{
-                                                            display: 'inline-flex',
-                                                            alignItems: 'center',
-                                                            justifyContent: 'center',
-                                                            minWidth: 20,
-                                                            height: 20,
-                                                            borderRadius: '999px',
-                                                            border: '1px solid #000',
-                                                            fontSize: 12,
-                                                            fontWeight: 700,
-                                                        }}
-                                                    >
-                                                        {m.label || '—'}
-                                                    </span>
-                                                    <input
-                                                        type="text"
-                                                        list="ge-instrument-suggestions"
-                                                        defaultValue={m.instrument || ''}
-                                                        onChange={(e) => {
-                                                            const v = e.target.value;
-                                                            setInstrumentQuery(v);
-                                                            fetchSuggestions(v);
-                                                            onUpdateMark(m.mark_id, {
-                                                                instrument: v || undefined,
-                                                            });
-                                                        }}
-                                                        placeholder="Instrument..."
-                                                        style={{
-                                                            border: '1px solid #ddd',
-                                                            borderRadius: 4,
-                                                            fontSize: 12,
-                                                            padding: '4px 6px',
-                                                            minWidth: 170,
-                                                        }}
-                                                    />
-                                                </div>
-                                            </div>
-                                        </div>
 
-                                        {/* Required star toggle */}
-                                        <button
-                                            type="button"
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                onUpdateMark(m.mark_id, {
-                                                    is_required: !required,
-                                                });
-                                            }}
-                                            title={
-                                                required
-                                                    ? 'Required measurement'
-                                                    : 'Optional measurement'
-                                            }
-                                            style={{
-                                                border: 'none',
-                                                background: 'transparent',
-                                                cursor: 'pointer',
-                                                fontSize: 22,
-                                                color: required ? '#FF3b3b' : '#ccc',
-                                            }}
-                                        >
-                                            ‼
-                                        </button>
-                                    </div>
-                                );
-                            })}
+{marksInArea.map((m) => {
+    const required = m.is_required !== false;
+    const isSelected = selected.has(m.mark_id);
+    const isHighlighted = highlightedMarkId === m.mark_id;
+
+    // ✅ mark is "new" if it's NOT in the original DB mark list
+    const isNew =
+        !originalMarkIds || originalMarkIds.length === 0
+            ? true
+            : !originalMarkIds.includes(m.mark_id);
+
+    return (
+        <div
+            key={m.mark_id}
+            style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 8,
+                padding: '4px 6px',
+                borderRadius: 4,
+                cursor: 'pointer',
+                background: isHighlighted
+                    ? '#fff9c4' // yellow when focused
+                    : isSelected
+                    ? '#e3f2fd'
+                    : 'transparent',
+                marginBottom: 2,
+            }}
+            onClick={() => {
+                onFocusMark(m.mark_id);
+                setHighlightedMarkId(m.mark_id);
+            }}
+        >
+            {/* LEFT: checkbox + label + instrument */}
+            <div
+                style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                }}
+            >
+                <input
+                    type="checkbox"
+                    checked={isSelected}
+                    onChange={(e) => {
+                        e.stopPropagation();
+                        toggleMarkSelected(m.mark_id);
+                    }}
+                    style={{
+                        accentColor: '#2e7d32', // green checkbox
+                    }}
+                />
+
+                <div>
+                    <div
+                        style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 6,
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <span
+                            style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                minWidth: 20,
+                                height: 20,
+                                borderRadius: '999px',
+                                border: '1px solid #000',
+                                fontSize: 12,
+                                fontWeight: 700,
+                            }}
+                        >
+                            {m.label || '—'}
+                        </span>
+                        <input
+                            type="text"
+                            list="ge-instrument-suggestions"
+                            defaultValue={m.instrument || ''}
+                            onChange={(e) => {
+                                const v = e.target.value;
+                                setInstrumentQuery(v);
+                                fetchSuggestions(v);
+                                onUpdateMark(m.mark_id, {
+                                    instrument: v || undefined,
+                                });
+                            }}
+                            placeholder="Instrument..."
+                            style={{
+                                border: '1px solid #ddd',
+                                borderRadius: 4,
+                                fontSize: 12,
+                                padding: '4px 6px',
+                                minWidth: 170,
+                            }}
+                        />
+                    </div>
+                </div>
+            </div>
+
+            {/* RIGHT: required toggle + delete cross */}
+            <div
+                style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 4,
+                }}
+            >
+                {/* Required toggle */}
+                <button
+                    type="button"
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        onUpdateMark(m.mark_id, {
+                            is_required: !required,
+                        });
+                    }}
+                    title={
+                        required
+                            ? 'Required measurement'
+                            : 'Optional measurement'
+                    }
+                    style={{
+                        border: 'none',
+                        background: 'transparent',
+                        cursor: 'pointer',
+                        fontSize: 22,
+                        color: required ? '#FF3b3b' : '#ccc',
+                    }}
+                >
+                    ‼
+                </button>
+
+                {/* Small cross only for NEW balloons */}
+                {onDeleteMark && isNew && (
+                    <button
+                        type="button"
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onDeleteMark(m.mark_id);
+                        }}
+                        title="Delete this balloon"
+                        style={{
+                            border: 'none',
+                            background: 'transparent',
+                            cursor: 'pointer',
+                            fontSize: 18,
+                            color: '#b71c1c',
+                            lineHeight: 1,
+                        }}
+                    >
+                        ×
+                    </button>
+                )}
+            </div>
+        </div>
+    );
+})}
+
 
                             <datalist id="ge-instrument-suggestions">
                                 {instrumentSuggestions.map((opt) => (
