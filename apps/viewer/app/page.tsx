@@ -1364,19 +1364,7 @@ const navigateToMark = useCallback(
 
         const qZoom = setZoomQ(targetZoom, zoomRef);
 
-        const rectAtZ = {
-          x: mark.nx * base.w * qZoom,
-          y: mark.ny * base.h * qZoom,
-          w: mark.nw * base.w * qZoom,
-          h: mark.nh * base.h * qZoom,
-        };
-
-        setFlashRect({ pageNumber, ...rectAtZ });
-        setTimeout(() => setFlashRect(null), 1200);
-        const keepAliveRect = { pageNumber, ...rectAtZ };
-        setSelectedRect(keepAliveRect);
-        setTimeout(() => setSelectedRect(keepAliveRect), 1250);
-
+        // 👉 Defer drawing + scroll until canvas has resized
         requestAnimationFrame(async () => {
           const expectedW = base.w * qZoom;
           const expectedH = base.h * qZoom;
@@ -1386,8 +1374,25 @@ const navigateToMark = useCallback(
           const containerRect = container.getBoundingClientRect();
           const pageRect = pageEl.getBoundingClientRect();
 
-          const pageOffsetLeft = container.scrollLeft + (pageRect.left - containerRect.left);
-          const pageOffsetTop = container.scrollTop + (pageRect.top - containerRect.top);
+          const pageOffsetLeft =
+            container.scrollLeft + (pageRect.left - containerRect.left);
+          const pageOffsetTop =
+            container.scrollTop + (pageRect.top - containerRect.top);
+
+          const z = zoomRef.current || qZoom;
+
+          const rectAtZ = {
+            x: mark.nx * base.w * z,
+            y: mark.ny * base.h * z,
+            w: mark.nw * base.w * z,
+            h: mark.nh * base.h * z,
+          };
+
+          // ⭐ Set highlight only after layout is stable → no jump
+          setFlashRect({ pageNumber, ...rectAtZ });
+          const keepAliveRect = { pageNumber, ...rectAtZ };
+          setSelectedRect(keepAliveRect);
+          setTimeout(() => setFlashRect(null), 1200);
 
           const markCenterX = pageOffsetLeft + rectAtZ.x + rectAtZ.w / 2;
           const markCenterY = pageOffsetTop + rectAtZ.y + rectAtZ.h / 2;
@@ -1401,12 +1406,17 @@ const navigateToMark = useCallback(
             targetScrollTop
           );
 
-          container.scrollTo({ left: clampedL, top: clampedT, behavior: 'smooth' });
+          container.scrollTo({
+            left: clampedL,
+            top: clampedT,
+            behavior: 'smooth',
+          });
         });
 
         setCurrentMarkIndex(index);
         return;
       }
+
 
       // ---------- QC FLOW: group-wise handling ----------
       const gi = markToGroupIndex[index];
@@ -1434,65 +1444,44 @@ const navigateToMark = useCallback(
 
       const groupChanged = gi !== prevGroupIdx;
 
-       // ✅ 1) Choose zoom:
+      // ✅ 1) Choose zoom:
       //    - first time / switching groups → fit group vertically in the
-      //      area between the HUD and the (floating) InputPanel on mobile
+      //      visible area between HUD and (possibly floating) InputPanel
       //    - within same group → keep current zoom (only slide in X)
       let targetZoom = zoomRef.current || 1.0;
       if (groupChanged || !zoomRef.current) {
         const isMobileViewport =
           typeof window !== 'undefined' && window.innerWidth < 900;
 
-        let bottomSafe = 0;
+        // Start from the *actual* scrollable viewport height
+        const containerRect = container.getBoundingClientRect();
+        let visibleHeight = containerRect.height - HUD_TOP_SAFE_PX;
 
         if (isMobileViewport && typeof document !== 'undefined') {
-          // Try to use the REAL InputPanel height if present (mobile mode)
           const panel = document.getElementById('mobile-input-panel');
           if (panel) {
-            const rect = panel.getBoundingClientRect();
-            bottomSafe = rect.height + 16; // small extra padding
+            const panelRect = panel.getBoundingClientRect();
+            // How much of the scroll area is hidden behind the panel?
+            const overlap = Math.max(0, containerRect.bottom - panelRect.top);
+            visibleHeight -= overlap + 12; // small extra padding
           } else {
-            // Fallback if panel not yet mounted
-            bottomSafe = INPUT_PANEL_SAFE_PX_MOBILE;
+            // Fallback if we can't measure the panel yet
+            visibleHeight -= INPUT_PANEL_SAFE_PX_MOBILE;
           }
         }
 
-        // Available vertical space for the group (inside the scroll container)
-        let usableHeight = containerH - HUD_TOP_SAFE_PX - bottomSafe;
-
         // Safety guard so we don't explode the zoom on tiny windows
-        if (usableHeight < containerH * 0.4) {
-          usableHeight = containerH * 0.4;
+        if (visibleHeight < containerRect.height * 0.4) {
+          visibleHeight = containerRect.height * 0.4;
         }
 
-        const rawZoom = usableHeight / (groupRectAt1.h || 1);
+        const rawZoom = visibleHeight / (groupRectAt1.h || 1);
         targetZoom = setZoomQ(rawZoom, zoomRef);
       }
 
 
-      // Rect for THIS MARK at target zoom (for yellow outline)
-      const rectAtZ = {
-        x: mark.nx * groupBase.w * targetZoom,
-        y: mark.ny * groupBase.h * targetZoom,
-        w: mark.nw * groupBase.w * targetZoom,
-        h: mark.nh * groupBase.h * targetZoom,
-      };
 
-      // Group rect at target zoom (for scroll anchoring when group changes)
-      const groupRectAtZ = {
-        x: groupRectAt1.x * targetZoom,
-        y: groupRectAt1.y * targetZoom,
-        w: groupRectAt1.w * targetZoom,
-        h: groupRectAt1.h * targetZoom,
-      };
-
-      // Highlight current mark
-      setFlashRect({ pageNumber, ...rectAtZ });
-      setTimeout(() => setFlashRect(null), 1200);
-      const keepAliveRect = { pageNumber, ...rectAtZ };
-      setSelectedRect(keepAliveRect);
-      setTimeout(() => setSelectedRect(keepAliveRect), 1250);
-
+      // We defer drawing + scroll until after the canvas has settled
       requestAnimationFrame(async () => {
         const expectedW = groupBase.w * targetZoom;
         const expectedH = groupBase.h * targetZoom;
@@ -1505,12 +1494,39 @@ const navigateToMark = useCallback(
         const containerRect = container.getBoundingClientRect();
         const pageRect = pageEl.getBoundingClientRect();
 
-        const pageOffsetLeft = container.scrollLeft + (pageRect.left - containerRect.left);
-        const pageOffsetTop = container.scrollTop + (pageRect.top - containerRect.top);
+        const pageOffsetLeft =
+          container.scrollLeft + (pageRect.left - containerRect.left);
+        const pageOffsetTop =
+          container.scrollTop + (pageRect.top - containerRect.top);
+
+        // Use the *actual* zoom now in case it was quantized/adjusted
+        const z = zoomRef.current || targetZoom;
+
+        // Rect for THIS MARK at final zoom (for yellow outline)
+        const rectAtZ = {
+          x: mark.nx * groupBase.w * z,
+          y: mark.ny * groupBase.h * z,
+          w: mark.nw * groupBase.w * z,
+          h: mark.nh * groupBase.h * z,
+        };
+
+        // Group rect at final zoom (for scroll anchoring when group changes)
+        const groupRectAtZ = {
+          x: groupRectAt1.x * z,
+          y: groupRectAt1.y * z,
+          w: groupRectAt1.w * z,
+          h: groupRectAt1.h * z,
+        };
+
+        // ⭐ Highlight current mark ONLY now → no “wrong position then jump”
+        setFlashRect({ pageNumber, ...rectAtZ });
+        const keepAliveRect = { pageNumber, ...rectAtZ };
+        setSelectedRect(keepAliveRect);
+        setTimeout(() => setFlashRect(null), 1200);
 
         // ✅ 2) X: center on mark, but bias slightly away from right HUD
         const markCenterX = pageOffsetLeft + rectAtZ.x + rectAtZ.w / 2;
-        const effectiveViewWidth = containerW - HUD_SIDE_SAFE_PX; // keep away from right zoom buttons
+        const effectiveViewWidth = containerW - HUD_SIDE_SAFE_PX;
         const targetScrollLeft = markCenterX - effectiveViewWidth / 2;
 
         // ✅ 3) Y:
@@ -1522,7 +1538,7 @@ const navigateToMark = useCallback(
           const groupTop = pageOffsetTop + groupRectAtZ.y;
           targetScrollTop = groupTop - paddingTopPx;
         } else {
-          targetScrollTop = container.scrollTop; // preserve current Y
+          targetScrollTop = container.scrollTop;
         }
 
         const { left: clampedL, top: clampedT } = clampScroll(
@@ -1531,8 +1547,13 @@ const navigateToMark = useCallback(
           targetScrollTop
         );
 
-        container.scrollTo({ left: clampedL, top: clampedT, behavior: 'smooth' });
+        container.scrollTo({
+          left: clampedL,
+          top: clampedT,
+          behavior: 'smooth',
+        });
       });
+
 
       setCurrentMarkIndex(index);
     },
