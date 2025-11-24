@@ -58,153 +58,150 @@ function PageCanvas({
 
     let isCancelled = false;
 
-const renderPage = async () => {
-  try {
-    // Cancel previous render
-    if (renderTaskRef.current) {
+    const renderPage = async () => {
       try {
-        renderTaskRef.current.cancel();
-      } catch {}
-      renderTaskRef.current = null;
-    }
+        // Cancel previous render
+        if (renderTaskRef.current) {
+          try {
+            renderTaskRef.current.cancel();
+          } catch { }
+          renderTaskRef.current = null;
+        }
 
-    setIsLoading(true);
+        setIsLoading(true);
 
-    const page = await pdf.getPage(pageNumber);
-    if (isCancelled) return;
+        const page = await pdf.getPage(pageNumber);
+        if (isCancelled) return;
 
-    const viewport = page.getViewport({ scale: zoom });
+        const viewport = page.getViewport({ scale: zoom });
 
-    const isTouch =
-      typeof window !== 'undefined' &&
-      (('ontouchstart' in window) || navigator.maxTouchPoints > 0);
+        const isTouch =
+          typeof window !== 'undefined' &&
+          (('ontouchstart' in window) || navigator.maxTouchPoints > 0);
 
-    // Lighter on phones, still crisp on desktop
-    const dpr = isTouch ? 1.5 : Math.min(window.devicePixelRatio || 1, 2);
+        // Lighter on phones, still crisp on desktop
+        const dpr = isTouch ? 1.5 : Math.min(window.devicePixelRatio || 1, 2);
 
-    // Guard: never exceed ~8MP canvas to avoid mobile GPU stalls
-    const MAX_PIXELS = 6_000_000;
-    let effDpr = dpr;
-    const estPixels = viewport.width * viewport.height * (dpr * dpr);
-    if (estPixels > MAX_PIXELS) {
-      const shrink = Math.sqrt(MAX_PIXELS / estPixels);
-      effDpr = Math.max(1, dpr * shrink);
-    }
+        // Guard: never exceed ~8MP canvas to avoid mobile GPU stalls
+        const MAX_PIXELS = 6_000_000;
+        let effDpr = dpr;
+        const estPixels = viewport.width * viewport.height * (dpr * dpr);
+        if (estPixels > MAX_PIXELS) {
+          const shrink = Math.sqrt(MAX_PIXELS / estPixels);
+          effDpr = Math.max(1, dpr * shrink);
+        }
 
-    // Check cache
-    const cacheKey = getCacheKey(pageNumber, zoom);
-    const cached = renderCache.get(cacheKey);
+        // Check cache
+        const cacheKey = getCacheKey(pageNumber, zoom);
+        const cached = renderCache.get(cacheKey);
 
-    const targetCanvas =
-      currentCanvasRef.current === 'front' ? backCanvas : frontCanvas;
+        const targetCanvas =
+          currentCanvasRef.current === 'front' ? backCanvas : frontCanvas;
 
-// Strongly typed 2D context (with a graceful fallback)
-let ctx = targetCanvas.getContext(
-  '2d',
-  { alpha: false, desynchronized: true } as CanvasRenderingContext2DSettings
-) as CanvasRenderingContext2D | null;
+        // Strongly typed 2D context (with a graceful fallback)
+        let ctx = targetCanvas.getContext(
+          '2d',
+          { alpha: false, desynchronized: true } as CanvasRenderingContext2DSettings
+        ) as CanvasRenderingContext2D | null;
 
-if (!ctx) {
-  ctx = targetCanvas.getContext('2d') as CanvasRenderingContext2D | null;
-}
+        if (!ctx) {
+          ctx = targetCanvas.getContext('2d') as CanvasRenderingContext2D | null;
+        }
 
-if (!ctx) {
-  setIsLoading(false);
-  return;
-}
+        if (!ctx) {
+          setIsLoading(false);
+          return;
+        }
 
 
-    // Size canvas (buffer) + CSS pixels
-    targetCanvas.width = Math.round(viewport.width * effDpr);
-    targetCanvas.height = Math.round(viewport.height * effDpr);
-    targetCanvas.style.width = `${viewport.width}px`;
-    targetCanvas.style.height = `${viewport.height}px`;
+        // Size canvas (buffer) + CSS pixels
+        targetCanvas.width = Math.round(viewport.width * effDpr);
+        targetCanvas.height = Math.round(viewport.height * effDpr);
+        targetCanvas.style.width = `${viewport.width}px`;
+        targetCanvas.style.height = `${viewport.height}px`;
 
-  if (cached) {
-  const bmp: ImageBitmap = cached; // TS: narrow explicitly
-  ctx.setTransform(effDpr, 0, 0, effDpr, 0, 0);
-  ctx.drawImage(bmp, 0, 0, viewport.width, viewport.height);
+        if (cached) {
+          const bmp: ImageBitmap = cached; // TS: narrow explicitly
+          ctx.setTransform(effDpr, 0, 0, effDpr, 0, 0);
+          ctx.drawImage(bmp, 0, 0, viewport.width, viewport.height);
 
-  // Swap canvases
- currentCanvasRef.current =
-  currentCanvasRef.current === 'front' ? 'back' : 'front';
-setCurrentCanvas(currentCanvasRef.current);
+          // Swap canvases
+          currentCanvasRef.current =
+            currentCanvasRef.current === 'front' ? 'back' : 'front';
+          setCurrentCanvas(currentCanvasRef.current);
 
-  if (currentCanvasRef.current === 'back') {
-    backCanvas!.style.display = 'block';
-    frontCanvas!.style.display = 'none';
-  } else {
-    frontCanvas!.style.display = 'block';
-    backCanvas!.style.display = 'none';
-  }
+          if (currentCanvasRef.current === 'back') {
+            backCanvas!.style.display = 'block';
+            frontCanvas!.style.display = 'none';
+          } else {
+            frontCanvas!.style.display = 'block';
+            backCanvas!.style.display = 'none';
+          }
 
-  setIsLoading(false);
-  lastRenderedZoomRef.current = zoom;
-  onReady?.(viewport.height);
-  return;
-}
+          setIsLoading(false);
+          lastRenderedZoomRef.current = zoom;
+          onReady?.(viewport.height);
+          return;
+        }
 
-    // Fresh render needed
-    ctx.setTransform(effDpr, 0, 0, effDpr, 0, 0);
+        // Fresh render needed
+        ctx.setTransform(effDpr, 0, 0, effDpr, 0, 0);
 
-    const renderContext = {
-      canvasContext: ctx,
-      viewport,
-      enableWebGL: false,
-      renderInteractiveForms: false,
+        const renderContext = {
+          canvasContext: ctx,
+          viewport,
+          enableWebGL: false,
+          renderInteractiveForms: false,
+        };
+
+        renderTaskRef.current = page.render(renderContext);
+        await renderTaskRef.current.promise;
+        renderTaskRef.current = null;
+
+        // Cache only on non-touch devices to avoid mobile jank
+        if (!isTouch) {
+          try {
+            const bitmapSize = targetCanvas.width * targetCanvas.height * 4; // bytes
+            const maxSize = 16_777_216; // 16MB
+            if (bitmapSize < maxSize) {
+              const bitmap = await createImageBitmap(targetCanvas);
+              cleanCache();
+              renderCache.set(cacheKey, bitmap);
+            }
+          } catch {
+            // ignore caching errors
+          }
+        }
+
+        // Swap canvases
+        currentCanvasRef.current =
+          currentCanvasRef.current === 'front' ? 'back' : 'front';
+        setCurrentCanvas(currentCanvasRef.current);
+
+        if (currentCanvasRef.current === 'back') {
+          backCanvas!.style.display = 'block';
+          frontCanvas!.style.display = 'none';
+        } else {
+          frontCanvas!.style.display = 'block';
+          backCanvas!.style.display = 'none';
+        }
+
+        setIsLoading(false);
+        lastRenderedZoomRef.current = zoom;
+        onReady?.(viewport.height);
+      } catch (error: any) {
+        if (error?.name !== 'RenderingCancelledException') {
+          console.error('Page render error:', error);
+          setIsLoading(false);
+        }
+      }
     };
 
-    renderTaskRef.current = page.render(renderContext);
-    await renderTaskRef.current.promise;
-    renderTaskRef.current = null;
-
-    // Cache only on non-touch devices to avoid mobile jank
-    if (!isTouch) {
-      try {
-        const bitmapSize = targetCanvas.width * targetCanvas.height * 4; // bytes
-        const maxSize = 16_777_216; // 16MB
-        if (bitmapSize < maxSize) {
-          const bitmap = await createImageBitmap(targetCanvas);
-          cleanCache();
-          renderCache.set(cacheKey, bitmap);
-        }
-      } catch {
-        // ignore caching errors
-      }
+    const zoomDiff = Math.abs(zoom - lastRenderedZoomRef.current);
+    // Avoid churn during tiny zoom deltas or while a task is in-flight
+    if ((zoomDiff > 0.035 || lastRenderedZoomRef.current === 0) && !renderTaskRef.current) {
+      renderPage();
     }
-
-    // Swap canvases
-currentCanvasRef.current =
-  currentCanvasRef.current === 'front' ? 'back' : 'front';
-setCurrentCanvas(currentCanvasRef.current);
-
-    if (currentCanvasRef.current === 'back') {
-      backCanvas!.style.display = 'block';
-      frontCanvas!.style.display = 'none';
-    } else {
-      frontCanvas!.style.display = 'block';
-      backCanvas!.style.display = 'none';
-    }
-
-    setIsLoading(false);
-    lastRenderedZoomRef.current = zoom;
-    onReady?.(viewport.height);
-  } catch (error: any) {
-    if (error?.name !== 'RenderingCancelledException') {
-      console.error('Page render error:', error);
-      setIsLoading(false);
-    }
-  }
-};
-
-const zoomDiff = Math.abs(zoom - lastRenderedZoomRef.current);
-// Avoid churn during tiny zoom deltas or while a task is in-flight
-if ((zoomDiff > 0.035 || lastRenderedZoomRef.current === 0) && !renderTaskRef.current) {
-  renderPage();
-}
-
-
-
 
     return () => {
       isCancelled = true;
@@ -219,134 +216,134 @@ if ((zoomDiff > 0.035 || lastRenderedZoomRef.current === 0) && !renderTaskRef.cu
     };
   }, [pdf, pageNumber, zoom, onReady]);
 
-// Draw overlay: persistent yellow outline + optional red flash
-useEffect(() => {
-  const overlay = overlayRef.current;
-  const visibleCanvas =
-    currentCanvasRef.current === 'front'
-      ? frontCanvasRef.current
-      : backCanvasRef.current;
+  // Draw overlay: persistent yellow outline + optional red flash
+  useEffect(() => {
+    const overlay = overlayRef.current;
+    const visibleCanvas =
+      currentCanvasRef.current === 'front'
+        ? frontCanvasRef.current
+        : backCanvasRef.current;
 
-  if (!overlay || !visibleCanvas) return;
+    if (!overlay || !visibleCanvas) return;
 
-  // Use actual rendered size (don’t rely on style strings)
-  const cssW = visibleCanvas.clientWidth;
-  const cssH = visibleCanvas.clientHeight;
-  const bufW = visibleCanvas.width;
-  const bufH = visibleCanvas.height;
+    // Use actual rendered size (don’t rely on style strings)
+    const cssW = visibleCanvas.clientWidth;
+    const cssH = visibleCanvas.clientHeight;
+    const bufW = visibleCanvas.width;
+    const bufH = visibleCanvas.height;
 
-  // Wait until the page bitmap has real sizes
-  if (!cssW || !cssH || !bufW || !bufH) return;
+    // Wait until the page bitmap has real sizes
+    if (!cssW || !cssH || !bufW || !bufH) return;
 
-  // Size overlay to match the visible bitmap and its CSS size
-  overlay.width = bufW;
-  overlay.height = bufH;
-  overlay.style.width = `${cssW}px`;
-  overlay.style.height = `${cssH}px`;
+    // Size overlay to match the visible bitmap and its CSS size
+    overlay.width = bufW;
+    overlay.height = bufH;
+    overlay.style.width = `${cssW}px`;
+    overlay.style.height = `${cssH}px`;
 
-  const ctx = overlay.getContext('2d');
-  if (!ctx) return;
+    const ctx = overlay.getContext('2d');
+    if (!ctx) return;
 
-  // Map CSS coords → buffer pixels exactly
-  const sx = bufW / cssW;
-  const sy = bufH / cssH;
-  ctx.setTransform(sx, 0, 0, sy, 0, 0);
+    // Map CSS coords → buffer pixels exactly
+    const sx = bufW / cssW;
+    const sy = bufH / cssH;
+    ctx.setTransform(sx, 0, 0, sy, 0, 0);
 
-  const drawPersistent = () => {
-    if (!selectedRect) return;
-    // soft halo
-    ctx.beginPath();
-    ctx.lineJoin = 'round';
-    ctx.lineWidth = 6;
-    ctx.strokeStyle = 'rgba(255, 212, 0, 0.35)';
-    ctx.strokeRect(selectedRect.x, selectedRect.y, selectedRect.w, selectedRect.h);
-    // crisp edge
-    ctx.beginPath();
-    ctx.lineJoin = 'round';
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = '#FFD400';
-    ctx.strokeRect(selectedRect.x, selectedRect.y, selectedRect.w, selectedRect.h);
-  };
-
-  const draw = (withFlash: boolean) => {
-    ctx.clearRect(0, 0, overlay.width, overlay.height);
-    drawPersistent();
-    if (withFlash && flashRect) {
-      ctx.fillStyle = 'rgba(255, 0, 0, 0.28)';
-      ctx.fillRect(flashRect.x, flashRect.y, flashRect.w, flashRect.h);
+    const drawPersistent = () => {
+      if (!selectedRect) return;
+      // soft halo
       ctx.beginPath();
       ctx.lineJoin = 'round';
-      ctx.lineWidth = 3;
-      ctx.strokeStyle = '#FFD54F';
-      ctx.strokeRect(flashRect.x, flashRect.y, flashRect.w, flashRect.h);
-    }
-  };
+      ctx.lineWidth = 6;
+      ctx.strokeStyle = 'rgba(255, 212, 0, 0.35)';
+      ctx.strokeRect(selectedRect.x, selectedRect.y, selectedRect.w, selectedRect.h);
+      // crisp edge
+      ctx.beginPath();
+      ctx.lineJoin = 'round';
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = '#FFD400';
+      ctx.strokeRect(selectedRect.x, selectedRect.y, selectedRect.w, selectedRect.h);
+    };
 
-  // initial draw
-  draw(Boolean(flashRect));
+    const draw = (withFlash: boolean) => {
+      ctx.clearRect(0, 0, overlay.width, overlay.height);
+      drawPersistent();
+      if (withFlash && flashRect) {
+        ctx.fillStyle = 'rgba(255, 0, 0, 0.28)';
+        ctx.fillRect(flashRect.x, flashRect.y, flashRect.w, flashRect.h);
+        ctx.beginPath();
+        ctx.lineJoin = 'round';
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = '#FFD54F';
+        ctx.strokeRect(flashRect.x, flashRect.y, flashRect.w, flashRect.h);
+      }
+    };
 
-  // clear flash after 1200ms but keep the outline
-  let t: number | undefined;
-  if (flashRect) t = window.setTimeout(() => draw(false), 1200);
-  return () => { if (t) window.clearTimeout(t); };
-}, [
-  flashRect,
-  selectedRect,
-  currentCanvas,  // toggles when we swap front/back
-  isLoading,      // re-run once the page finished rendering
-  zoom,
-  pageNumber
-]);
+    // initial draw
+    draw(Boolean(flashRect));
+
+    // clear flash after 1200ms but keep the outline
+    let t: number | undefined;
+    if (flashRect) t = window.setTimeout(() => draw(false), 1200);
+    return () => { if (t) window.clearTimeout(t); };
+  }, [
+    flashRect,
+    selectedRect,
+    currentCanvas,  // toggles when we swap front/back
+    isLoading,      // re-run once the page finished rendering
+    zoom,
+    pageNumber
+  ]);
 
   return (
-  <div className="page-wrapper" style={{ position: 'relative' }}>
-    {isLoading && (
-      <div style={{
-        position: 'absolute',
-        top: '50%',
-        left: '50%',
-        transform: 'translate(-50%, -50%)',
-        color: '#666',
-        fontSize: '14px',
-        pointerEvents: 'none',
-        zIndex: 1
-      }}>
-        Loading page {pageNumber}...
-      </div>
-    )}
-    <canvas 
-      ref={frontCanvasRef} 
-      className="page-canvas" 
-      data-visible={currentCanvasRef.current === 'front' ? 'true' : 'false'}
-      style={{ 
-        display: currentCanvasRef.current === 'front' ? 'block' : 'none',
-        opacity: isLoading ? 0.5 : 1,
-        transition: 'opacity 0.2s'
-      }} 
-    />
-    <canvas 
-      ref={backCanvasRef} 
-      className="page-canvas" 
-      data-visible={currentCanvasRef.current === 'back' ? 'true' : 'false'}
-      style={{ 
-        display: currentCanvasRef.current === 'back' ? 'block' : 'none',
-        opacity: isLoading ? 0.5 : 1,
-        transition: 'opacity 0.2s'
-      }} 
-    />
-    <canvas
-  ref={overlayRef}
-  className="page-overlay"
-  style={{ 
-    pointerEvents: 'none',
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    zIndex: 300
-  }}
-/>
-  </div>
-);
+    <div className="page-wrapper" style={{ position: 'relative' }}>
+      {isLoading && (
+        <div style={{
+          position: 'absolute',
+          top: '50%',
+          left: '50%',
+          transform: 'translate(-50%, -50%)',
+          color: '#666',
+          fontSize: '14px',
+          pointerEvents: 'none',
+          zIndex: 1
+        }}>
+          Loading page {pageNumber}...
+        </div>
+      )}
+      <canvas
+        ref={frontCanvasRef}
+        className="page-canvas"
+        data-visible={currentCanvasRef.current === 'front' ? 'true' : 'false'}
+        style={{
+          display: currentCanvasRef.current === 'front' ? 'block' : 'none',
+          opacity: isLoading ? 0.5 : 1,
+          transition: 'opacity 0.2s'
+        }}
+      />
+      <canvas
+        ref={backCanvasRef}
+        className="page-canvas"
+        data-visible={currentCanvasRef.current === 'back' ? 'true' : 'false'}
+        style={{
+          display: currentCanvasRef.current === 'back' ? 'block' : 'none',
+          opacity: isLoading ? 0.5 : 1,
+          transition: 'opacity 0.2s'
+        }}
+      />
+      <canvas
+        ref={overlayRef}
+        className="page-overlay"
+        style={{
+          pointerEvents: 'none',
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          zIndex: 300
+        }}
+      />
+    </div>
+  );
 }
 
 // Memoize to prevent unnecessary re-renders

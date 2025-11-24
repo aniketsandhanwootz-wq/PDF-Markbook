@@ -1312,11 +1312,15 @@ function ViewerContent() {
     async (index: number) => {
       if (!pdf) return;
 
-      // Defensive: re-check bounds and mark existence
+      // Defensive: re-check bounds
       if (index < 0 || index >= marks.length) {
         console.warn('[navigateToMark] invalid index', index, 'marks length:', marks.length);
         return;
       }
+
+      // ✅ Move currentMarkIndex immediately so InputPanel / HUD update
+      // even if layout for that page isn't ready yet.
+      setCurrentMarkIndex(index);
 
       const mark = marks[index];
       if (!mark) {
@@ -1324,13 +1328,33 @@ function ViewerContent() {
         return;
       }
 
-      const pageIndex = mark.page_index ?? 0;
-      const pageNumber = pageIndex + 1;
       const container = containerRef.current;
       if (!container) return;
 
-      // ✅ NEW: ensure the DOM element for this page exists even if it was
-      // outside the current windowed range (e.g. jumping from page 1 → 4).
+      // ---- Figure out if this mark belongs to a QC group & which page to anchor on ----
+      const isMaster = isMasterMarkSet === true;
+
+      let groupIdx: number | null = null;
+      if (!isMaster && groupWindows && markToGroupIndex[index] != null) {
+        const gi = markToGroupIndex[index];
+        if (gi != null && gi >= 0 && gi < groupWindows.length) {
+          groupIdx = gi;
+        }
+      }
+
+      const hasGroup = groupIdx !== null;
+      const gMeta = hasGroup ? groupWindows![groupIdx!] : null;
+
+      // ✅ For QC groups, always anchor to the group's page (page_index from backend).
+      //    For master/legacy, use the mark's own page_index.
+      const pageIndex =
+        hasGroup && gMeta
+          ? (gMeta.page_index ?? mark.page_index ?? 0)
+          : (mark.page_index ?? 0);
+
+      const pageNumber = pageIndex + 1;
+
+      // ---- Ensure the DOM element for this target page exists (windowed rendering) ----
       let pageEl = pageElsRef.current[pageIndex];
 
       if (!pageEl) {
@@ -1357,22 +1381,16 @@ function ViewerContent() {
       }
 
       const base = basePageSizeRef.current[pageIndex];
-      if (!base) return;
+      if (!base) {
+        console.warn('[navigateToMark] base page size missing for pageIndex=', pageIndex);
+        return;
+      }
 
       const containerW = container.clientWidth;
       const containerH = container.clientHeight;
 
-      // Only true when we *know* it is a master markset
-      const isMaster = isMasterMarkSet === true;
-
-      // Does this mark belong to a QC group?
-      const hasGroup =
-        !!groupWindows &&
-        markToGroupIndex[index] != null &&
-        markToGroupIndex[index] >= 0;
-
       // ---------- MASTER / LEGACY (no group info) → old mark-wise auto zoom ----------
-      if (isMaster || !hasGroup) {
+      if (isMaster || !hasGroup || !gMeta) {
         // Rect at scale=1
         const rectAt1 = {
           x: mark.nx * base.w,
@@ -1439,31 +1457,27 @@ function ViewerContent() {
           });
         });
 
-        setCurrentMarkIndex(index);
         return;
       }
 
-      // ---------- QC FLOW: group-wise handling ----------
-      const gi = markToGroupIndex[index];
-      const gMeta = groupWindows![gi];
-      const groupBase = basePageSizeRef.current[gMeta.page_index];
-      if (!groupBase) {
-        setCurrentMarkIndex(index);
-        return;
-      }
+      // ---------- QC FLOW: group-wise handling, including cross-page groups ----------
+      const gi = groupIdx!;
+      const group = gMeta!;
 
-      // Group rect at scale=1 (normalized → px)
+      // Group rect at scale=1 (normalized → px) on the *group's page*
       const groupRectAt1 = {
-        x: gMeta.nx * groupBase.w,
-        y: gMeta.ny * groupBase.h,
-        w: gMeta.nw * groupBase.w,
-        h: gMeta.nh * groupBase.h,
+        x: group.nx * base.w,
+        y: group.ny * base.h,
+        w: group.nw * base.w,
+        h: group.nh * base.h,
       };
 
       // Which group were we on *before*?
       const prevIdx = currentMarkIndex;
       const prevGroupIdx =
-        prevIdx >= 0 && prevIdx < marks.length && markToGroupIndex[prevIdx] != null
+        prevIdx >= 0 &&
+        prevIdx < marks.length &&
+        markToGroupIndex[prevIdx] != null
           ? markToGroupIndex[prevIdx]
           : gi;
 
@@ -1506,8 +1520,8 @@ function ViewerContent() {
 
       // We defer drawing + scroll until after the canvas has settled
       requestAnimationFrame(async () => {
-        const expectedW = groupBase.w * targetZoom;
-        const expectedH = groupBase.h * targetZoom;
+        const expectedW = base.w * targetZoom;
+        const expectedH = base.h * targetZoom;
 
         // When zoom changed (new group / first time), wait for canvas to settle
         if (groupChanged) {
@@ -1527,10 +1541,10 @@ function ViewerContent() {
 
         // Rect for THIS MARK at final zoom (for yellow outline)
         const rectAtZ = {
-          x: mark.nx * groupBase.w * z,
-          y: mark.ny * groupBase.h * z,
-          w: mark.nw * groupBase.w * z,
-          h: mark.nh * groupBase.h * z,
+          x: mark.nx * base.w * z,
+          y: mark.ny * base.h * z,
+          w: mark.nw * base.w * z,
+          h: mark.nh * base.h * z,
         };
 
         // Group rect at final zoom (for scroll anchoring when group changes)
@@ -1576,12 +1590,9 @@ function ViewerContent() {
           behavior: 'smooth',
         });
       });
-
-      setCurrentMarkIndex(index);
     },
-    [marks, pdf, isMasterMarkSet, groupWindows, markToGroupIndex, currentMarkIndex]
+    [marks, pdf, isMasterMarkSet, groupWindows, markToGroupIndex, currentMarkIndex, setCurrentMarkIndex]
   );
-
 
 
 
@@ -1593,7 +1604,26 @@ function ViewerContent() {
     const mark = marks[currentMarkIndex];
     if (!mark) return;
 
-    const base = basePageSizeRef.current[mark.page_index];
+    // Same logic as navigateToMark: for QC groups, anchor to group.page_index
+    const isMaster = isMasterMarkSet === true;
+
+    let groupIdx: number | null = null;
+    if (!isMaster && groupWindows && markToGroupIndex[currentMarkIndex] != null) {
+      const gi = markToGroupIndex[currentMarkIndex];
+      if (gi != null && gi >= 0 && gi < groupWindows.length) {
+        groupIdx = gi;
+      }
+    }
+
+    const hasGroup = groupIdx !== null;
+    const gMeta = hasGroup ? groupWindows![groupIdx!] : null;
+
+    const pageIndex =
+      hasGroup && gMeta
+        ? (gMeta.page_index ?? mark.page_index ?? 0)
+        : (mark.page_index ?? 0);
+
+    const base = basePageSizeRef.current[pageIndex];
     if (!base) return;
 
     const rectAtZ = {
@@ -1604,10 +1634,10 @@ function ViewerContent() {
     };
 
     setSelectedRect({
-      pageNumber: mark.page_index + 1,
+      pageNumber: pageIndex + 1,
       ...rectAtZ,
     });
-  }, [zoom, currentMarkIndex, marks]);
+  }, [zoom, currentMarkIndex, marks, isMasterMarkSet, groupWindows, markToGroupIndex]);
 
   const prevMark = useCallback(() => {
     if (currentMarkIndex > 0) {
@@ -2016,30 +2046,6 @@ const selectFromList = useCallback((index: number) => {
     );
   }
 
-  if (showReview) {
-    return (
-      <>
-        <ReviewScreen
-          marks={marks}
-          entries={entries}
-          onBack={() => {
-            setShowReview(false);
-            // give the viewer a tick to reflow before centering
-            setTimeout(() => navigateToMark(currentMarkIndex), 120);
-          }}
-          onSubmit={handleSubmit}
-          isSubmitting={isSubmitting}
-          onJumpTo={(i) => {
-            setShowReview(false);
-            // jump straight to the chosen mark (center + zoom)
-            setTimeout(() => navigateToMark(i), 120);
-          }}
-        />
-
-        <Toaster position="top-center" />
-      </>
-    );
-  }
 
 
   // Mobile input mode
@@ -2201,6 +2207,23 @@ const selectFromList = useCallback((index: number) => {
           canNext={true}
           canPrev={currentMarkIndex > 0}
         />
+                {/* 🔹 Review overlay (mobile) */}
+        {showReview && (
+          <ReviewScreen
+            marks={marks}
+            entries={entries}
+            onBack={() => {
+              // Just hide overlay; viewer state is preserved
+              setShowReview(false);
+            }}
+            onSubmit={handleSubmit}
+            isSubmitting={isSubmitting}
+            onJumpTo={(i) => {
+              setShowReview(false);
+              setTimeout(() => navigateToMark(i), 120);
+            }}
+          />
+        )}
       </div>
     );
   }
@@ -2333,6 +2356,22 @@ const selectFromList = useCallback((index: number) => {
         onClose={() => setShowSearch(false)}
         onResultFound={handleSearchResult}
       />
+            {/* 🔹 Review overlay (desktop) */}
+      {showReview && (
+        <ReviewScreen
+          marks={marks}
+          entries={entries}
+          onBack={() => {
+            setShowReview(false);
+          }}
+          onSubmit={handleSubmit}
+          isSubmitting={isSubmitting}
+          onJumpTo={(i) => {
+            setShowReview(false);
+            setTimeout(() => navigateToMark(i), 120);
+          }}
+        />
+      )}
     </div>
   );
 
