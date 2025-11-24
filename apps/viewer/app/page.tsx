@@ -15,6 +15,7 @@ import ReviewScreen from '../components/ReviewScreen';
 import { clampZoom } from '../lib/pdf';
 import PDFSearch from '../components/PDFSearch';
 import SlideSidebar from '../components/SlideSidebar';
+import usePinchZoom from '../hooks/usePinchZoom';
 
 
 
@@ -143,8 +144,13 @@ type GroupWindowMeta = {
 };
 
 const SWIPE_TO_STEP_ENABLED = false;
-// === Touch gestures master switch (leave OFF to allow native scroll) ===
-const TOUCH_GESTURES_ENABLED = false;
+
+// === Touch gestures master switch ===
+// Enable only on touch-capable devices so desktop scroll / wheel behave normally.
+const TOUCH_GESTURES_ENABLED =
+  typeof window !== 'undefined' &&
+  ('ontouchstart' in window || (navigator as any).maxTouchPoints > 0);
+
 // Reserve some space so PDF content doesn't hide under the floating HUD buttons
 const HUD_TOP_SAFE_PX = 72;   // approx height of top HUD bar
 const HUD_SIDE_SAFE_PX = 90;  // approx width taken by right zoom buttons
@@ -698,6 +704,11 @@ function ViewerContent() {
   const [searchHighlights, setSearchHighlights] = useState<Array<{ x: number; y: number; width: number; height: number }>>([]);
   const [highlightPageNumber, setHighlightPageNumber] = useState<number>(0);
   const [isMobileInputMode, setIsMobileInputMode] = useState(false);
+
+    // Decide touch-action for the PDF scroll surface (mobile vs desktop)
+  const pdfTouchAction: CSSProperties['touchAction'] = TOUCH_GESTURES_ENABLED
+    ? 'none'          // we handle pan + pinch via pointer events
+    : 'pan-x pan-y';  // fallback: let the browser manage scroll
 
   // Input mode states
   const [entries, setEntries] = useState<Record<string, string>>({});
@@ -1871,123 +1882,15 @@ const selectFromList = useCallback((index: number) => {
     };
   }, [zoomAt, clampZoom]);
 
-  // PATCH: touch pan (1 finger) + pinch-zoom (2 fingers) on the container
-  useEffect(() => {
-    if (!TOUCH_GESTURES_ENABLED) return; // ➜ disable custom gestures; let native scrolling handle pan
-    const el = containerRef.current;
-    if (!el) return;
+  // Touch pan (1 finger) + pinch-zoom (2 fingers) on the PDF container (mobile only)
+  usePinchZoom({
+    containerRef,
+    zoomRef,
+    zoomAt,
+    clampZoom,
+    enabled: TOUCH_GESTURES_ENABLED,
+  });
 
-    // Tracking pointers
-    const pts = new Map<number, { x: number; y: number }>();
-    let dragging = false;
-    let pinch = false;
-
-    // For drag
-    let dragStartX = 0;
-    let dragStartY = 0;
-    let startScrollLeft = 0;
-    let startScrollTop = 0;
-
-    // For pinch
-    let lastMidX = 0;
-    let lastMidY = 0;
-    let lastDist = 0;
-
-    const getTwo = () => {
-      const arr = Array.from(pts.values());
-      return [arr[0], arr[1]] as const;
-    };
-
-    const onPointerDown = (e: PointerEvent) => {
-      if (!el.contains(e.target as Node)) return;
-      el.setPointerCapture?.(e.pointerId);
-      pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
-
-      if (pts.size === 1) {
-        // Start drag
-        dragging = true;
-        pinch = false;
-        dragStartX = e.clientX;
-        dragStartY = e.clientY;
-        startScrollLeft = el.scrollLeft;
-        startScrollTop = el.scrollTop;
-      } else if (pts.size === 2) {
-        // Start pinch
-        dragging = false;
-        pinch = true;
-        const [p0, p1] = getTwo();
-        lastMidX = (p0.x + p1.x) / 2;
-        lastMidY = (p0.y + p1.y) / 2;
-        lastDist = Math.hypot(p0.x - p1.x, p0.y - p1.y);
-      }
-    };
-
-    const onPointerMove = (e: PointerEvent) => {
-      if (!pts.has(e.pointerId)) return;
-      pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
-
-      if (pinch && pts.size >= 2) {
-        // Pinch: zoom at gesture midpoint + translate by midpoint drift
-        const [p0, p1] = getTwo();
-        const midX = (p0.x + p1.x) / 2;
-        const midY = (p0.y + p1.y) / 2;
-        const dist = Math.hypot(p0.x - p1.x, p0.y - p1.y);
-
-        if (lastDist > 0) {
-          const factor = dist / lastDist;
-          const next = clampZoom(zoomRef.current * factor);
-          // Zoom around gesture center
-          zoomAt(next, midX, midY);
-
-          // Also pan by the midpoint drift so the content stays under fingers
-          el.scrollLeft -= (midX - lastMidX);
-          el.scrollTop -= (midY - lastMidY);
-        }
-
-        lastMidX = midX;
-        lastMidY = midY;
-        lastDist = dist;
-
-        e.preventDefault();
-        e.stopPropagation();
-      } else if (dragging && pts.size === 1) {
-        // One-finger pan (works when zoomed)
-        const dx = e.clientX - dragStartX;
-        const dy = e.clientY - dragStartY;
-        el.scrollLeft = startScrollLeft - dx;
-        el.scrollTop = startScrollTop - dy;
-
-        e.preventDefault();
-        e.stopPropagation();
-      }
-    };
-
-    const end = (e: PointerEvent) => {
-      pts.delete(e.pointerId);
-      if (pts.size < 2) {
-        pinch = false;
-        lastDist = 0;
-      }
-      if (pts.size === 0) {
-        dragging = false;
-      }
-      el.releasePointerCapture?.(e.pointerId);
-    };
-
-    el.addEventListener('pointerdown', onPointerDown, { passive: false });
-    el.addEventListener('pointermove', onPointerMove, { passive: false });
-    el.addEventListener('pointerup', end, { passive: true });
-    el.addEventListener('pointercancel', end, { passive: true });
-    el.addEventListener('pointerleave', end, { passive: true });
-
-    return () => {
-      el.removeEventListener('pointerdown', onPointerDown as any);
-      el.removeEventListener('pointermove', onPointerMove as any);
-      el.removeEventListener('pointerup', end as any);
-      el.removeEventListener('pointercancel', end as any);
-      el.removeEventListener('pointerleave', end as any);
-    };
-  }, [zoomAt, clampZoom]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -2026,9 +1929,6 @@ const selectFromList = useCallback((index: number) => {
   if (showSetup) {
     return <ViewerSetupScreen onStart={handleSetupComplete} />;
   }
-
-
-
 
   if (loading) {
     return (
@@ -2125,7 +2025,7 @@ const selectFromList = useCallback((index: number) => {
                 overflow: 'auto',
                 background: '#525252',
                 WebkitOverflowScrolling: 'touch',
-                touchAction: 'pan-x pan-y', // PATCH: allow pinch-zoom via pointer events
+                touchAction: pdfTouchAction,
               }}
               className="pdf-surface-wrap"
               ref={containerRef}
