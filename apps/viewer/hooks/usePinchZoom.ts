@@ -11,11 +11,6 @@ type UsePinchZoomOptions = {
   enabled: boolean;
 };
 
-/**
- * Pointer-based pinch-zoom + one-finger pan for the PDF surface.
- * - Active only when `enabled` is true (we gate this by touch-capable devices).
- * - Uses zoomRef + zoomAt so behaviour matches wheel / HUD zoom.
- */
 export default function usePinchZoom({
   containerRef,
   zoomRef,
@@ -24,8 +19,13 @@ export default function usePinchZoom({
   enabled,
 }: UsePinchZoomOptions) {
   useEffect(() => {
+    // 1) Guard: only run on touch-capable + PointerEvent browsers
     if (!enabled) return;
+    if (typeof window === 'undefined' || !(window as any).PointerEvent) {
+      return;
+    }
 
+    // 2) Grab the current element; if it's not there yet, bail for now
     const el = containerRef.current;
     if (!el) return;
 
@@ -139,6 +139,7 @@ export default function usePinchZoom({
     el.addEventListener('pointercancel', end, { passive: true });
     el.addEventListener('pointerleave', end, { passive: true });
 
+    // Cleanup on unmount / ref change
     return () => {
       el.removeEventListener('pointerdown', onPointerDown as any);
       el.removeEventListener('pointermove', onPointerMove as any);
@@ -146,5 +147,6 @@ export default function usePinchZoom({
       el.removeEventListener('pointercancel', end as any);
       el.removeEventListener('pointerleave', end as any);
     };
-  }, [containerRef, zoomRef, zoomAt, clampZoom, enabled]);
+  // 👇 key change: depend on the *actual element*, not the ref object
+  }, [enabled, containerRef.current, zoomAt, clampZoom]);
 }
