@@ -933,55 +933,72 @@ const zoomAt = useCallback(
     const nextZoom = clampZoom(nextZoomRaw);
     const prevZoom = zoomRef.current;
 
-    if (Math.abs(nextZoom - prevZoom) < 0.001) return;
+    // Skip if change is negligible
+    if (Math.abs(nextZoom - prevZoom) < 0.0005) return;
 
-    // Get anchor point in container coordinates
+    // === ANCHOR MATH ===
+    // We want content at (contentX, contentY) to stay at screen point (anchorX, anchorY)
+    
     const rect = container.getBoundingClientRect();
-    const anchorX = clientX - rect.left;
-    const anchorY = clientY - rect.top;
+    const anchorX = clientX - rect.left;  // X in container coords
+    const anchorY = clientY - rect.top;   // Y in container coords
 
     // Content position under anchor BEFORE zoom
-    const contentX = container.scrollLeft + anchorX;
-    const contentY = container.scrollTop + anchorY;
+    const contentXBefore = container.scrollLeft + anchorX;
+    const contentYBefore = container.scrollTop + anchorY;
 
-    // 1) Update zoom immediately (sync)
+    // === UPDATE ZOOM (sync, immediate) ===
     const actualZoom = setZoomQ(nextZoom, zoomRef);
-
-    // 2) Recompute layout dimensions immediately
+    
+    // === UPDATE LAYOUT (sync, immediate) ===
     recomputePrefix();
 
-    // 3) Calculate new scroll position
+    // === CALCULATE NEW SCROLL ===
     const scale = actualZoom / prevZoom;
-    const newScrollLeft = contentX * scale - anchorX;
-    const newScrollTop = contentY * scale - anchorY;
+    
+    // After zoom, content has moved. Calculate where the anchor should scroll to
+    // so that the same content stays under the anchor point
+    let newScrollLeft = contentXBefore * scale - anchorX;
+    let newScrollTop = contentYBefore * scale - anchorY;
 
-    // 4) Apply scroll in next frame (allows canvas resize to settle)
+    // === APPLY SCROLL (defer by 1 frame to let canvas resize) ===
     requestAnimationFrame(() => {
-      const maxScrollLeft = Math.max(0, container.scrollWidth - container.clientWidth);
-      const maxScrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
+      // Clamp to valid scroll bounds
+      const maxL = Math.max(0, container.scrollWidth - container.clientWidth);
+      const maxT = Math.max(0, container.scrollHeight - container.clientHeight);
 
-      container.scrollLeft = Math.max(0, Math.min(newScrollLeft, maxScrollLeft));
-      container.scrollTop = Math.max(0, Math.min(newScrollTop, maxScrollTop));
+      container.scrollLeft = Math.max(0, Math.min(newScrollLeft, maxL));
+      container.scrollTop = Math.max(0, Math.min(newScrollTop, maxT));
     });
 
-    // 5) Update yellow mark box immediately (no delay)
-    const mark = marks[currentMarkIndex];
-    if (mark) {
-      const base = basePageSizeRef.current[mark.page_index];
-      if (base) {
-        const wZ = base.w * actualZoom;
-        const hZ = base.h * actualZoom;
-        setSelectedRect({
-          pageNumber: mark.page_index + 1,
-          x: mark.nx * wZ,
-          y: mark.ny * hZ,
-          w: mark.nw * wZ,
-          h: mark.nh * hZ,
-        });
-      }
-    }
+    // === UPDATE YELLOW BOX (sync, immediate - no lag) ===
+    updateSelectedRectForCurrentMark(actualZoom);
   },
-  [clampZoom, marks, currentMarkIndex, setZoomQ, recomputePrefix]
+  [clampZoom, setZoomQ, recomputePrefix]
+);
+
+// Helper: Update yellow box for current mark at given zoom
+// Called synchronously during zoom to avoid lag
+const updateSelectedRectForCurrentMark = useCallback(
+  (atZoom: number) => {
+    const mark = marks[currentMarkIndex];
+    if (!mark) return;
+
+    const base = basePageSizeRef.current[mark.page_index];
+    if (!base) return;
+
+    const wZ = base.w * atZoom;
+    const hZ = base.h * atZoom;
+
+    setSelectedRect({
+      pageNumber: mark.page_index + 1,
+      x: mark.nx * wZ,
+      y: mark.ny * hZ,
+      w: mark.nw * wZ,
+      h: mark.nh * hZ,
+    });
+  },
+  [marks, currentMarkIndex]
 );
   const isDemo = searchParams?.get('demo') === '1';
   const qProject = searchParams?.get('project_name') || '';
@@ -1330,16 +1347,20 @@ const zoomAt = useCallback(
   }, [pdf, recomputePrefix]);
 
   
-// Recompute prefix when zoom changes (but not during pinch, handled in zoomAt)
+// Recompute prefix when zoom changes from external sources (HUD, wheel, smoothZoom)
+// Note: Pinch zoom calls recomputePrefix() directly inside zoomAt for tighter sync
 useEffect(() => {
-  // Only recompute if zoom changed from external source (HUD, wheel, etc)
-  // Pinch zoom calls recomputePrefix() directly in zoomAt for tighter sync
+  // Recompute layout
   recomputePrefix();
-  
-  // Update visible range after a short delay to let pages render
-  requestAnimationFrame(() => updateVisibleRange());
-}, [zoom, recomputePrefix, updateVisibleRange]);
 
+  // Update visible range (throttled via rAF)
+  requestAnimationFrame(() => {
+    updateVisibleRange();
+  });
+
+  // Update yellow box to match new zoom
+  updateSelectedRectForCurrentMark(zoom);
+}, [zoom, recomputePrefix, updateVisibleRange, updateSelectedRectForCurrentMark]);
 
   const navigateToMark = useCallback(
     async (index: number) => {
