@@ -197,11 +197,12 @@ function PageCanvas({
       }
     };
 
-    const zoomDiff = Math.abs(zoom - lastRenderedZoomRef.current);
-    // Avoid churn during tiny zoom deltas or while a task is in-flight
-    if ((zoomDiff > 0.035 || lastRenderedZoomRef.current === 0) && !renderTaskRef.current) {
-      renderPage();
-    }
+  const zoomDiff = Math.abs(zoom - lastRenderedZoomRef.current);
+// Slightly more eager to re-render for smoother pinch
+if ((zoomDiff > 0.02 || lastRenderedZoomRef.current === 0) && !renderTaskRef.current) {
+  renderPage();
+}
+
 
     return () => {
       isCancelled = true;

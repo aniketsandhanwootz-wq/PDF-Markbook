@@ -86,10 +86,11 @@ const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
 // PATCH[page.tsx] — add quantized zoom helpers (place after easeOutCubic)
 const quantize = (z: number) => {
-  // 3-decimal quantization = smoother zoom, still stable enough
-  const q = Math.round(clampZoom(z) * 1000) / 1000;
+  // 4-decimal quantization – less jumpy, still stable
+  const q = Math.round(clampZoom(z) * 10000) / 10000;
   return q;
 };
+
 
 
 

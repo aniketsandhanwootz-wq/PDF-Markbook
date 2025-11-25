@@ -28,18 +28,16 @@ export default function usePinchZoom({
     const pointers = new Map<number, { x: number; y: number; t: number }>();
 
     let isPinching = false;
+
+    // Baseline for the WHOLE gesture (no per-frame reset)
     let baseZoom = 1;
     let baseDistance = 0;
 
-    const PINCH_START_THRESHOLD = 8;
+    // Last known center (for anchoring)
+    let pinchCenter = { x: 0, y: 0 };
 
-    // Ignore tiny deltas – big win for smoothness
-    const MIN_ZOOM_CHANGE = 0.01; // ~1% change
-
-    // Gentle zoom velocity limiting per gesture step
-    const MAX_STEP_FACTOR = 1.08;        // max +8% per step
-    const MIN_STEP_FACTOR = 1 / MAX_STEP_FACTOR;
-
+    const PINCH_START_THRESHOLD = 8; // px change before we consider it a real pinch
+    const MIN_ZOOM_CHANGE = 0.003;   // ~0.3% step – smoother than 1%
 
     const distance = (p1: { x: number; y: number }, p2: { x: number; y: number }) =>
       Math.hypot(p2.x - p1.x, p2.y - p1.y);
@@ -62,9 +60,10 @@ export default function usePinchZoom({
 
       if (pointers.size === 2) {
         const [p1, p2] = Array.from(pointers.values());
-        baseDistance = distance(p1, p2);
-        baseZoom = zoomRef.current;
-        isPinching = false;
+        baseDistance = distance(p1, p2) || 1;
+        baseZoom = zoomRef.current || 1;
+        pinchCenter = center(p1, p2);
+        isPinching = false; // will flip true once threshold is crossed
       }
     };
 
@@ -80,40 +79,33 @@ export default function usePinchZoom({
       if (pointers.size !== 2) return;
 
       const [p1, p2] = Array.from(pointers.values());
-      const currentDist = distance(p1, p2);
+      const currDist = distance(p1, p2);
 
       if (!isPinching) {
-        if (Math.abs(currentDist - baseDistance) > PINCH_START_THRESHOLD) {
+        if (Math.abs(currDist - baseDistance) > PINCH_START_THRESHOLD) {
           isPinching = true;
-          // lock during pinch so it feels like a proper canvas
+          // Lock scroll during pinch so browser doesn’t fight us
           el.style.overflow = 'hidden';
         } else {
           return;
         }
       }
 
-      if (baseDistance === 0) return;
+      if (!baseDistance) return;
 
-      const currentCenter = center(p1, p2);
+      // Keep anchor at the current finger center
+      pinchCenter = center(p1, p2);
 
-      // Raw scale vs the distance when we last updated the baseline
-      let factor = currentDist / baseDistance;
+      // Scale relative to gesture-start distance
+      const rawFactor = currDist / baseDistance;
+      const rawZoom = baseZoom * rawFactor;
+      const targetZoom = clampZoom(rawZoom);
 
-      // 🔒 Limit per-step zoom factor for "velocity limiting"
-      if (factor > MAX_STEP_FACTOR) factor = MAX_STEP_FACTOR;
-      if (factor < MIN_STEP_FACTOR) factor = MIN_STEP_FACTOR;
-
-      const targetZoom = clampZoom(baseZoom * factor);
-
+      // Ignore microscopic zoom changes
       if (Math.abs(targetZoom - zoomRef.current) < MIN_ZOOM_CHANGE) return;
 
-      // Anchor zoom around the gesture center
-      zoomAt(targetZoom, currentCenter.x, currentCenter.y);
-
-      // 🧠 IMPORTANT:
-      // After applying zoom, reset the baseline so subsequent moves are incremental
-      baseZoom = zoomRef.current;
-      baseDistance = currentDist;
+      // Zoom anchored at the pinch center
+      zoomAt(targetZoom, pinchCenter.x, pinchCenter.y);
 
       e.preventDefault();
       e.stopPropagation();
