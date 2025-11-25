@@ -25,16 +25,14 @@ export default function usePinchZoom({
     const el = containerRef.current;
     if (!el) return;
 
-    // Track active pointers
     const pointers = new Map<number, { x: number; y: number; t: number }>();
 
     let isPinching = false;
     let baseZoom = 1;
     let baseDistance = 0;
 
-    // tunables – keep them **small** to avoid “blocked” feeling
-    const PINCH_START_THRESHOLD = 8;      // pixels
-    const MIN_ZOOM_CHANGE = 0.0005;       // almost always lets small changes through
+    const PINCH_START_THRESHOLD = 8;
+    const MIN_ZOOM_CHANGE = 0.0005;
 
     const distance = (p1: { x: number; y: number }, p2: { x: number; y: number }) =>
       Math.hypot(p2.x - p1.x, p2.y - p1.y);
@@ -45,7 +43,6 @@ export default function usePinchZoom({
     });
 
     const onPointerDown = (e: PointerEvent) => {
-      // Only touch/pen – let mouse wheel handle desktop zoom
       if (e.pointerType === 'mouse') return;
       if (!el.contains(e.target as Node)) return;
 
@@ -60,7 +57,7 @@ export default function usePinchZoom({
         const [p1, p2] = Array.from(pointers.values());
         baseDistance = distance(p1, p2);
         baseZoom = zoomRef.current;
-        isPinching = false; // we’ll flip to true after threshold
+        isPinching = false;
       }
     };
 
@@ -81,7 +78,6 @@ export default function usePinchZoom({
       if (!isPinching) {
         if (Math.abs(currentDist - baseDistance) > PINCH_START_THRESHOLD) {
           isPinching = true;
-          // temporarily disable scroll while pinching
           el.style.overflow = 'hidden';
         } else {
           return;
@@ -94,10 +90,8 @@ export default function usePinchZoom({
       const factor = currentDist / baseDistance;
       const targetZoom = clampZoom(baseZoom * factor);
 
-      // avoid tiny jitter
       if (Math.abs(targetZoom - zoomRef.current) < MIN_ZOOM_CHANGE) return;
 
-      // core: zoom anchored at **current** pinch center
       zoomAt(targetZoom, currentCenter.x, currentCenter.y);
 
       e.preventDefault();
@@ -109,7 +103,7 @@ export default function usePinchZoom({
 
       if (isPinching && pointers.size < 2) {
         isPinching = false;
-        el.style.overflow = ''; // re-enable scroll
+        el.style.overflow = '';
       }
 
       if (pointers.size === 0) {
@@ -131,5 +125,5 @@ export default function usePinchZoom({
       el.removeEventListener('pointerup', onPointerEnd as any);
       el.removeEventListener('pointercancel', onPointerEnd as any);
     };
-  }, [enabled, zoomAt, clampZoom, containerRef]);
+  }, [enabled, zoomAt, clampZoom, containerRef, zoomRef]);
 }

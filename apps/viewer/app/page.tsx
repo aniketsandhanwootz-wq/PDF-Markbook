@@ -673,14 +673,51 @@ function ViewerContent() {
   const [currentMarkIndex, setCurrentMarkIndex] = useState(0);
   const [zoom, setZoom] = useState(1.0);
   // Quantized zoom setter (must live at component top-level)
+// Single atomic zoom setter - updates zoom + mark box in one tick
+
+  // Markset meta + grouping for QC flows
+  const [isMasterMarkSet, setIsMasterMarkSet] = useState<boolean | null>(null);
+  const [groupWindows, setGroupWindows] = useState<GroupWindowMeta[] | null>(null);
+  const [markToGroupIndex, setMarkToGroupIndex] = useState<number[]>([]);
+
   const setZoomQ = useCallback(
     (z: number, ref?: MutableRefObject<number>) => {
       const q = quantize(z);
       setZoom(q);
       if (ref) ref.current = q;
+      
+      // Atomic: update yellow box in same tick
+      const mark = marks[currentMarkIndex];
+      if (mark) {
+        // Respect QC group page index
+        const isMaster = isMasterMarkSet === true;
+        let pageIndex = mark.page_index ?? 0;
+        
+        if (!isMaster && groupWindows && markToGroupIndex[currentMarkIndex] != null) {
+          const gi = markToGroupIndex[currentMarkIndex];
+          if (gi >= 0 && gi < groupWindows.length) {
+            const gMeta = groupWindows[gi];
+            pageIndex = gMeta.page_index ?? mark.page_index ?? 0;
+          }
+        }
+        
+        const base = basePageSizeRef.current[pageIndex];
+        if (base) {
+          const wZ = base.w * q;
+          const hZ = base.h * q;
+          setSelectedRect({
+            pageNumber: pageIndex + 1,
+            x: mark.nx * wZ,
+            y: mark.ny * hZ,
+            w: mark.nw * wZ,
+            h: mark.nh * hZ,
+          });
+        }
+      }
+      
       return q;
     },
-    []
+    [marks, currentMarkIndex, isMasterMarkSet, groupWindows, markToGroupIndex]
   );
 
   const [loading, setLoading] = useState(false);
@@ -713,10 +750,6 @@ const pdfTouchAction: CSSProperties['touchAction'] = 'pan-x pan-y';
   const [entries, setEntries] = useState<Record<string, string>>({});
   const [showReview, setShowReview] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  // Markset meta + grouping for QC flows
-  const [isMasterMarkSet, setIsMasterMarkSet] = useState<boolean | null>(null);
-  const [groupWindows, setGroupWindows] = useState<GroupWindowMeta[] | null>(null);
-  const [markToGroupIndex, setMarkToGroupIndex] = useState<number[]>([]);
 
   // Refs used by the viewer and smooth zoom
   const containerRef = useRef<HTMLDivElement>(null);
@@ -855,30 +888,23 @@ const pdfTouchAction: CSSProperties['touchAction'] = 'pan-x pan-y';
 
 
   // Smooth animated zoom that keeps the same focal point centered
-  // Smooth animated zoom that keeps the same focal point centered
-  const smoothZoom = useCallback(
+const smoothZoom = useCallback(
     (toZoomRaw: number, durationMs = 240) => {
       const container = containerRef.current;
       if (!container) return;
 
       const toZoom = clampZoom(toZoomRaw);
 
-      // cancel an in-flight animation
       if (animRafRef.current) cancelAnimationFrame(animRafRef.current);
 
       const startZoom = zoomRef.current;
       if (Math.abs(toZoom - startZoom) < 1e-4) return;
 
-      // anchor at the center of the viewport
       const anchorX = container.clientWidth / 2;
       const anchorY = container.clientHeight / 2;
 
-      // content coords under that anchor at start
       const contentX = container.scrollLeft + anchorX;
       const contentY = container.scrollTop + anchorY;
-
-      const mark = marks[currentMarkIndex];                 // ⬅️ use current mark
-      const base = mark ? basePageSizeRef.current[mark.page_index] : undefined;
 
       const t0 = performance.now();
       isZoomAnimatingRef.current = true;
@@ -888,29 +914,14 @@ const pdfTouchAction: CSSProperties['touchAction'] = 'pan-x pan-y';
         const z = lerp(startZoom, toZoom, easeOutCubic(t));
         const k = z / startZoom;
 
-        // 1) apply zoom (triggers canvas resize/layout)
+        // ATOMIC: zoom + mark box
         setZoomQ(z, zoomRef);
 
-
-        // 2) keep focal point centered (clamped)
         const targetLeft = contentX * k - anchorX;
         const targetTop = contentY * k - anchorY;
         const { left, top } = clampScroll(container, targetLeft, targetTop);
         container.scrollLeft = left;
         container.scrollTop = top;
-
-        // 3) move the yellow rect *in sync* with zoom (no waiting)
-        if (mark && base) {
-          const wZ = base.w * z;
-          const hZ = base.h * z;
-          setSelectedRect({
-            pageNumber: mark.page_index + 1,
-            x: mark.nx * wZ,
-            y: mark.ny * hZ,
-            w: mark.nw * wZ,
-            h: mark.nh * hZ,
-          });
-        }
 
         if (t < 1) {
           animRafRef.current = requestAnimationFrame(step);
@@ -922,79 +933,47 @@ const pdfTouchAction: CSSProperties['touchAction'] = 'pan-x pan-y';
 
       animRafRef.current = requestAnimationFrame(step);
     },
-    // deps: include things we read directly
-    [marks, currentMarkIndex, clampZoom]
+    [clampZoom, setZoomQ]
   );
 
-  // Helper: Update yellow box for current mark at given zoom
-// Called synchronously during zoom to avoid lag
-const updateSelectedRectForCurrentMark = useCallback(
-  (atZoom: number) => {
-    const mark = marks[currentMarkIndex];
-    if (!mark) return;
-
-    const base = basePageSizeRef.current[mark.page_index];
-    if (!base) return;
-
-    const wZ = base.w * atZoom;
-    const hZ = base.h * atZoom;
-
-    setSelectedRect({
-      pageNumber: mark.page_index + 1,
-      x: mark.nx * wZ,
-      y: mark.ny * hZ,
-      w: mark.nw * wZ,
-      h: mark.nh * hZ,
-    });
-  },
-  [marks, currentMarkIndex]
-);
-
 const zoomAt = useCallback(
-  (nextZoomRaw: number, clientX: number, clientY: number) => {
-    const container = containerRef.current;
-    if (!container) return;
+    (nextZoomRaw: number, clientX: number, clientY: number) => {
+      const container = containerRef.current;
+      if (!container) return;
 
-    const nextZoom = clampZoom(nextZoomRaw);
-    const prevZoom = zoomRef.current;
+      const nextZoom = clampZoom(nextZoomRaw);
+      const prevZoom = zoomRef.current;
 
-    // Skip if change is negligible
-    if (Math.abs(nextZoom - prevZoom) < 0.0005) return;
+      if (Math.abs(nextZoom - prevZoom) < 0.0005) return;
 
-    // === ANCHOR MATH ===
-    const rect = container.getBoundingClientRect();
-    const anchorX = clientX - rect.left;
-    const anchorY = clientY - rect.top;
+      const rect = container.getBoundingClientRect();
+      const anchorX = clientX - rect.left;
+      const anchorY = clientY - rect.top;
 
-    const contentXBefore = container.scrollLeft + anchorX;
-    const contentYBefore = container.scrollTop + anchorY;
+      const contentXBefore = container.scrollLeft + anchorX;
+      const contentYBefore = container.scrollTop + anchorY;
 
-    // 1) Update zoom immediately
-    const actualZoom = setZoomQ(nextZoom, zoomRef);
+      // ATOMIC UPDATE: zoom + mark box in one tick
+      const actualZoom = setZoomQ(nextZoom, zoomRef);
 
-    // 2) Update layout
-    recomputePrefix();
+      // Recompute layout immediately
+      recomputePrefix();
 
-    // 3) Compute new scroll to keep anchor stable
-    const scale = actualZoom / prevZoom;
-    const newScrollLeft = contentXBefore * scale - anchorX;
-    const newScrollTop = contentYBefore * scale - anchorY;
+      // Reanchor scroll next frame (non-blocking)
+      requestAnimationFrame(() => {
+        const scale = actualZoom / prevZoom;
+        const newScrollLeft = contentXBefore * scale - anchorX;
+        const newScrollTop = contentYBefore * scale - anchorY;
 
-    // 4) Apply scroll next frame
-    requestAnimationFrame(() => {
-      const maxL = Math.max(0, container.scrollWidth - container.clientWidth);
-      const maxT = Math.max(0, container.scrollHeight - container.clientHeight);
+        const maxL = Math.max(0, container.scrollWidth - container.clientWidth);
+        const maxT = Math.max(0, container.scrollHeight - container.clientHeight);
 
-      container.scrollLeft = Math.max(0, Math.min(newScrollLeft, maxL));
-      container.scrollTop = Math.max(0, Math.min(newScrollTop, maxT));
-    });
-
-    // 5) Yellow box in sync
-    updateSelectedRectForCurrentMark(actualZoom);
-  },
-  [clampZoom, setZoomQ, recomputePrefix, updateSelectedRectForCurrentMark]
-);
-
+        container.scrollLeft = Math.max(0, Math.min(newScrollLeft, maxL));
+        container.scrollTop = Math.max(0, Math.min(newScrollTop, maxT));
+      });
+    },
+    [clampZoom, setZoomQ, recomputePrefix]
+  );
   const isDemo = searchParams?.get('demo') === '1';
   const qProject = searchParams?.get('project_name') || '';
   const qExtId = searchParams?.get('id') || '';
@@ -1343,19 +1322,16 @@ const zoomAt = useCallback(
 
   
 // Recompute prefix when zoom changes from external sources (HUD, wheel, smoothZoom)
-// Note: Pinch zoom calls recomputePrefix() directly inside zoomAt for tighter sync
+// Recompute layout when zoom changes from external sources (e.g. resetZoom, fitToWidth)
 useEffect(() => {
-  // Recompute layout
   recomputePrefix();
 
-  // Update visible range (throttled via rAF)
   requestAnimationFrame(() => {
     updateVisibleRange();
   });
-
-  // Update yellow box to match new zoom
-  updateSelectedRectForCurrentMark(zoom);
-}, [zoom, recomputePrefix, updateVisibleRange, updateSelectedRectForCurrentMark]);
+  
+  // Mark box already updated by setZoomQ - no need here
+}, [zoom, recomputePrefix, updateVisibleRange]);
 
   const navigateToMark = useCallback(
     async (index: number) => {
