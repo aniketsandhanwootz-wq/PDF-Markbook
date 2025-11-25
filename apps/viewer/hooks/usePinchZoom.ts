@@ -32,11 +32,14 @@ export default function usePinchZoom({
     let baseDistance = 0;
 
     const PINCH_START_THRESHOLD = 8;
-    const MIN_ZOOM_CHANGE = 0.0005;
 
-    // 💡 New: per-step clamp so zoom velocity is limited
-    const MAX_STEP_FACTOR = 1.15;        // max 15% zoom change per step
+    // Ignore tiny deltas – big win for smoothness
+    const MIN_ZOOM_CHANGE = 0.01; // ~1% change
+
+    // Gentle zoom velocity limiting per gesture step
+    const MAX_STEP_FACTOR = 1.08;        // max +8% per step
     const MIN_STEP_FACTOR = 1 / MAX_STEP_FACTOR;
+
 
     const distance = (p1: { x: number; y: number }, p2: { x: number; y: number }) =>
       Math.hypot(p2.x - p1.x, p2.y - p1.y);

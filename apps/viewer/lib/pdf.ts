@@ -35,7 +35,18 @@ export function throttle<T extends (...args: any[]) => any>(
 }
 
 export function clampZoom(zoom: number): number {
-  return Math.max(0.25, Math.min(6.0, zoom));
+  // Slightly smaller max on touch devices – avoids huge canvases / white screens
+  let maxZoom = 5.0; // desktop default
+
+  if (typeof window !== 'undefined') {
+    const isTouch =
+      'ontouchstart' in window || (navigator as any).maxTouchPoints > 0;
+    if (isTouch) {
+      maxZoom = 3.2; // phones/tablets – still plenty close
+    }
+  }
+
+  return Math.max(0.25, Math.min(maxZoom, zoom));
 }
 
 /**

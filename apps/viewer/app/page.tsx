@@ -758,6 +758,8 @@ const pdfTouchAction: CSSProperties['touchAction'] = 'pan-x pan-y';
   const pageElsRef = useRef<Array<HTMLDivElement | null>>([]);
   const basePageSizeRef = useRef<Array<{ w: number; h: number }>>([]);
 
+  const layoutRafRef = useRef<number | null>(null);
+
 
   // keep current zoom in a ref for synchronous math
   const zoomRef = useRef(zoom);
@@ -938,43 +940,42 @@ const smoothZoom = useCallback(
   );
 
 const zoomAt = useCallback(
-    (nextZoomRaw: number, clientX: number, clientY: number) => {
-      const container = containerRef.current;
-      if (!container) return;
+  (nextZoomRaw: number, clientX: number, clientY: number) => {
+    const container = containerRef.current;
+    if (!container) return;
 
-      const nextZoom = clampZoom(nextZoomRaw);
-      const prevZoom = zoomRef.current;
+    const nextZoom = clampZoom(nextZoomRaw);
+    const prevZoom = zoomRef.current;
 
-      if (Math.abs(nextZoom - prevZoom) < 0.0005) return;
+    // ignore tiny changes – pinch hook already filtered, but double guard
+    if (Math.abs(nextZoom - prevZoom) < 0.0005) return;
 
-      const rect = container.getBoundingClientRect();
-      const anchorX = clientX - rect.left;
-      const anchorY = clientY - rect.top;
+    const rect = container.getBoundingClientRect();
+    const anchorX = clientX - rect.left;
+    const anchorY = clientY - rect.top;
 
-      const contentXBefore = container.scrollLeft + anchorX;
-      const contentYBefore = container.scrollTop + anchorY;
+    const contentXBefore = container.scrollLeft + anchorX;
+    const contentYBefore = container.scrollTop + anchorY;
 
-      // ATOMIC UPDATE: zoom + mark box in one tick
-      const actualZoom = setZoomQ(nextZoom, zoomRef);
+    // ATOMIC: zoom state + selected box
+    const actualZoom = setZoomQ(nextZoom, zoomRef);
 
-      // Recompute layout immediately
-      recomputePrefix();
+    // Let the zoom useEffect handle layout; just fix scroll
+    requestAnimationFrame(() => {
+      const scale = actualZoom / prevZoom;
+      const newScrollLeft = contentXBefore * scale - anchorX;
+      const newScrollTop = contentYBefore * scale - anchorY;
 
-      // Reanchor scroll next frame (non-blocking)
-      requestAnimationFrame(() => {
-        const scale = actualZoom / prevZoom;
-        const newScrollLeft = contentXBefore * scale - anchorX;
-        const newScrollTop = contentYBefore * scale - anchorY;
+      const maxL = Math.max(0, container.scrollWidth - container.clientWidth);
+      const maxT = Math.max(0, container.scrollHeight - container.clientHeight);
 
-        const maxL = Math.max(0, container.scrollWidth - container.clientWidth);
-        const maxT = Math.max(0, container.scrollHeight - container.clientHeight);
+      container.scrollLeft = Math.max(0, Math.min(newScrollLeft, maxL));
+      container.scrollTop = Math.max(0, Math.min(newScrollTop, maxT));
+    });
+  },
+  [clampZoom, setZoomQ]
+);
 
-        container.scrollLeft = Math.max(0, Math.min(newScrollLeft, maxL));
-        container.scrollTop = Math.max(0, Math.min(newScrollTop, maxT));
-      });
-    },
-    [clampZoom, setZoomQ, recomputePrefix]
-  );
   const isDemo = searchParams?.get('demo') === '1';
   const qProject = searchParams?.get('project_name') || '';
   const qExtId = searchParams?.get('id') || '';
@@ -1321,18 +1322,16 @@ const zoomAt = useCallback(
     return () => { cancelled = true; };
   }, [pdf, recomputePrefix]);
 
-  
-// Recompute prefix when zoom changes from external sources (HUD, wheel, smoothZoom)
-// Recompute layout when zoom changes from external sources (e.g. resetZoom, fitToWidth)
 useEffect(() => {
-  recomputePrefix();
+  if (layoutRafRef.current != null) return;
 
-  requestAnimationFrame(() => {
+  layoutRafRef.current = requestAnimationFrame(() => {
+    recomputePrefix();
     updateVisibleRange();
+    layoutRafRef.current = null;
   });
-  
-  // Mark box already updated by setZoomQ - no need here
 }, [zoom, recomputePrefix, updateVisibleRange]);
+
 
   const navigateToMark = useCallback(
     async (index: number) => {
@@ -1929,13 +1928,16 @@ usePinchZoom({
     jumpToPage(pageNumber);
   }, [jumpToPage]);
 
-  // Render ALL pages so fast scroll / zoom never shows blank pages.
-  // We still use prefixHeightsRef for layout, but no aggressive windowing.
+  // Render only a window of pages around the viewport
   const pagesToRender =
     numPages === 0
       ? []
-      : Array.from({ length: numPages }, (_, i) => i + 1);
-
+      : (() => {
+          const [start, end] = visibleRange; // 1-based inclusive
+          const pages: number[] = [];
+          for (let p = start; p <= end; p++) pages.push(p);
+          return pages;
+        })();
 
   if (showSetup) {
     return <ViewerSetupScreen onStart={handleSetupComplete} />;
