@@ -19,134 +19,206 @@ export default function usePinchZoom({
   enabled,
 }: UsePinchZoomOptions) {
   useEffect(() => {
-    // 1) Guard: only run on touch-capable + PointerEvent browsers
     if (!enabled) return;
-    if (typeof window === 'undefined' || !(window as any).PointerEvent) {
-      return;
-    }
+    if (typeof window === 'undefined' || !(window as any).PointerEvent) return;
 
-    // 2) Grab the current element; if it's not there yet, bail for now
     const el = containerRef.current;
     if (!el) return;
 
-    // Track active pointers
-    const pts = new Map<number, { x: number; y: number }>();
+    // Pointer tracking
+    const pointers = new Map<number, { x: number; y: number; t: number }>();
 
-    let dragging = false;
-    let pinch = false;
+    // Pinch state
+    let isPinching = false;
+    let initialDistance = 0;
+    let initialZoom = 1;
+    let pinchCenterX = 0;
+    let pinchCenterY = 0;
 
-    // Drag (one-finger pan)
-    let dragStartX = 0;
-    let dragStartY = 0;
-    let startScrollLeft = 0;
-    let startScrollTop = 0;
+    // Thresholds
+    const PINCH_THRESHOLD = 10; // pixels - must change by this much to start pinch
+    const MOMENTUM_DURATION = 300;
+    const MOMENTUM_DECAY = 0.92;
 
-    // Pinch (two-finger zoom)
-    let lastMidX = 0;
-    let lastMidY = 0;
-    let lastDist = 0;
+    // Momentum state
+    let velocityHistory: Array<{ factor: number; t: number }> = [];
+    let momentumRaf: number | null = null;
 
-    const getTwo = () => {
-      const arr = Array.from(pts.values());
-      return [arr[0], arr[1]] as const;
+    const getDistance = (p1: { x: number; y: number }, p2: { x: number; y: number }) => {
+      return Math.hypot(p2.x - p1.x, p2.y - p1.y);
+    };
+
+    const getCenter = (p1: { x: number; y: number }, p2: { x: number; y: number }) => {
+      return {
+        x: (p1.x + p2.x) / 2,
+        y: (p1.y + p2.y) / 2,
+      };
+    };
+
+    const applyMomentum = () => {
+      if (momentumRaf) cancelAnimationFrame(momentumRaf);
+      
+      const now = performance.now();
+      const recent = velocityHistory.filter(v => now - v.t < 150);
+      
+      if (recent.length < 2) {
+        velocityHistory = [];
+        return;
+      }
+
+      // Calculate average zoom factor
+      let avgFactor = recent.reduce((acc, v) => acc * v.factor, 1);
+      avgFactor = Math.pow(avgFactor, 1 / recent.length);
+      
+      // Only apply if there's meaningful velocity
+      const velocityMagnitude = Math.abs(Math.log(avgFactor));
+      if (velocityMagnitude < 0.005) {
+        velocityHistory = [];
+        return;
+      }
+
+      const startZoom = zoomRef.current;
+      const startTime = performance.now();
+
+      const tick = (now: number) => {
+        const elapsed = now - startTime;
+        const progress = elapsed / MOMENTUM_DURATION;
+
+        if (progress >= 1) {
+          momentumRaf = null;
+          velocityHistory = [];
+          return;
+        }
+
+        // Exponential decay
+        const decay = Math.pow(MOMENTUM_DECAY, elapsed / 16);
+        const factor = Math.pow(avgFactor, decay * 0.5);
+        const nextZoom = clampZoom(startZoom * Math.pow(factor, 1 - progress));
+
+        zoomAt(nextZoom, pinchCenterX, pinchCenterY);
+
+        momentumRaf = requestAnimationFrame(tick);
+      };
+
+      momentumRaf = requestAnimationFrame(tick);
     };
 
     const onPointerDown = (e: PointerEvent) => {
+      // Only handle touch/pen, not mouse (let mouse wheel handle zoom)
+      if (e.pointerType === 'mouse') return;
       if (!el.contains(e.target as Node)) return;
 
       el.setPointerCapture?.(e.pointerId);
-      pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, t: performance.now() });
 
-      if (pts.size === 1) {
-        // Start one-finger drag
-        dragging = true;
-        pinch = false;
-        dragStartX = e.clientX;
-        dragStartY = e.clientY;
-        startScrollLeft = el.scrollLeft;
-        startScrollTop = el.scrollTop;
-      } else if (pts.size === 2) {
-        // Start pinch
-        dragging = false;
-        pinch = true;
-
-        const [p0, p1] = getTwo();
-        lastMidX = (p0.x + p1.x) / 2;
-        lastMidY = (p0.y + p1.y) / 2;
-        lastDist = Math.hypot(p0.x - p1.x, p0.y - p1.y);
+      // Check if this starts a pinch (2 fingers)
+      if (pointers.size === 2) {
+        const [p1, p2] = Array.from(pointers.values());
+        initialDistance = getDistance(p1, p2);
+        initialZoom = zoomRef.current;
+        
+        const center = getCenter(p1, p2);
+        pinchCenterX = center.x;
+        pinchCenterY = center.y;
+        
+        // Don't mark as pinching yet - wait for movement threshold
+        isPinching = false;
+        velocityHistory = [];
+        
+        // Cancel any momentum
+        if (momentumRaf) {
+          cancelAnimationFrame(momentumRaf);
+          momentumRaf = null;
+        }
       }
     };
 
     const onPointerMove = (e: PointerEvent) => {
-      if (!pts.has(e.pointerId)) return;
-      pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (!pointers.has(e.pointerId)) return;
+      
+      const now = performance.now();
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, t: now });
 
-      if (pinch && pts.size >= 2) {
-        // Two (or more) fingers → pinch
-        const [p0, p1] = getTwo();
-        const midX = (p0.x + p1.x) / 2;
-        const midY = (p0.y + p1.y) / 2;
-        const dist = Math.hypot(p0.x - p1.x, p0.y - p1.y);
-
-        if (lastDist > 0) {
-          const factor = dist / lastDist;
-          const next = clampZoom(zoomRef.current * factor);
-
-          // Zoom around pinch midpoint
-          zoomAt(next, midX, midY);
-
-          // Pan by midpoint drift so content stays under the fingers
-          el.scrollLeft -= (midX - lastMidX);
-          el.scrollTop -= (midY - lastMidY);
+      // Only handle pinch if we have exactly 2 pointers
+      if (pointers.size === 2) {
+        const [p1, p2] = Array.from(pointers.values());
+        const currentDistance = getDistance(p1, p2);
+        
+        // Start pinching if we've moved past threshold
+        if (!isPinching && Math.abs(currentDistance - initialDistance) > PINCH_THRESHOLD) {
+          isPinching = true;
+          
+          // Disable scroll during pinch
+          el.style.overflow = 'hidden';
         }
 
-        lastMidX = midX;
-        lastMidY = midY;
-        lastDist = dist;
+        if (isPinching && initialDistance > 0) {
+          const center = getCenter(p1, p2);
+          
+          // Calculate zoom factor
+          const factor = currentDistance / initialDistance;
+          const targetZoom = clampZoom(initialZoom * factor);
+          
+          // Track velocity for momentum
+          const prevZoom = zoomRef.current;
+          if (prevZoom > 0) {
+            const frameFactor = targetZoom / prevZoom;
+            velocityHistory.push({ factor: frameFactor, t: now });
+            
+            // Keep only recent history
+            if (velocityHistory.length > 10) velocityHistory.shift();
+          }
 
-        e.preventDefault();
-        e.stopPropagation();
-      } else if (dragging && pts.size === 1) {
-        // One-finger drag → pan when zoomed
-        const dx = e.clientX - dragStartX;
-        const dy = e.clientY - dragStartY;
+          // Apply zoom around the pinch center
+          zoomAt(targetZoom, center.x, center.y);
+          
+          // Update center for momentum
+          pinchCenterX = center.x;
+          pinchCenterY = center.y;
 
-        el.scrollLeft = startScrollLeft - dx;
-        el.scrollTop = startScrollTop - dy;
-
-        e.preventDefault();
-        e.stopPropagation();
+          e.preventDefault();
+          e.stopPropagation();
+        }
       }
     };
 
-    const end = (e: PointerEvent) => {
-      pts.delete(e.pointerId);
+    const onPointerEnd = (e: PointerEvent) => {
+      pointers.delete(e.pointerId);
 
-      if (pts.size < 2) {
-        pinch = false;
-        lastDist = 0;
+      // If we were pinching and now have < 2 fingers, end pinch
+      if (isPinching && pointers.size < 2) {
+        isPinching = false;
+        
+        // Re-enable scroll
+        el.style.overflow = '';
+        
+        // Apply momentum if we have velocity
+        applyMomentum();
       }
-      if (pts.size === 0) {
-        dragging = false;
+
+      // Reset if no pointers left
+      if (pointers.size === 0) {
+        isPinching = false;
+        initialDistance = 0;
+        velocityHistory = [];
       }
 
       el.releasePointerCapture?.(e.pointerId);
     };
 
+    // Event listeners
     el.addEventListener('pointerdown', onPointerDown, { passive: false });
     el.addEventListener('pointermove', onPointerMove, { passive: false });
-    el.addEventListener('pointerup', end, { passive: true });
-    el.addEventListener('pointercancel', end, { passive: true });
-    el.addEventListener('pointerleave', end, { passive: true });
+    el.addEventListener('pointerup', onPointerEnd, { passive: true });
+    el.addEventListener('pointercancel', onPointerEnd, { passive: true });
 
-    // Cleanup on unmount / ref change
     return () => {
+      if (momentumRaf) cancelAnimationFrame(momentumRaf);
+      
       el.removeEventListener('pointerdown', onPointerDown as any);
       el.removeEventListener('pointermove', onPointerMove as any);
-      el.removeEventListener('pointerup', end as any);
-      el.removeEventListener('pointercancel', end as any);
-      el.removeEventListener('pointerleave', end as any);
+      el.removeEventListener('pointerup', onPointerEnd as any);
+      el.removeEventListener('pointercancel', onPointerEnd as any);
     };
-  // 👇 key change: depend on the *actual element*, not the ref object
   }, [enabled, containerRef.current, zoomAt, clampZoom]);
 }

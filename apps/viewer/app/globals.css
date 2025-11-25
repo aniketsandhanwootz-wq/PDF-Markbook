@@ -670,3 +670,19 @@ body {
 .page-overlay {
   contain: strict;
 }
+.pdf-surface-wrap {
+  transform: translateZ(0);
+  will-change: scroll-position;
+  -webkit-overflow-scrolling: touch;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.pdf-surface canvas {
+  transform: translateZ(0);
+  will-change: transform;
+}
+
+html, body {
+  overscroll-behavior: none;
+}

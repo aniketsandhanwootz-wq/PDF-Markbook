@@ -705,10 +705,9 @@ function ViewerContent() {
   const [highlightPageNumber, setHighlightPageNumber] = useState<number>(0);
   const [isMobileInputMode, setIsMobileInputMode] = useState(false);
 
-    // Decide touch-action for the PDF scroll surface (mobile vs desktop)
-  const pdfTouchAction: CSSProperties['touchAction'] = TOUCH_GESTURES_ENABLED
-    ? 'none'          // we handle pan + pinch via pointer events
-    : 'pan-x pan-y';  // fallback: let the browser manage scroll
+// Always allow browser scroll – we only intercept pinch in the hook
+const pdfTouchAction: CSSProperties['touchAction'] = 'pan-x pan-y';
+
 
   // Input mode states
   const [entries, setEntries] = useState<Record<string, string>>({});
@@ -927,44 +926,70 @@ function ViewerContent() {
     [marks, currentMarkIndex, clampZoom]
   );
   // PATCH[page.tsx] — add focal-point zoom helper
-  const zoomAt = useCallback(
-    (nextZoomRaw: number, clientX: number, clientY: number) => {
-      const container = containerRef.current;
-      if (!container) return;
+const zoomAt = useCallback(
+  (nextZoomRaw: number, clientX: number, clientY: number) => {
+    const container = containerRef.current;
+    if (!container) return;
 
-      const nextZoom = clampZoom(nextZoomRaw);
-      const prevZoom = zoomRef.current;
-      if (Math.abs(nextZoom - prevZoom) < 1e-4) return;
+    const nextZoom = clampZoom(nextZoomRaw);
+    const prevZoom = zoomRef.current;
 
-      // Anchor at the given screen point (mouse or gesture center)
-      const rect = container.getBoundingClientRect();
-      const anchorX = clientX - rect.left;
-      const anchorY = clientY - rect.top;
+    if (Math.abs(nextZoom - prevZoom) < 0.001) return;
 
-      // Content coords under anchor at previous zoom
-      const contentX = container.scrollLeft + anchorX;
-      const contentY = container.scrollTop + anchorY;
+    // Anchor at the given screen point (mouse or gesture center)
+    const rect = container.getBoundingClientRect();
+    const anchorX = clientX - rect.left;
+    const anchorY = clientY - rect.top;
 
-      const scale = nextZoom / prevZoom;
+    // Content coords under anchor at previous zoom
+    const contentX = container.scrollLeft + anchorX;
+    const contentY = container.scrollTop + anchorY;
 
-      // 1) set zoom state quickly (no extra animations here)
-      setZoomQ(nextZoom, zoomRef);
+    // 1) Set zoom (and displayZoom) immediately
+    const actualZoom = setZoomQ(nextZoom, zoomRef);
 
+    // Scale factor for scroll adjustment
+    const scale = actualZoom / prevZoom;
 
-      // 2) keep the same content point under the anchor
-      const targetLeft = contentX * scale - anchorX;
-      const targetTop = contentY * scale - anchorY;
-
-      const { left, top } = clampScroll(container, targetLeft, targetTop);
-      // rAF prevents layout thrash during trackpad zooming
+    // 2× rAF so PDF canvases have time to resize
+    requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        container.scrollLeft = left;
-        container.scrollTop = top;
-      });
-    },
-    [clampZoom]
-  );
+        const newScrollLeft = contentX * scale - anchorX;
+        const newScrollTop = contentY * scale - anchorY;
 
+        const maxScrollLeft = Math.max(
+          0,
+          container.scrollWidth - container.clientWidth
+        );
+        const maxScrollTop = Math.max(
+          0,
+          container.scrollHeight - container.clientHeight
+        );
+
+        container.scrollLeft = Math.max(0, Math.min(newScrollLeft, maxScrollLeft));
+        container.scrollTop = Math.max(0, Math.min(newScrollTop, maxScrollTop));
+
+        // Keep yellow rect in sync with zoom
+        const mark = marks[currentMarkIndex];
+        if (mark) {
+          const base = basePageSizeRef.current[mark.page_index];
+          if (base) {
+            const wZ = base.w * actualZoom;
+            const hZ = base.h * actualZoom;
+            setSelectedRect({
+              pageNumber: mark.page_index + 1,
+              x: mark.nx * wZ,
+              y: mark.ny * hZ,
+              w: mark.nw * wZ,
+              h: mark.nh * hZ,
+            });
+          }
+        }
+      });
+    });
+  },
+  [clampZoom, marks, currentMarkIndex, setZoomQ]
+);
 
   const isDemo = searchParams?.get('demo') === '1';
   const qProject = searchParams?.get('project_name') || '';
@@ -1313,11 +1338,11 @@ function ViewerContent() {
   }, [pdf, recomputePrefix]);
 
   // Recompute prefix on zoom change without re-measuring
-  useEffect(() => {
-    recomputePrefix();
-    // keep visible range in sync
-    updateVisibleRange();
-  }, [zoom, recomputePrefix]);
+useEffect(() => {
+  recomputePrefix();
+  updateVisibleRange();
+}, [zoom, recomputePrefix, updateVisibleRange]);
+
 
   const navigateToMark = useCallback(
     async (index: number) => {
@@ -1883,13 +1908,13 @@ const selectFromList = useCallback((index: number) => {
   }, [zoomAt, clampZoom]);
 
   // Touch pan (1 finger) + pinch-zoom (2 fingers) on the PDF container (mobile only)
-  usePinchZoom({
-    containerRef,
-    zoomRef,
-    zoomAt,
-    clampZoom,
-    enabled: TOUCH_GESTURES_ENABLED,
-  });
+usePinchZoom({
+  containerRef,
+  zoomRef,
+  zoomAt,
+  clampZoom,
+  enabled: TOUCH_GESTURES_ENABLED,
+});
 
 
   useEffect(() => {
