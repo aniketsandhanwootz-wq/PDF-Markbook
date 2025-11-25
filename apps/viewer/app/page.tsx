@@ -1620,50 +1620,6 @@ useEffect(() => {
   );
 
 
-
-
-  useEffect(() => {
-    if (marks.length === 0) return;
-    if (isZoomAnimatingRef.current) return;
-
-    const mark = marks[currentMarkIndex];
-    if (!mark) return;
-
-    // Same logic as navigateToMark: for QC groups, anchor to group.page_index
-    const isMaster = isMasterMarkSet === true;
-
-    let groupIdx: number | null = null;
-    if (!isMaster && groupWindows && markToGroupIndex[currentMarkIndex] != null) {
-      const gi = markToGroupIndex[currentMarkIndex];
-      if (gi != null && gi >= 0 && gi < groupWindows.length) {
-        groupIdx = gi;
-      }
-    }
-
-    const hasGroup = groupIdx !== null;
-    const gMeta = hasGroup ? groupWindows![groupIdx!] : null;
-
-    const pageIndex =
-      hasGroup && gMeta
-        ? (gMeta.page_index ?? mark.page_index ?? 0)
-        : (mark.page_index ?? 0);
-
-    const base = basePageSizeRef.current[pageIndex];
-    if (!base) return;
-
-    const rectAtZ = {
-      x: mark.nx * base.w * zoom,
-      y: mark.ny * base.h * zoom,
-      w: mark.nw * base.w * zoom,
-      h: mark.nh * base.h * zoom,
-    };
-
-    setSelectedRect({
-      pageNumber: pageIndex + 1,
-      ...rectAtZ,
-    });
-  }, [zoom, currentMarkIndex, marks, isMasterMarkSet, groupWindows, markToGroupIndex]);
-
   const prevMark = useCallback(() => {
     if (currentMarkIndex > 0) {
       navigateToMark(currentMarkIndex - 1);
@@ -1928,16 +1884,13 @@ usePinchZoom({
     jumpToPage(pageNumber);
   }, [jumpToPage]);
 
-  // Render only a window of pages around the viewport
+  // Render ALL pages, but still use prefixHeightsRef for vertical layout.
+  // We keep visibleRange only to track currentPage & prefetch hints.
   const pagesToRender =
     numPages === 0
       ? []
-      : (() => {
-          const [start, end] = visibleRange; // 1-based inclusive
-          const pages: number[] = [];
-          for (let p = start; p <= end; p++) pages.push(p);
-          return pages;
-        })();
+      : Array.from({ length: numPages }, (_, i) => i + 1);
+
 
   if (showSetup) {
     return <ViewerSetupScreen onStart={handleSetupComplete} />;
