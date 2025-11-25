@@ -925,59 +925,8 @@ const pdfTouchAction: CSSProperties['touchAction'] = 'pan-x pan-y';
     // deps: include things we read directly
     [marks, currentMarkIndex, clampZoom]
   );
-const zoomAt = useCallback(
-  (nextZoomRaw: number, clientX: number, clientY: number) => {
-    const container = containerRef.current;
-    if (!container) return;
 
-    const nextZoom = clampZoom(nextZoomRaw);
-    const prevZoom = zoomRef.current;
-
-    // Skip if change is negligible
-    if (Math.abs(nextZoom - prevZoom) < 0.0005) return;
-
-    // === ANCHOR MATH ===
-    // We want content at (contentX, contentY) to stay at screen point (anchorX, anchorY)
-    
-    const rect = container.getBoundingClientRect();
-    const anchorX = clientX - rect.left;  // X in container coords
-    const anchorY = clientY - rect.top;   // Y in container coords
-
-    // Content position under anchor BEFORE zoom
-    const contentXBefore = container.scrollLeft + anchorX;
-    const contentYBefore = container.scrollTop + anchorY;
-
-    // === UPDATE ZOOM (sync, immediate) ===
-    const actualZoom = setZoomQ(nextZoom, zoomRef);
-    
-    // === UPDATE LAYOUT (sync, immediate) ===
-    recomputePrefix();
-
-    // === CALCULATE NEW SCROLL ===
-    const scale = actualZoom / prevZoom;
-    
-    // After zoom, content has moved. Calculate where the anchor should scroll to
-    // so that the same content stays under the anchor point
-    let newScrollLeft = contentXBefore * scale - anchorX;
-    let newScrollTop = contentYBefore * scale - anchorY;
-
-    // === APPLY SCROLL (defer by 1 frame to let canvas resize) ===
-    requestAnimationFrame(() => {
-      // Clamp to valid scroll bounds
-      const maxL = Math.max(0, container.scrollWidth - container.clientWidth);
-      const maxT = Math.max(0, container.scrollHeight - container.clientHeight);
-
-      container.scrollLeft = Math.max(0, Math.min(newScrollLeft, maxL));
-      container.scrollTop = Math.max(0, Math.min(newScrollTop, maxT));
-    });
-
-    // === UPDATE YELLOW BOX (sync, immediate - no lag) ===
-    updateSelectedRectForCurrentMark(actualZoom);
-  },
-  [clampZoom, setZoomQ, recomputePrefix]
-);
-
-// Helper: Update yellow box for current mark at given zoom
+  // Helper: Update yellow box for current mark at given zoom
 // Called synchronously during zoom to avoid lag
 const updateSelectedRectForCurrentMark = useCallback(
   (atZoom: number) => {
@@ -1000,6 +949,52 @@ const updateSelectedRectForCurrentMark = useCallback(
   },
   [marks, currentMarkIndex]
 );
+
+const zoomAt = useCallback(
+  (nextZoomRaw: number, clientX: number, clientY: number) => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const nextZoom = clampZoom(nextZoomRaw);
+    const prevZoom = zoomRef.current;
+
+    // Skip if change is negligible
+    if (Math.abs(nextZoom - prevZoom) < 0.0005) return;
+
+    // === ANCHOR MATH ===
+    const rect = container.getBoundingClientRect();
+    const anchorX = clientX - rect.left;
+    const anchorY = clientY - rect.top;
+
+    const contentXBefore = container.scrollLeft + anchorX;
+    const contentYBefore = container.scrollTop + anchorY;
+
+    // 1) Update zoom immediately
+    const actualZoom = setZoomQ(nextZoom, zoomRef);
+
+    // 2) Update layout
+    recomputePrefix();
+
+    // 3) Compute new scroll to keep anchor stable
+    const scale = actualZoom / prevZoom;
+    const newScrollLeft = contentXBefore * scale - anchorX;
+    const newScrollTop = contentYBefore * scale - anchorY;
+
+    // 4) Apply scroll next frame
+    requestAnimationFrame(() => {
+      const maxL = Math.max(0, container.scrollWidth - container.clientWidth);
+      const maxT = Math.max(0, container.scrollHeight - container.clientHeight);
+
+      container.scrollLeft = Math.max(0, Math.min(newScrollLeft, maxL));
+      container.scrollTop = Math.max(0, Math.min(newScrollTop, maxT));
+    });
+
+    // 5) Yellow box in sync
+    updateSelectedRectForCurrentMark(actualZoom);
+  },
+  [clampZoom, setZoomQ, recomputePrefix, updateSelectedRectForCurrentMark]
+);
+
   const isDemo = searchParams?.get('demo') === '1';
   const qProject = searchParams?.get('project_name') || '';
   const qExtId = searchParams?.get('id') || '';
