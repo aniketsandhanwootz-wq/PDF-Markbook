@@ -86,10 +86,11 @@ const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
 // PATCH[page.tsx] — add quantized zoom helpers (place after easeOutCubic)
 const quantize = (z: number) => {
-  // 2-decimal quantization stabilizes cache & reduces re-renders
-  const q = Math.round(clampZoom(z) * 100) / 100;
+  // 3-decimal quantization = smoother zoom, still stable enough
+  const q = Math.round(clampZoom(z) * 1000) / 1000;
   return q;
 };
+
 
 
 
@@ -1928,17 +1929,13 @@ usePinchZoom({
     jumpToPage(pageNumber);
   }, [jumpToPage]);
 
-  // Clamp the windowed page range so we never ask pdf.js for an invalid page
-  const safeStart = Math.max(1, Math.min(visibleRange[0], numPages || 1));
-  const safeEnd =
-    numPages === 0
-      ? safeStart
-      : Math.max(safeStart, Math.min(visibleRange[1], numPages));
-
+  // Render ALL pages so fast scroll / zoom never shows blank pages.
+  // We still use prefixHeightsRef for layout, but no aggressive windowing.
   const pagesToRender =
     numPages === 0
       ? []
-      : Array.from({ length: safeEnd - safeStart + 1 }, (_, i) => safeStart + i);
+      : Array.from({ length: numPages }, (_, i) => i + 1);
+
 
   if (showSetup) {
     return <ViewerSetupScreen onStart={handleSetupComplete} />;

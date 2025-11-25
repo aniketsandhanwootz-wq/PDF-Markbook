@@ -34,6 +34,10 @@ export default function usePinchZoom({
     const PINCH_START_THRESHOLD = 8;
     const MIN_ZOOM_CHANGE = 0.0005;
 
+    // 💡 New: per-step clamp so zoom velocity is limited
+    const MAX_STEP_FACTOR = 1.15;        // max 15% zoom change per step
+    const MIN_STEP_FACTOR = 1 / MAX_STEP_FACTOR;
+
     const distance = (p1: { x: number; y: number }, p2: { x: number; y: number }) =>
       Math.hypot(p2.x - p1.x, p2.y - p1.y);
 
@@ -78,6 +82,7 @@ export default function usePinchZoom({
       if (!isPinching) {
         if (Math.abs(currentDist - baseDistance) > PINCH_START_THRESHOLD) {
           isPinching = true;
+          // lock during pinch so it feels like a proper canvas
           el.style.overflow = 'hidden';
         } else {
           return;
@@ -87,12 +92,25 @@ export default function usePinchZoom({
       if (baseDistance === 0) return;
 
       const currentCenter = center(p1, p2);
-      const factor = currentDist / baseDistance;
+
+      // Raw scale vs the distance when we last updated the baseline
+      let factor = currentDist / baseDistance;
+
+      // 🔒 Limit per-step zoom factor for "velocity limiting"
+      if (factor > MAX_STEP_FACTOR) factor = MAX_STEP_FACTOR;
+      if (factor < MIN_STEP_FACTOR) factor = MIN_STEP_FACTOR;
+
       const targetZoom = clampZoom(baseZoom * factor);
 
       if (Math.abs(targetZoom - zoomRef.current) < MIN_ZOOM_CHANGE) return;
 
+      // Anchor zoom around the gesture center
       zoomAt(targetZoom, currentCenter.x, currentCenter.y);
+
+      // 🧠 IMPORTANT:
+      // After applying zoom, reset the baseline so subsequent moves are incremental
+      baseZoom = zoomRef.current;
+      baseDistance = currentDist;
 
       e.preventDefault();
       e.stopPropagation();
