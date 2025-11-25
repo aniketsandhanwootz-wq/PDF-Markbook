@@ -32,17 +32,17 @@ export default function usePinchZoom({
     let isPinching = false;
     let initialDistance = 0;
     let initialZoom = 1;
-    let pinchCenterX = 0;
-    let pinchCenterY = 0;
+    let lastCenter = { x: 0, y: 0 };
 
-    // Thresholds
-    const PINCH_THRESHOLD = 10; // pixels - must change by this much to start pinch
-    const MOMENTUM_DURATION = 300;
-    const MOMENTUM_DECAY = 0.92;
+    // Smoothing / filtering
+    const PINCH_THRESHOLD = 15; // Higher threshold = less accidental pinch
+    const MIN_ZOOM_DELTA = 0.002; // Skip tiny zoom changes to reduce jitter
 
-    // Momentum state
+    // Momentum (conservative)
     let velocityHistory: Array<{ factor: number; t: number }> = [];
     let momentumRaf: number | null = null;
+    const MOMENTUM_DURATION = 250;
+    const MOMENTUM_DECAY = 0.90;
 
     const getDistance = (p1: { x: number; y: number }, p2: { x: number; y: number }) => {
       return Math.hypot(p2.x - p1.x, p2.y - p1.y);
@@ -57,22 +57,21 @@ export default function usePinchZoom({
 
     const applyMomentum = () => {
       if (momentumRaf) cancelAnimationFrame(momentumRaf);
-      
+
       const now = performance.now();
-      const recent = velocityHistory.filter(v => now - v.t < 150);
-      
+      const recent = velocityHistory.filter(v => now - v.t < 120);
+
       if (recent.length < 2) {
         velocityHistory = [];
         return;
       }
 
-      // Calculate average zoom factor
+      // Geometric mean of zoom factors
       let avgFactor = recent.reduce((acc, v) => acc * v.factor, 1);
       avgFactor = Math.pow(avgFactor, 1 / recent.length);
-      
-      // Only apply if there's meaningful velocity
+
       const velocityMagnitude = Math.abs(Math.log(avgFactor));
-      if (velocityMagnitude < 0.005) {
+      if (velocityMagnitude < 0.008) {
         velocityHistory = [];
         return;
       }
@@ -90,12 +89,11 @@ export default function usePinchZoom({
           return;
         }
 
-        // Exponential decay
         const decay = Math.pow(MOMENTUM_DECAY, elapsed / 16);
-        const factor = Math.pow(avgFactor, decay * 0.5);
+        const factor = Math.pow(avgFactor, decay * 0.4);
         const nextZoom = clampZoom(startZoom * Math.pow(factor, 1 - progress));
 
-        zoomAt(nextZoom, pinchCenterX, pinchCenterY);
+        zoomAt(nextZoom, lastCenter.x, lastCenter.y);
 
         momentumRaf = requestAnimationFrame(tick);
       };
@@ -104,28 +102,23 @@ export default function usePinchZoom({
     };
 
     const onPointerDown = (e: PointerEvent) => {
-      // Only handle touch/pen, not mouse (let mouse wheel handle zoom)
       if (e.pointerType === 'mouse') return;
       if (!el.contains(e.target as Node)) return;
 
       el.setPointerCapture?.(e.pointerId);
       pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, t: performance.now() });
 
-      // Check if this starts a pinch (2 fingers)
       if (pointers.size === 2) {
         const [p1, p2] = Array.from(pointers.values());
         initialDistance = getDistance(p1, p2);
         initialZoom = zoomRef.current;
-        
+
         const center = getCenter(p1, p2);
-        pinchCenterX = center.x;
-        pinchCenterY = center.y;
-        
-        // Don't mark as pinching yet - wait for movement threshold
+        lastCenter = center;
+
         isPinching = false;
         velocityHistory = [];
-        
-        // Cancel any momentum
+
         if (momentumRaf) {
           cancelAnimationFrame(momentumRaf);
           momentumRaf = null;
@@ -135,46 +128,41 @@ export default function usePinchZoom({
 
     const onPointerMove = (e: PointerEvent) => {
       if (!pointers.has(e.pointerId)) return;
-      
+
       const now = performance.now();
       pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, t: now });
 
-      // Only handle pinch if we have exactly 2 pointers
       if (pointers.size === 2) {
         const [p1, p2] = Array.from(pointers.values());
         const currentDistance = getDistance(p1, p2);
-        
-        // Start pinching if we've moved past threshold
+
+        // Start pinching only after threshold
         if (!isPinching && Math.abs(currentDistance - initialDistance) > PINCH_THRESHOLD) {
           isPinching = true;
-          
-          // Disable scroll during pinch
           el.style.overflow = 'hidden';
         }
 
         if (isPinching && initialDistance > 0) {
           const center = getCenter(p1, p2);
-          
-          // Calculate zoom factor
+          lastCenter = center;
+
           const factor = currentDistance / initialDistance;
           const targetZoom = clampZoom(initialZoom * factor);
-          
-          // Track velocity for momentum
+
+          // Skip tiny changes to reduce jitter
+          const zoomDelta = Math.abs(targetZoom - zoomRef.current);
+          if (zoomDelta < MIN_ZOOM_DELTA) return;
+
+          // Track velocity
           const prevZoom = zoomRef.current;
           if (prevZoom > 0) {
             const frameFactor = targetZoom / prevZoom;
             velocityHistory.push({ factor: frameFactor, t: now });
-            
-            // Keep only recent history
-            if (velocityHistory.length > 10) velocityHistory.shift();
+            if (velocityHistory.length > 8) velocityHistory.shift();
           }
 
-          // Apply zoom around the pinch center
+          // Apply zoom immediately
           zoomAt(targetZoom, center.x, center.y);
-          
-          // Update center for momentum
-          pinchCenterX = center.x;
-          pinchCenterY = center.y;
 
           e.preventDefault();
           e.stopPropagation();
@@ -185,18 +173,12 @@ export default function usePinchZoom({
     const onPointerEnd = (e: PointerEvent) => {
       pointers.delete(e.pointerId);
 
-      // If we were pinching and now have < 2 fingers, end pinch
       if (isPinching && pointers.size < 2) {
         isPinching = false;
-        
-        // Re-enable scroll
         el.style.overflow = '';
-        
-        // Apply momentum if we have velocity
         applyMomentum();
       }
 
-      // Reset if no pointers left
       if (pointers.size === 0) {
         isPinching = false;
         initialDistance = 0;
@@ -206,7 +188,6 @@ export default function usePinchZoom({
       el.releasePointerCapture?.(e.pointerId);
     };
 
-    // Event listeners
     el.addEventListener('pointerdown', onPointerDown, { passive: false });
     el.addEventListener('pointermove', onPointerMove, { passive: false });
     el.addEventListener('pointerup', onPointerEnd, { passive: true });
@@ -214,7 +195,7 @@ export default function usePinchZoom({
 
     return () => {
       if (momentumRaf) cancelAnimationFrame(momentumRaf);
-      
+
       el.removeEventListener('pointerdown', onPointerDown as any);
       el.removeEventListener('pointermove', onPointerMove as any);
       el.removeEventListener('pointerup', onPointerEnd as any);
