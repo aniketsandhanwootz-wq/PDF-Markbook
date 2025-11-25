@@ -454,3 +454,4 @@ npm run dev
 4. Keep Sheets schema backward-compatible
 5. Run Prettier + ESLint before PR
 
+# Future context
