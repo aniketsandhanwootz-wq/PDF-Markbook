@@ -1,6 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
+import type { PointerEvent } from 'react';
+
 
 type Mark = {
   mark_id?: string;
@@ -17,6 +19,131 @@ type Mark = {
   is_required?: boolean;
 };
 
+type SlideToActProps = {
+  label: string;
+  onComplete: () => void;
+};
+
+function SlideToAct({ label, onComplete }: SlideToActProps) {
+  const trackRef = useRef<HTMLDivElement | null>(null);
+  const [dragX, setDragX] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
+  const startXRef = useRef(0);
+  const maxXRef = useRef(0);
+
+  const KNOB_SIZE = 40;
+  const PADDING = 4;
+
+  const clamp = (val: number, min: number, max: number) =>
+    Math.min(max, Math.max(min, val));
+
+  const handlePointerDown = (e: PointerEvent<HTMLDivElement>) => {
+    if (!trackRef.current) return;
+    const rect = trackRef.current.getBoundingClientRect();
+    maxXRef.current = rect.width - KNOB_SIZE - PADDING * 2;
+    startXRef.current = e.clientX;
+    setIsDragging(true);
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  };
+
+  const handlePointerMove = (e: PointerEvent<HTMLDivElement>) => {
+    if (!isDragging) return;
+    const delta = e.clientX - startXRef.current;
+    setDragX((prev) => clamp(prev + delta, 0, maxXRef.current));
+    startXRef.current = e.clientX;
+  };
+
+  const handlePointerUp = (e: PointerEvent<HTMLDivElement>) => {
+    if (!isDragging) return;
+    setIsDragging(false);
+    (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+
+    const threshold = maxXRef.current * 0.7;
+    if (dragX >= threshold) {
+      // Snap to end, fire complete, then reset for next time
+      setDragX(maxXRef.current);
+      onComplete();
+      // slight delay so user sees it reach the end
+      setTimeout(() => setDragX(0), 220);
+    } else {
+      // snap back
+      setDragX(0);
+    }
+  };
+
+  const filledWidth = dragX + KNOB_SIZE + PADDING;
+
+  return (
+    <div
+      ref={trackRef}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerUp}
+      style={{
+        position: 'relative',
+        width: '100%',
+        height: 48,
+        borderRadius: 24,
+        background: '#e3f2fd',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        overflow: 'hidden',
+        touchAction: 'pan-y',
+        userSelect: 'none',
+      }}
+    >
+      {/* Progress fill under text */}
+      <div
+        style={{
+          position: 'absolute',
+          left: 0,
+          top: 0,
+          bottom: 0,
+          width: filledWidth,
+          background: '#1976d233',
+          transition: isDragging ? 'none' : 'width 0.2s ease',
+        }}
+      />
+
+      {/* Label */}
+      <span
+        style={{
+          position: 'relative',
+          zIndex: 1,
+          fontSize: 14,
+          fontWeight: 600,
+          color: '#0d47a1',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {label}
+      </span>
+
+      {/* Knob */}
+      <div
+        style={{
+          position: 'absolute',
+          left: PADDING + dragX,
+          top: PADDING,
+          width: KNOB_SIZE,
+          height: KNOB_SIZE,
+          borderRadius: '50%',
+          background: '#ffffff',
+          boxShadow: '0 2px 6px rgba(0,0,0,0.2)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 2,
+          transition: isDragging ? 'none' : 'left 0.2s ease',
+        }}
+      >
+        <span style={{ fontSize: 20, color: '#1976d2' }}>➜</span>
+      </div>
+    </div>
+  );
+}
 
 type InputPanelProps = {
   currentMark: Mark | null;
@@ -28,7 +155,32 @@ type InputPanelProps = {
   onPrev: () => void;
   canNext: boolean;
   canPrev: boolean;
+
+  /**
+   * 'mark'  – normal mark-by-mark mode (current behaviour)
+   * 'group' – group overview mode (show full group, slide to enter marks)
+   */
+  mode?: 'mark' | 'group';
+
+  /** Display name of the current group (for header in group mode) */
+  groupName?: string;
+
+  /** Short text like "Instrument: Vernier caliper, Depth gauge" for this group */
+  groupInstrumentSummary?: string;
+
+  /**
+   * If true and mode==='group', shows the slide-to-act button
+   * instead of Next/Prev.
+   */
+  showGroupSlide?: boolean;
+
+  /** Custom label for slide action (defaults to "Slide to start this group") */
+  groupSlideLabel?: string;
+
+  /** Called when user successfully slides all the way (proceed to group marks) */
+  onGroupSlideComplete?: () => void;
 };
+
 
 function indexToLabel(idx: number): string {
   let n = idx + 1,
@@ -51,7 +203,14 @@ export default function InputPanel({
   onPrev,
   canNext,
   canPrev,
+  mode = 'mark',
+  groupName,
+  groupInstrumentSummary,
+  showGroupSlide,
+  groupSlideLabel,
+  onGroupSlideComplete,
 }: InputPanelProps) {
+
   // --- Keyboard overlap handling (mobile) ------------------------------
   const [kbOverlap, setKbOverlap] = useState(0); // pixels to lift the panel
   const [vvSupported, setVvSupported] = useState(false);
@@ -81,7 +240,9 @@ export default function InputPanel({
     };
   }, []);
 
-  const floating = vvSupported && kbOverlap > 0 && selfFocused;
+   const floating = vvSupported && kbOverlap > 0 && selfFocused;
+  const isGroupMode = mode === 'group';
+
 
   if (!currentMark) {
     return (
@@ -99,9 +260,10 @@ export default function InputPanel({
       </div>
     );
   }
-
-  const headingText = currentMark.instrument?.trim() || currentMark.name;
+  const baseHeading = currentMark.instrument?.trim() || currentMark.name;
+  const headingText = isGroupMode ? groupName || baseHeading : baseHeading;
   const displayLabel = currentMark.label ?? indexToLabel(currentIndex);
+
 
   return (
     <div
@@ -192,98 +354,145 @@ export default function InputPanel({
 
       </div>
 
-      {/* Input */}
-      <div style={{ padding: '4px 10px', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
-        <input
-          type="text"
-          inputMode="decimal"
-          enterKeyHint="next"
-          pattern="[0-9]*[.,]?[0-9]*"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder="Type value here..."
+      {/* Input / Group description */}
+      {isGroupMode ? (
+        <div
           style={{
-            width: '100%',
-            padding: '10px 12px',
-            fontSize: 16,
-            border: '2px solid #ddd',
-            borderRadius: 8,
-            outline: 'none',
-            transition: 'border-color 0.2s',
-            height: 44,
+            padding: '8px 12px 6px',
+            fontSize: 13,
+            color: '#555',
+            lineHeight: 1.4,
           }}
-          onFocus={(e) => {
-            setSelfFocused(true);
-            e.target.style.borderColor = '#1976d2';
+        >
+          <div style={{ fontWeight: 600, marginBottom: 2 }}>
+            Group overview
+          </div>
+          <div>
+            Review all ballons of <strong>{headingText}</strong> on the drawing above.
+          </div>
+          {groupInstrumentSummary && (
+            <div style={{ marginTop: 4, color: '#333' }}>
+              <strong>Instrument:</strong> {groupInstrumentSummary}
+            </div>
+          )}
+          <div style={{ marginTop: 6, fontStyle: 'italic', color: '#777' }}>
+            Slide below to start entering values for this group.
+          </div>
+        </div>
+      ) : (
+        <div
+          style={{
+            padding: '4px 10px',
+            display: 'flex',
+            alignItems: 'center',
+            flexShrink: 0,
           }}
-          // IMPORTANT FIX: delay turning off selfFocused so the first tap on "Next"
-          // actually clicks the button instead of just closing the keyboard.
-          onBlur={(e) => {
-            e.target.style.borderColor = '#ddd';
-            setTimeout(() => {
-              setSelfFocused(false);
-            }, 80); // small delay is enough
-          }}
-          // EXTRA: allow pressing Enter/Next key on the keyboard to trigger onNext()
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              onNext();
-            }
-          }}
-        />
-      </div>
+        >
+          <input
+            type="text"
+            inputMode="decimal"
+            enterKeyHint="next"
+            pattern="[0-9]*[.,]?[0-9]*"
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder="Type value here..."
+            style={{
+              width: '100%',
+              padding: '10px 12px',
+              fontSize: 16,
+              border: '2px solid #ddd',
+              borderRadius: 8,
+              outline: 'none',
+              transition: 'border-color 0.2s',
+              height: 44,
+            }}
+            onFocus={(e) => {
+              setSelfFocused(true);
+              e.target.style.borderColor = '#1976d2';
+            }}
+            onBlur={(e) => {
+              e.target.style.borderColor = '#ddd';
+              setTimeout(() => {
+                setSelfFocused(false);
+              }, 80);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                onNext();
+              }
+            }}
+          />
+        </div>
+      )}
 
-      {/* Nav */}
-      <div
-        style={{
-          padding: '4px 10px',
-          background: '#f9f9f9',
-          borderTop: '1px solid #eee',
-          display: 'flex',
-          gap: 6,
-          flexShrink: 0,
-          paddingBottom: floating ? 6 : 'env(safe-area-inset-bottom, 6px)',
-        }}
-      >
-        <button
-          onClick={onPrev}
-          disabled={!canPrev}
+      {/* Nav / Slide action */}
+      {isGroupMode && showGroupSlide && onGroupSlideComplete ? (
+        <div
           style={{
-            flex: 1,
-            padding: '8px 12px',
-            fontSize: 16,
-            fontWeight: 700,
-            border: '2px solid #ddd',
-            background: canPrev ? 'white' : '#f5f5f5',
-            color: canPrev ? '#333' : '#999',
-            borderRadius: 10,
-            cursor: canPrev ? 'pointer' : 'not-allowed',
-            minHeight: 44,
-            transition: 'all 0.2s',
+            padding: '8px 10px',
+            background: '#f9f9f9',
+            borderTop: '1px solid #eee',
+            flexShrink: 0,
+            paddingBottom: floating ? 6 : 'env(safe-area-inset-bottom, 6px)',
           }}
         >
-          ← Prev
-        </button>
-        <button
-          onClick={onNext}
+          <SlideToAct
+            label={groupSlideLabel || 'Slide to start this group'}
+            onComplete={onGroupSlideComplete}
+          />
+        </div>
+      ) : (
+        <div
           style={{
-            flex: 1,
-            padding: '8px 12px',
-            fontSize: 16,
-            fontWeight: 700,
-            border: 'none',
-            background: '#1976d2',
-            color: 'white',
-            borderRadius: 10,
-            cursor: 'pointer',
-            minHeight: 44,
-            transition: 'all 0.2s',
+            padding: '4px 10px',
+            background: '#f9f9f9',
+            borderTop: '1px solid #eee',
+            display: 'flex',
+            gap: 6,
+            flexShrink: 0,
+            paddingBottom: floating ? 6 : 'env(safe-area-inset-bottom, 6px)',
           }}
         >
-          {currentIndex < totalMarks - 1 ? 'Next →' : '✓ Review'}
-        </button>
-      </div>
+          <button
+            onClick={onPrev}
+            disabled={!canPrev}
+            style={{
+              flex: 1,
+              padding: '8px 12px',
+              fontSize: 16,
+              fontWeight: 700,
+              border: '2px solid #ddd',
+              background: canPrev ? 'white' : '#f5f5f5',
+              color: canPrev ? '#333' : '#999',
+              borderRadius: 10,
+              cursor: canPrev ? 'pointer' : 'not-allowed',
+              minHeight: 44,
+              transition: 'all 0.2s',
+            }}
+          >
+            ← Prev
+          </button>
+          <button
+            onClick={onNext}
+            style={{
+              flex: 1,
+              padding: '8px 12px',
+              fontSize: 16,
+              fontWeight: 700,
+              border: 'none',
+              background: '#1976d2',
+              color: 'white',
+              borderRadius: 10,
+              cursor: 'pointer',
+              minHeight: 44,
+              transition: 'all 0.2s',
+            }}
+          >
+            {currentIndex < totalMarks - 1 ? 'Next →' : '✓ Review'}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

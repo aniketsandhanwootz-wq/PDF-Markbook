@@ -10,7 +10,10 @@ type PageCanvasProps = {
   onReady?: (pageHeightPx: number) => void;
   flashRect?: { x: number; y: number; w: number; h: number } | null;
   selectedRect?: { x: number; y: number; w: number; h: number } | null;
+  // NEW: optional list of rects to show when we are in "group overview"
+  groupRects?: { x: number; y: number; w: number; h: number }[] | null;
 };
+
 
 
 // Canvas render cache to avoid re-rendering identical views
@@ -24,6 +27,7 @@ function PageCanvas({
   onReady,
   flashRect,
   selectedRect,
+  groupRects,
 }: PageCanvasProps) {
   const frontCanvasRef = useRef<HTMLCanvasElement>(null);
   const backCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -251,6 +255,18 @@ if ((zoomDiff > 0.02 || lastRenderedZoomRef.current === 0) && !renderTaskRef.cur
     ctx.setTransform(sx, 0, 0, sy, 0, 0);
 
     const drawPersistent = () => {
+      // 1) Show ALL marks of the current group (if provided)
+      if (groupRects && groupRects.length) {
+        groupRects.forEach((r) => {
+          ctx.beginPath();
+          ctx.lineJoin = 'round';
+          ctx.lineWidth = 2;
+          ctx.strokeStyle = 'rgba(255, 212, 0, 0.25)'; // softer halo for other marks
+          ctx.strokeRect(r.x, r.y, r.w, r.h);
+        });
+      }
+
+      // 2) Highlight the currently selected mark on top
       if (!selectedRect) return;
       // soft halo
       ctx.beginPath();
@@ -265,6 +281,7 @@ if ((zoomDiff > 0.02 || lastRenderedZoomRef.current === 0) && !renderTaskRef.cur
       ctx.strokeStyle = '#FFD400';
       ctx.strokeRect(selectedRect.x, selectedRect.y, selectedRect.w, selectedRect.h);
     };
+
 
     const draw = (withFlash: boolean) => {
       ctx.clearRect(0, 0, overlay.width, overlay.height);

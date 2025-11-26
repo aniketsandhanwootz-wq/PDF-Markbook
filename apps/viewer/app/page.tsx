@@ -92,9 +92,6 @@ const quantize = (z: number) => {
 };
 
 
-
-
-
 function clampScroll(container: HTMLElement, left: number, top: number) {
   const maxL = Math.max(0, container.scrollWidth - container.clientWidth);
   const maxT = Math.max(0, container.scrollHeight - container.clientHeight);
@@ -673,6 +670,10 @@ function ViewerContent() {
   const [numPages, setNumPages] = useState(0);
   const [marks, setMarks] = useState<Mark[]>([]);
   const [currentMarkIndex, setCurrentMarkIndex] = useState(0);
+    // NEW: remember if we've already done the initial "jump to first group/mark"
+  const hasBootstrappedViewerRef = useRef(false);
+  // NEW: last committed mark index, for stable group-change detection
+  const lastMarkIndexRef = useRef<number | null>(null);
   const [zoom, setZoom] = useState(1.0);
   // Quantized zoom setter (must live at component top-level)
 // Single atomic zoom setter - updates zoom + mark box in one tick
@@ -681,6 +682,11 @@ function ViewerContent() {
   const [isMasterMarkSet, setIsMasterMarkSet] = useState<boolean | null>(null);
   const [groupWindows, setGroupWindows] = useState<GroupWindowMeta[] | null>(null);
   const [markToGroupIndex, setMarkToGroupIndex] = useState<number[]>([]);
+
+  // Input panel mode + which group we're on (for QC flows)
+  const [panelMode, setPanelMode] = useState<'group' | 'mark'>('mark');
+  const [currentGroupIndex, setCurrentGroupIndex] = useState(0);
+
 
   const setZoomQ = useCallback(
     (z: number, ref?: MutableRefObject<number>) => {
@@ -1271,16 +1277,7 @@ const zoomAt = useCallback(
 
     loadMarks();
   }, [markSetId, isDemo, showSetup, apiBase, qProject, qExtId, qPartNumber, qUser]);
-
-  useEffect(() => {
-    if (marks.length > 0 && pdf && currentMarkIndex === 0) {
-      const timer = setTimeout(() => {
-        navigateToMark(0);
-      }, 800);
-      return () => clearTimeout(timer);
-    }
-  }, [marks, pdf]);
-
+  
 
   useEffect(() => {
     const handleResize = () => {
@@ -1347,6 +1344,10 @@ useEffect(() => {
       // ✅ Move currentMarkIndex immediately so InputPanel / HUD update
       // even if layout for that page isn't ready yet.
       setCurrentMarkIndex(index);
+            // Use last committed index (ref) to detect group changes reliably
+      const prevIdx = lastMarkIndexRef.current ?? currentMarkIndex;
+      const isGroupOverviewMode = panelMode === 'group';
+
 
       const mark = marks[index];
       if (!mark) {
@@ -1499,7 +1500,6 @@ useEffect(() => {
       };
 
       // Which group were we on *before*?
-      const prevIdx = currentMarkIndex;
       const prevGroupIdx =
         prevIdx >= 0 &&
         prevIdx < marks.length &&
@@ -1507,18 +1507,21 @@ useEffect(() => {
           ? markToGroupIndex[prevIdx]
           : gi;
 
-      const groupChanged = gi !== prevGroupIdx;
+      // If we're in GROUP mode, always treat as "group changed" because
+      // we want full-group overview + fit vertically.
+      let groupChanged = gi !== prevGroupIdx;
+      if (isGroupOverviewMode) {
+        groupChanged = true;
+      }
 
       // ✅ 1) Choose zoom:
-      //    - first time / switching groups → fit group vertically in the
-      //      visible area between HUD and (possibly floating) InputPanel
-      //    - within same group → keep current zoom (only slide in X)
+      //    - overview / switching groups → fit whole group vertically
+      //    - mark-by-mark inside same group → keep current zoom (quadrant view)
       let targetZoom = zoomRef.current || 1.0;
       if (groupChanged || !zoomRef.current) {
         const isMobileViewport =
           typeof window !== 'undefined' && window.innerWidth < 900;
 
-        // Start from the *actual* scrollable viewport height
         const containerRect = container.getBoundingClientRect();
         let visibleHeight = containerRect.height - HUD_TOP_SAFE_PX;
 
@@ -1526,16 +1529,13 @@ useEffect(() => {
           const panel = document.getElementById('mobile-input-panel');
           if (panel) {
             const panelRect = panel.getBoundingClientRect();
-            // How much of the scroll area is hidden behind the panel?
             const overlap = Math.max(0, containerRect.bottom - panelRect.top);
-            visibleHeight -= overlap + 12; // small extra padding
+            visibleHeight -= overlap + 12;
           } else {
-            // Fallback if we can't measure the panel yet
             visibleHeight -= INPUT_PANEL_SAFE_PX_MOBILE;
           }
         }
 
-        // Safety guard so we don't explode the zoom on tiny windows
         if (visibleHeight < containerRect.height * 0.4) {
           visibleHeight = containerRect.height * 0.4;
         }
@@ -1549,7 +1549,7 @@ useEffect(() => {
         const expectedW = base.w * targetZoom;
         const expectedH = base.h * targetZoom;
 
-        // When zoom changed (new group / first time), wait for canvas to settle
+        // When zoom changed (new group / overview), wait for canvas to settle
         if (groupChanged) {
           await waitForCanvasLayout(pageEl!, expectedW, expectedH, 1500);
         }
@@ -1573,7 +1573,7 @@ useEffect(() => {
           h: mark.nh * base.h * z,
         };
 
-        // Group rect at final zoom (for scroll anchoring when group changes)
+        // Group rect at final zoom (for scroll anchoring / quadrant logic)
         const groupRectAtZ = {
           x: groupRectAt1.x * z,
           y: groupRectAt1.y * z,
@@ -1593,15 +1593,38 @@ useEffect(() => {
         const targetScrollLeft = markCenterX - effectiveViewWidth / 2;
 
         // ✅ 3) Y:
-        //    - if group changed → align GROUP TOP just under HUD
-        //    - if same group   → keep current scrollTop (pure X motion)
+        //    - overview / new group → align GROUP TOP just under HUD
+        //    - mark-by-mark in same group → "quadrant": center on mark,
+        //      but clamp window inside the group bounds.
         let targetScrollTop: number;
+
         if (groupChanged) {
           const paddingTopPx = HUD_TOP_SAFE_PX;
           const groupTop = pageOffsetTop + groupRectAtZ.y;
           targetScrollTop = groupTop - paddingTopPx;
         } else {
-          targetScrollTop = container.scrollTop;
+          // Quadrant / mark-by-mark view inside current group
+          const containerHeight = containerRect.height;
+          let visibleHeight = containerHeight - HUD_TOP_SAFE_PX;
+
+          if (visibleHeight < containerHeight * 0.4) {
+            visibleHeight = containerHeight * 0.4;
+          }
+
+          const groupTop = pageOffsetTop + groupRectAtZ.y;
+          const groupBottom = groupTop + groupRectAtZ.h;
+
+          const markCenterY = pageOffsetTop + rectAtZ.y + rectAtZ.h / 2;
+          const windowHeight = Math.min(groupRectAtZ.h, visibleHeight);
+
+          let desiredTop = markCenterY - windowHeight / 2;
+
+          // Clamp the window inside the group box
+          const minTop = groupTop;
+          const maxTop = groupBottom - windowHeight;
+          desiredTop = Math.max(minTop, Math.min(desiredTop, maxTop));
+
+          targetScrollTop = desiredTop;
         }
 
         const { left: clampedL, top: clampedT } = clampScroll(
@@ -1616,47 +1639,213 @@ useEffect(() => {
           behavior: 'smooth',
         });
       });
+      // After we've scheduled the scroll/highlight, remember this index
+      // so the next call can detect group changes reliably.
+      lastMarkIndexRef.current = index;
     },
-    [marks, pdf, isMasterMarkSet, groupWindows, markToGroupIndex, currentMarkIndex, setCurrentMarkIndex]
+    [marks, pdf, isMasterMarkSet, groupWindows, markToGroupIndex, currentMarkIndex, setCurrentMarkIndex, panelMode]
   );
 
 
-  const prevMark = useCallback(() => {
-    if (currentMarkIndex > 0) {
-      navigateToMark(currentMarkIndex - 1);
-    }
-  }, [currentMarkIndex, navigateToMark]);
+  // --- Group-aware navigation helpers ---
+// --- Group-aware navigation helpers ---
 
-  const nextMark = useCallback(() => {
-    if (currentMarkIndex < marks.length - 1) {
-      navigateToMark(currentMarkIndex + 1);
-    } else {
-      setShowReview(true);
+const navigateToGroup = useCallback(
+  (groupIdx: number) => {
+    if (!groupWindows || groupIdx < 0 || groupIdx >= groupWindows.length) return;
+    const meta = groupWindows[groupIdx];
+
+    setCurrentGroupIndex(groupIdx);
+    setCurrentMarkIndex(meta.startIndex);
+    setPanelMode('group');
+
+    navigateToMark(meta.startIndex);
+  },
+  [groupWindows, navigateToMark]
+);
+
+
+  // When marks + PDF are ready, start at first group (QC) or first mark (master/legacy)
+  useEffect(() => {
+    if (!pdf || !marks.length) return;
+
+    // Only run ONCE per load
+    if (hasBootstrappedViewerRef.current) return;
+
+    // QC flow → start with group overview + slide
+    if (isMasterMarkSet === false && groupWindows && groupWindows.length) {
+      hasBootstrappedViewerRef.current = true;
+      navigateToGroup(0);
+      return;
     }
+
+    // Master / legacy → start on first mark
+    if (currentMarkIndex === 0) {
+      hasBootstrappedViewerRef.current = true;
+      setPanelMode('mark');
+      const timer = setTimeout(() => {
+        navigateToMark(0);
+      }, 600);
+      return () => clearTimeout(timer);
+    }
+  }, [
+    pdf,
+    marks.length,
+    isMasterMarkSet,
+    groupWindows,
+    currentMarkIndex,
+    navigateToGroup,
+    navigateToMark,
+  ]);
+
+  const proceedFromGroupToMarks = useCallback(() => {
+    setPanelMode('mark');
+    if (!marks.length) return;
+
+    const safeIndex =
+      currentMarkIndex >= 0 && currentMarkIndex < marks.length ? currentMarkIndex : 0;
+    navigateToMark(safeIndex);
   }, [currentMarkIndex, marks.length, navigateToMark]);
 
-  const handleJumpFromReview = useCallback((index: number) => {
-    setShowReview(false);           // close review
-    setTimeout(() => {
-      navigateToMark(index);        // jump to the chosen mark
-    }, 0);                          // let ReviewScreen unmount first
-  }, [navigateToMark]);
+  const jumpDirectToMark = useCallback(
+    (index: number) => {
+      if (index < 0 || index >= marks.length) return;
 
-const selectFromList = useCallback((index: number) => {
-    // Always route through navigateToMark only
-    const needsDelay = window.innerWidth < 900;
+      setPanelMode('mark');
+      setCurrentMarkIndex(index);
 
-    if (needsDelay) {
-        if (sidebarOpen) setSidebarOpen(false);
-        // This allows sidebar closing animation to finish
-        requestAnimationFrame(() => {
-            setTimeout(() => navigateToMark(index), 50);
-        });
-    } else {
-        // Desktop = immediate mark jump
-        requestAnimationFrame(() => navigateToMark(index));
+      if (markToGroupIndex.length && groupWindows && groupWindows.length) {
+        const gi = markToGroupIndex[index];
+        if (gi != null && gi >= 0 && gi < groupWindows.length) {
+          setCurrentGroupIndex(gi);
+        }
+      }
+
+      navigateToMark(index);
+    },
+    [marks.length, markToGroupIndex, groupWindows, navigateToMark]
+  );
+
+  const prevMark = useCallback(() => {
+    if (!marks.length) return;
+
+    if (panelMode === 'group') {
+      // From group overview, go to last mark of previous group (if any)
+      if (!groupWindows || !groupWindows.length) return;
+      const prevGroupIdx = currentGroupIndex - 1;
+      if (prevGroupIdx < 0) return;
+
+      const prevMeta = groupWindows[prevGroupIdx];
+      const lastIndex = prevMeta.endIndex;
+
+      setCurrentGroupIndex(prevGroupIdx);
+      setPanelMode('mark');
+      navigateToMark(lastIndex);
+      return;
     }
-}, [navigateToMark, sidebarOpen]);
+
+    if (currentMarkIndex > 0) {
+      const prevIndex = currentMarkIndex - 1;
+      setCurrentMarkIndex(prevIndex);
+
+      if (markToGroupIndex.length && groupWindows && groupWindows.length) {
+        const gi = markToGroupIndex[prevIndex];
+        if (gi != null && gi >= 0 && gi < groupWindows.length) {
+          setCurrentGroupIndex(gi);
+        }
+      }
+
+      navigateToMark(prevIndex);
+    }
+  }, [
+    panelMode,
+    marks.length,
+    currentMarkIndex,
+    currentGroupIndex,
+    groupWindows,
+    markToGroupIndex,
+    navigateToMark,
+  ]);
+
+  const nextMark = useCallback(() => {
+    if (!marks.length) return;
+
+    // In group overview, the "Next" button should behave similar to sliding
+    if (panelMode === 'group') {
+      proceedFromGroupToMarks();
+      return;
+    }
+
+    const currentGroup =
+      groupWindows &&
+      groupWindows.length &&
+      markToGroupIndex.length &&
+      markToGroupIndex[currentMarkIndex] != null
+        ? groupWindows[markToGroupIndex[currentMarkIndex]]
+        : null;
+
+    const lastIndexInGroup =
+      currentGroup != null ? currentGroup.endIndex : marks.length - 1;
+
+    // Still marks left in this group → go to next mark
+    if (currentMarkIndex < lastIndexInGroup) {
+      const nextIndex = currentMarkIndex + 1;
+      setCurrentMarkIndex(nextIndex);
+      navigateToMark(nextIndex);
+      return;
+    }
+
+    // Last mark of this group → go to next group's overview
+    if (groupWindows && groupWindows.length && markToGroupIndex.length) {
+      const currentGroupIdx = markToGroupIndex[currentMarkIndex] ?? 0;
+      const nextGroupIdx = currentGroupIdx + 1;
+      if (nextGroupIdx < groupWindows.length) {
+        navigateToGroup(nextGroupIdx);
+        return;
+      }
+    }
+
+    // Last mark of last group → show review
+    setShowReview(true);
+  }, [
+    panelMode,
+    marks.length,
+    currentMarkIndex,
+    groupWindows,
+    markToGroupIndex,
+    navigateToGroup,
+    navigateToMark,
+    proceedFromGroupToMarks,
+  ]);
+
+  const handleJumpFromReview = useCallback(
+    (index: number) => {
+      setShowReview(false); // close review
+      setTimeout(() => {
+        jumpDirectToMark(index); // jump to the chosen mark
+      }, 0); // let ReviewScreen unmount first
+    },
+    [jumpDirectToMark]
+  );
+
+
+  const selectFromList = useCallback(
+    (index: number) => {
+      const needsDelay = window.innerWidth < 900;
+
+      if (needsDelay) {
+        if (sidebarOpen) setSidebarOpen(false);
+        // Let sidebar close animation finish
+        requestAnimationFrame(() => {
+          setTimeout(() => jumpDirectToMark(index), 50);
+        });
+      } else {
+        // Desktop = immediate mark jump
+        requestAnimationFrame(() => jumpDirectToMark(index));
+      }
+    },
+    [jumpDirectToMark, sidebarOpen]
+  );
 
 
   const jumpToPage = useCallback((pageNumber: number) => {
@@ -1879,23 +2068,61 @@ usePinchZoom({
     pageHeightsRef.current[pageNumber - 1] = height;
   }, []);
 
-  const handleSearchResult = useCallback((pageNumber: number, highlights: any[]) => {
-    setHighlightPageNumber(pageNumber);
-    setSearchHighlights(highlights);
-    jumpToPage(pageNumber);
-  }, [jumpToPage]);
+ const handleSearchResult = useCallback((pageNumber: number, highlights: any[]) => {
+  setHighlightPageNumber(pageNumber);
+  setSearchHighlights(highlights);
+  jumpToPage(pageNumber);
+}, [jumpToPage]);
 
-  // Render ALL pages, but still use prefixHeightsRef for vertical layout.
-  // We keep visibleRange only to track currentPage & prefetch hints.
-  const pagesToRender =
-    numPages === 0
-      ? []
-      : Array.from({ length: numPages }, (_, i) => i + 1);
+// --- Compute all mark rects for current group on a given page (for "slide" overview) ---
+const getCurrentGroupRectsForPage = useCallback(
+  (pageNum: number): { x: number; y: number; w: number; h: number }[] | null => {
+    // Only in QC flow + GROUP mode we draw all marks of group
+    if (panelMode !== 'group') return null;
+    if (isMasterMarkSet !== false) return null;
+    if (!groupWindows || !groupWindows.length) return null;
+    if (!markToGroupIndex.length) return null;
 
+    const gi = currentGroupIndex;
+    const groupMeta = groupWindows[gi];
+    if (!groupMeta) return null;
 
-  if (showSetup) {
-    return <ViewerSetupScreen onStart={handleSetupComplete} />;
-  }
+    const z = zoomRef.current || 1.0;
+    const rects: { x: number; y: number; w: number; h: number }[] = [];
+
+    for (let i = groupMeta.startIndex; i <= groupMeta.endIndex; i++) {
+      const m = marks[i];
+      if (!m) continue;
+
+      // Use mark's own page_index if present, else group's page
+      const pageIndex = (m.page_index ?? groupMeta.page_index ?? 0);
+      if (pageIndex !== pageNum - 1) continue;
+
+      const base = basePageSizeRef.current[pageIndex];
+      if (!base) continue;
+
+      rects.push({
+        x: (m.nx ?? 0) * base.w * z,
+        y: (m.ny ?? 0) * base.h * z,
+        w: (m.nw ?? 0) * base.w * z,
+        h: (m.nh ?? 0) * base.h * z,
+      });
+    }
+
+    return rects.length ? rects : null;
+  },
+  [panelMode, isMasterMarkSet, groupWindows, markToGroupIndex, currentGroupIndex, marks]
+);
+
+// Render ALL pages, but still use prefixHeightsRef for vertical layout.
+const pagesToRender =
+  numPages === 0
+    ? []
+    : Array.from({ length: numPages }, (_, i) => i + 1);
+
+if (showSetup) {
+  return <ViewerSetupScreen onStart={handleSetupComplete} />;
+}
 
   if (loading) {
     return (
@@ -1920,23 +2147,49 @@ usePinchZoom({
     const currentMark = marks[currentMarkIndex];
     const currentValue = currentMark?.mark_id ? entries[currentMark.mark_id] || '' : '';
 
+    const currentGroupMeta =
+      isMasterMarkSet === false &&
+      groupWindows &&
+      groupWindows.length &&
+      markToGroupIndex.length
+        ? groupWindows[currentGroupIndex] ?? null
+        : null;
+
+    const currentGroupInstrumentSummary =
+      currentGroupMeta && marks.length
+        ? (() => {
+            const instruments = new Set<string>();
+            for (let i = currentGroupMeta.startIndex; i <= currentGroupMeta.endIndex; i++) {
+              const m = marks[i] as any;
+              const inst = m?.instrument?.trim();
+              if (inst) instruments.add(inst);
+            }
+            const list = Array.from(instruments);
+            return list.length ? list.join(', ') : 'No instrument mentioned';
+          })()
+        : '';
+
+
     return (
-      <div style={{
-        display: 'flex',
-        flexDirection: 'column',
-        height: '100dvh',
-        overflow: 'hidden'
-      }}>
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          height: '100dvh',
+          overflow: 'hidden',
+        }}
+      >
         <Toaster position="top-center" />
 
-        <div style={{
-          flex: 1,
-          minHeight: 0,
-          display: 'flex',
-          flexDirection: 'row',
-          overflow: 'hidden'
-        }}>
-
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            display: 'flex',
+            flexDirection: 'row',
+            overflow: 'hidden',
+          }}
+        >
           {/* Slide-over sidebar (mobile) */}
           <SlideSidebar
             open={sidebarOpen}
@@ -1948,20 +2201,15 @@ usePinchZoom({
               currentIndex={currentMarkIndex}
               entries={entries}
               groupsMeta={
-                isMasterMarkSet === false && groupWindows
-                  ? groupWindows
-                  : undefined
+                isMasterMarkSet === false && groupWindows ? groupWindows : undefined
               }
               onSelect={(index) => {
-    setSidebarOpen(false);
-    // delay helps layout settle on mobile
-    setTimeout(() => selectFromList(index), 60);
-}}
-
+                setSidebarOpen(false);
+                // delay helps layout settle on mobile
+                setTimeout(() => selectFromList(index), 60);
+              }}
             />
-
           </SlideSidebar>
-
 
           <div
             className="swipe-gesture-host"
@@ -1970,12 +2218,10 @@ usePinchZoom({
               display: 'flex',
               flexDirection: 'column',
               overflow: 'hidden',
-              minWidth: 0
+              minWidth: 0,
             }}
             {...(SWIPE_TO_STEP_ENABLED ? swipeHandlers : {})}
           >
-
-
             {/* ✅ Floating HUD (mobile) */}
             <FloatingHUD
               sidebarOpen={sidebarOpen}
@@ -1997,33 +2243,47 @@ usePinchZoom({
               className="pdf-surface-wrap"
               ref={containerRef}
             >
-
-
-              <div className="pdf-surface" style={{ position: 'relative', height: totalHeightRef.current }}>
+              <div
+                className="pdf-surface"
+                style={{ position: 'relative', height: totalHeightRef.current }}
+              >
                 {pagesToRender.map((pageNum) => {
                   const top = prefixHeightsRef.current[pageNum - 1] || 0;
                   return (
                     <div
                       key={pageNum}
                       style={{ position: 'absolute', top, left: 0, right: 0 }}
-                      ref={(el) => { pageElsRef.current[pageNum - 1] = el; }}
+                      ref={(el) => {
+                        pageElsRef.current[pageNum - 1] = el;
+                      }}
                     >
-                      <PageCanvas
+                       <PageCanvas
                         pdf={pdf}
                         pageNumber={pageNum}
                         zoom={zoom}
                         flashRect={
                           flashRect?.pageNumber === pageNum
-                            ? { x: flashRect.x, y: flashRect.y, w: flashRect.w, h: flashRect.h }
+                            ? {
+                                x: flashRect.x,
+                                y: flashRect.y,
+                                w: flashRect.w,
+                                h: flashRect.h,
+                              }
                             : null
                         }
                         selectedRect={
                           selectedRect?.pageNumber === pageNum
-                            ? { x: selectedRect.x, y: selectedRect.y, w: selectedRect.w, h: selectedRect.h }
+                            ? {
+                                x: selectedRect.x,
+                                y: selectedRect.y,
+                                w: selectedRect.w,
+                                h: selectedRect.h,
+                              }
                             : null
                         }
+                        // NEW: show ALL marks of current group while we are in "slide to start" state
+                        groupRects={getCurrentGroupRectsForPage(pageNum)}
                       />
-
 
                       {/* Scaled single-layer search overlay */}
                       {highlightPageNumber === pageNum && (
@@ -2034,7 +2294,7 @@ usePinchZoom({
                             transform: `scale(${zoom})`,
                             transformOrigin: 'top left',
                             pointerEvents: 'none',
-                            zIndex: 100
+                            zIndex: 100,
                           }}
                         >
                           {searchHighlights.map((h, idx) => (
@@ -2047,7 +2307,7 @@ usePinchZoom({
                                 width: h.width,
                                 height: h.height,
                                 background: 'rgba(255, 235, 59, 0.35)',
-                                border: '1px solid rgba(255, 193, 7, 0.85)'
+                                border: '1px solid rgba(255, 193, 7, 0.85)',
                               }}
                             />
                           ))}
@@ -2057,8 +2317,6 @@ usePinchZoom({
                   );
                 })}
               </div>
-
-
             </div>
           </div>
         </div>
@@ -2071,10 +2329,21 @@ usePinchZoom({
           onChange={handleEntryChange}
           onNext={nextMark}
           onPrev={prevMark}
-          canNext={true}
-          canPrev={currentMarkIndex > 0}
+          canNext={marks.length > 0}
+          canPrev={currentMarkIndex > 0 || panelMode === 'group'}
+          mode={panelMode}
+          groupName={currentGroupMeta?.name}
+          groupInstrumentSummary={currentGroupInstrumentSummary}
+          showGroupSlide={panelMode === 'group' && isMasterMarkSet === false}
+          groupSlideLabel={
+            currentGroupMeta
+              ? `Slide to start "${currentGroupMeta.name}"`
+              : 'Slide to start this group'
+          }
+          onGroupSlideComplete={proceedFromGroupToMarks}
         />
-                {/* 🔹 Review overlay (mobile) */}
+
+        {/* 🔹 Review overlay (mobile) */}
         {showReview && (
           <ReviewScreen
             marks={marks}
@@ -2087,7 +2356,7 @@ usePinchZoom({
             isSubmitting={isSubmitting}
             onJumpTo={(i) => {
               setShowReview(false);
-              setTimeout(() => navigateToMark(i), 120);
+              setTimeout(() => jumpDirectToMark(i), 120);
             }}
           />
         )}
@@ -2095,7 +2364,35 @@ usePinchZoom({
     );
   }
 
+
   // Desktop mode
+
+    const currentGroupMetaDesktop =
+    isMasterMarkSet === false &&
+    groupWindows &&
+    groupWindows.length &&
+    markToGroupIndex.length
+      ? groupWindows[currentGroupIndex] ?? null
+      : null;
+
+  const currentGroupInstrumentSummaryDesktop =
+    currentGroupMetaDesktop && marks.length
+      ? (() => {
+          const instruments = new Set<string>();
+          for (
+            let i = currentGroupMetaDesktop.startIndex;
+            i <= currentGroupMetaDesktop.endIndex;
+            i++
+          ) {
+            const m = marks[i] as any;
+            const inst = m?.instrument?.trim();
+            if (inst) instruments.add(inst);
+          }
+          const list = Array.from(instruments);
+          return list.length ? list.join(', ') : 'No instrument mentioned';
+        })()
+      : '';
+
   return (
     <div className="viewer-container">
       <Toaster position="top-center" />
@@ -2162,7 +2459,10 @@ usePinchZoom({
                       ? { x: selectedRect.x, y: selectedRect.y, w: selectedRect.w, h: selectedRect.h }
                       : null
                   }
+                  // NEW: show ALL marks of current group while we are in "slide to start" state
+                  groupRects={getCurrentGroupRectsForPage(pageNum)}
                 />
+
 
 
                 {/* Scaled single-layer search overlay */}
@@ -2207,12 +2507,26 @@ usePinchZoom({
           currentMark={marks[currentMarkIndex] ?? null}
           currentIndex={currentMarkIndex}
           totalMarks={marks.length}
-          value={(marks[currentMarkIndex]?.mark_id && entries[marks[currentMarkIndex]!.mark_id!]) || ''}
+          value={
+            (marks[currentMarkIndex]?.mark_id &&
+              entries[marks[currentMarkIndex]!.mark_id!]) ||
+            ''
+          }
           onChange={handleEntryChange}
           onNext={nextMark}
           onPrev={prevMark}
-          canPrev={currentMarkIndex > 0}
-          canNext={currentMarkIndex < marks.length - 1}
+          canPrev={currentMarkIndex > 0 || panelMode === 'group'}
+          canNext={marks.length > 0}
+          mode={panelMode}
+          groupName={currentGroupMetaDesktop?.name}
+          groupInstrumentSummary={currentGroupInstrumentSummaryDesktop}
+          showGroupSlide={panelMode === 'group' && isMasterMarkSet === false}
+          groupSlideLabel={
+            currentGroupMetaDesktop
+              ? `Slide to start "${currentGroupMetaDesktop.name}"`
+              : 'Slide to start this group'
+          }
+          onGroupSlideComplete={proceedFromGroupToMarks}
         />
       </div>
 
@@ -2235,7 +2549,7 @@ usePinchZoom({
           isSubmitting={isSubmitting}
           onJumpTo={(i) => {
             setShowReview(false);
-            setTimeout(() => navigateToMark(i), 120);
+            setTimeout(() => jumpDirectToMark(i), 120);
           }}
         />
       )}
