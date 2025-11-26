@@ -3,6 +3,9 @@
 import { useEffect, useRef, memo, useState } from 'react';
 import type { PDFDocumentProxy, RenderTask } from 'pdfjs-dist';
 
+// ✅ Add this just below the imports
+type Rect = { x: number; y: number; w: number; h: number };
+
 type PageCanvasProps = {
   pdf: PDFDocumentProxy;
   pageNumber: number;
@@ -12,6 +15,8 @@ type PageCanvasProps = {
   selectedRect?: { x: number; y: number; w: number; h: number } | null;
   // NEW: optional list of rects to show when we are in "group overview"
   groupRects?: { x: number; y: number; w: number; h: number }[] | null;
+  // 👇 NEW: outline for current group in slide view
+  groupOutlineRect?: Rect | null;
 };
 
 
@@ -28,6 +33,7 @@ function PageCanvas({
   flashRect,
   selectedRect,
   groupRects,
+  groupOutlineRect,
 }: PageCanvasProps) {
   const frontCanvasRef = useRef<HTMLCanvasElement>(null);
   const backCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -201,11 +207,11 @@ function PageCanvas({
       }
     };
 
-  const zoomDiff = Math.abs(zoom - lastRenderedZoomRef.current);
-// Slightly more eager to re-render for smoother pinch
-if ((zoomDiff > 0.02 || lastRenderedZoomRef.current === 0) && !renderTaskRef.current) {
-  renderPage();
-}
+    const zoomDiff = Math.abs(zoom - lastRenderedZoomRef.current);
+    // Slightly more eager to re-render for smoother pinch
+    if ((zoomDiff > 0.02 || lastRenderedZoomRef.current === 0) && !renderTaskRef.current) {
+      renderPage();
+    }
 
 
     return () => {
@@ -255,34 +261,51 @@ if ((zoomDiff > 0.02 || lastRenderedZoomRef.current === 0) && !renderTaskRef.cur
     ctx.setTransform(sx, 0, 0, sy, 0, 0);
 
     const drawPersistent = () => {
+      // Treat "group view" as when we have a group outline
+      const inGroupView = !!groupOutlineRect;
+
       // 1) Show ALL marks of the current group (if provided)
       if (groupRects && groupRects.length) {
         groupRects.forEach((r) => {
           ctx.beginPath();
           ctx.lineJoin = 'round';
-          ctx.lineWidth = 2;
-          ctx.strokeStyle = 'rgba(255, 212, 0, 0.25)'; // softer halo for other marks
+          ctx.lineWidth = inGroupView ? 3 : 2;
+          ctx.strokeStyle = inGroupView
+            ? 'rgba(255, 212, 0, 0.55)' // stronger yellow in group view
+            : 'rgba(255, 212, 0, 0.25)';
           ctx.strokeRect(r.x, r.y, r.w, r.h);
         });
       }
 
+      // --- Group outline (slide overview) ---
+      if (groupOutlineRect) {
+        ctx.save();
+        ctx.strokeStyle = 'rgba(0, 122, 255, 0.9)'; // blue border
+        ctx.lineWidth = 2;
+        const r = groupOutlineRect;
+        ctx.strokeRect(r.x, r.y, r.w, r.h);
+        ctx.restore();
+      }
+
       // 2) Highlight the currently selected mark on top
       if (!selectedRect) return;
+
       // soft halo
       ctx.beginPath();
       ctx.lineJoin = 'round';
-      ctx.lineWidth = 6;
-      ctx.strokeStyle = 'rgba(255, 212, 0, 0.35)';
+      ctx.lineWidth = inGroupView ? 7 : 6;
+      ctx.strokeStyle = inGroupView
+        ? 'rgba(255, 212, 0, 0.65)' // stronger halo in group view
+        : 'rgba(255, 212, 0, 0.35)';
       ctx.strokeRect(selectedRect.x, selectedRect.y, selectedRect.w, selectedRect.h);
+
       // crisp edge
       ctx.beginPath();
       ctx.lineJoin = 'round';
       ctx.lineWidth = 2;
-      ctx.strokeStyle = '#FFD400';
+      ctx.strokeStyle = inGroupView ? '#FFC107' : '#FFD400';
       ctx.strokeRect(selectedRect.x, selectedRect.y, selectedRect.w, selectedRect.h);
     };
-
-
     const draw = (withFlash: boolean) => {
       ctx.clearRect(0, 0, overlay.width, overlay.height);
       drawPersistent();
@@ -307,11 +330,14 @@ if ((zoomDiff > 0.02 || lastRenderedZoomRef.current === 0) && !renderTaskRef.cur
   }, [
     flashRect,
     selectedRect,
+    groupRects,
+    groupOutlineRect,    // NEW: redraw when groupRects change
     currentCanvas,  // toggles when we swap front/back
     isLoading,      // re-run once the page finished rendering
     zoom,
     pageNumber
   ]);
+
 
   return (
     <div className="page-wrapper" style={{ position: 'relative' }}>
@@ -364,13 +390,14 @@ if ((zoomDiff > 0.02 || lastRenderedZoomRef.current === 0) && !renderTaskRef.cur
   );
 }
 
-// Memoize to prevent unnecessary re-renders
 export default memo(PageCanvas, (prevProps, nextProps) => {
   return (
     prevProps.pdf === nextProps.pdf &&
     prevProps.pageNumber === nextProps.pageNumber &&
     Math.abs(prevProps.zoom - nextProps.zoom) < 0.01 &&
     prevProps.flashRect === nextProps.flashRect &&
-    prevProps.selectedRect === nextProps.selectedRect
+    prevProps.selectedRect === nextProps.selectedRect &&
+    prevProps.groupRects === nextProps.groupRects && // reference equality is enough
+    prevProps.groupOutlineRect === nextProps.groupOutlineRect
   );
 });

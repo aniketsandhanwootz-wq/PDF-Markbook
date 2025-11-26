@@ -812,6 +812,38 @@ const pdfTouchAction: CSSProperties['touchAction'] = 'pan-x pan-y';
     totalHeightRef.current = run - GUTTER;     // overall scrollable height
   }, []);
 
+    /**
+   * Ensure we have base page size for a given pageIndex (0-based).
+   * If missing, lazily fetch from pdf and recompute prefix heights.
+   */
+  const ensureBasePageSize = useCallback(
+    async (pageIndex: number): Promise<{ w: number; h: number } | null> => {
+      const base = basePageSizeRef.current;
+
+      // already have it
+      if (base[pageIndex]) {
+        return base[pageIndex];
+      }
+
+      if (!pdf) return null;
+
+      try {
+        const page = await pdf.getPage(pageIndex + 1);
+        const vp = page.getViewport({ scale: 1 });
+        const entry = { w: vp.width, h: vp.height };
+        base[pageIndex] = entry;
+
+        // page height changed → recompute prefix layout
+        recomputePrefix();
+        return entry;
+      } catch (e) {
+        console.warn('[ensureBasePageSize] failed for pageIndex=', pageIndex, e);
+        return null;
+      }
+    },
+    [pdf, recomputePrefix]
+  );
+
   // ===== Windowing range calc (uses prefixHeights) =====
   const VBUF = 1; // render ±1 page buffer around viewport
 
@@ -1519,25 +1551,18 @@ useEffect(() => {
       //    - mark-by-mark inside same group → keep current zoom (quadrant view)
       let targetZoom = zoomRef.current || 1.0;
       if (groupChanged || !zoomRef.current) {
-        const isMobileViewport =
-          typeof window !== 'undefined' && window.innerWidth < 900;
-
         const containerRect = container.getBoundingClientRect();
-        let visibleHeight = containerRect.height - HUD_TOP_SAFE_PX;
+        const isMobileLayout = isMobileInputMode;
 
-        if (isMobileViewport && typeof document !== 'undefined') {
-          const panel = document.getElementById('mobile-input-panel');
-          if (panel) {
-            const panelRect = panel.getBoundingClientRect();
-            const overlap = Math.max(0, containerRect.bottom - panelRect.top);
-            visibleHeight -= overlap + 12;
-          } else {
-            visibleHeight -= INPUT_PANEL_SAFE_PX_MOBILE;
-          }
-        }
+        // Height available for the group:
+        //  - Desktop: container still includes space under HUD, so subtract HUD_TOP_SAFE_PX
+        //  - Mobile: container already lives between HUD and InputPanel, so use full height.
+        let visibleHeight =
+          containerRect.height - (isMobileLayout ? 0 : HUD_TOP_SAFE_PX);
 
-        if (visibleHeight < containerRect.height * 0.4) {
-          visibleHeight = containerRect.height * 0.4;
+        // Safety fallback
+        if (visibleHeight <= 0) {
+          visibleHeight = containerRect.height * 0.8;
         }
 
         const rawZoom = visibleHeight / (groupRectAt1.h || 1);
@@ -1593,19 +1618,26 @@ useEffect(() => {
         const targetScrollLeft = markCenterX - effectiveViewWidth / 2;
 
         // ✅ 3) Y:
-        //    - overview / new group → align GROUP TOP just under HUD
+        //    - overview / new group → align GROUP TOP just under HUD (desktop)
+        //      or at very top of container (mobile)
         //    - mark-by-mark in same group → "quadrant": center on mark,
         //      but clamp window inside the group bounds.
         let targetScrollTop: number;
+        const isMobileLayout = isMobileInputMode;
 
         if (groupChanged) {
-          const paddingTopPx = HUD_TOP_SAFE_PX;
+          // Group overview:
+          //  - desktop: keep some room for HUD at top
+          //  - mobile: container already sits below HUD → no extra padding
+          const paddingTopPx = isMobileLayout ? 0 : HUD_TOP_SAFE_PX;
           const groupTop = pageOffsetTop + groupRectAtZ.y;
           targetScrollTop = groupTop - paddingTopPx;
         } else {
           // Quadrant / mark-by-mark view inside current group
           const containerHeight = containerRect.height;
-          let visibleHeight = containerHeight - HUD_TOP_SAFE_PX;
+
+          let visibleHeight =
+            containerHeight - (isMobileLayout ? 0 : HUD_TOP_SAFE_PX);
 
           if (visibleHeight < containerHeight * 0.4) {
             visibleHeight = containerHeight * 0.4;
@@ -1614,7 +1646,8 @@ useEffect(() => {
           const groupTop = pageOffsetTop + groupRectAtZ.y;
           const groupBottom = groupTop + groupRectAtZ.h;
 
-          const markCenterY = pageOffsetTop + rectAtZ.y + rectAtZ.h / 2;
+          const markCenterY =
+            pageOffsetTop + rectAtZ.y + rectAtZ.h / 2;
           const windowHeight = Math.min(groupRectAtZ.h, visibleHeight);
 
           let desiredTop = markCenterY - windowHeight / 2;
@@ -1643,11 +1676,10 @@ useEffect(() => {
       // so the next call can detect group changes reliably.
       lastMarkIndexRef.current = index;
     },
-    [marks, pdf, isMasterMarkSet, groupWindows, markToGroupIndex, currentMarkIndex, setCurrentMarkIndex, panelMode]
+     [marks, pdf, isMasterMarkSet, groupWindows, markToGroupIndex, currentMarkIndex, setCurrentMarkIndex, panelMode, isMobileInputMode]
   );
 
 
-  // --- Group-aware navigation helpers ---
 // --- Group-aware navigation helpers ---
 
 const navigateToGroup = useCallback(
@@ -2114,6 +2146,36 @@ const getCurrentGroupRectsForPage = useCallback(
   [panelMode, isMasterMarkSet, groupWindows, markToGroupIndex, currentGroupIndex, marks]
 );
 
+// --- Single outline rect for the current group on a given page (for blue border) ---
+const getCurrentGroupOutlineForPage = useCallback(
+  (pageNum: number): { x: number; y: number; w: number; h: number } | null => {
+    // Only show outline in QC + GROUP mode
+    if (panelMode !== 'group') return null;
+    if (isMasterMarkSet !== false) return null;
+    if (!groupWindows || !groupWindows.length) return null;
+
+    const gi = currentGroupIndex;
+    const groupMeta = groupWindows[gi];
+    if (!groupMeta) return null;
+
+    const pageIndex = groupMeta.page_index ?? 0;
+    if (pageIndex !== pageNum - 1) return null;
+
+    const base = basePageSizeRef.current[pageIndex];
+    if (!base) return null;
+
+    const z = zoomRef.current || 1.0;
+
+    return {
+      x: (groupMeta.nx ?? 0) * base.w * z,
+      y: (groupMeta.ny ?? 0) * base.h * z,
+      w: (groupMeta.nw ?? 0) * base.w * z,
+      h: (groupMeta.nh ?? 0) * base.h * z,
+    };
+  },
+  [panelMode, isMasterMarkSet, groupWindows, currentGroupIndex]
+);
+
 // Render ALL pages, but still use prefixHeightsRef for vertical layout.
 const pagesToRender =
   numPages === 0
@@ -2257,33 +2319,25 @@ if (showSetup) {
                         pageElsRef.current[pageNum - 1] = el;
                       }}
                     >
-                       <PageCanvas
-                        pdf={pdf}
-                        pageNumber={pageNum}
-                        zoom={zoom}
-                        flashRect={
-                          flashRect?.pageNumber === pageNum
-                            ? {
-                                x: flashRect.x,
-                                y: flashRect.y,
-                                w: flashRect.w,
-                                h: flashRect.h,
-                              }
-                            : null
-                        }
-                        selectedRect={
-                          selectedRect?.pageNumber === pageNum
-                            ? {
-                                x: selectedRect.x,
-                                y: selectedRect.y,
-                                w: selectedRect.w,
-                                h: selectedRect.h,
-                              }
-                            : null
-                        }
-                        // NEW: show ALL marks of current group while we are in "slide to start" state
-                        groupRects={getCurrentGroupRectsForPage(pageNum)}
-                      />
+<PageCanvas
+  pdf={pdf}
+  pageNumber={pageNum}
+  zoom={zoom}
+  flashRect={
+    flashRect?.pageNumber === pageNum
+      ? { x: flashRect.x, y: flashRect.y, w: flashRect.w, h: flashRect.h }
+      : null
+  }
+  selectedRect={
+    selectedRect?.pageNumber === pageNum
+      ? { x: selectedRect.x, y: selectedRect.y, w: selectedRect.w, h: selectedRect.h }
+      : null
+  }
+  // all mark boxes of current group in slide mode
+  groupRects={getCurrentGroupRectsForPage(pageNum)}
+  // blue group border in slide mode
+  groupOutlineRect={getCurrentGroupOutlineForPage(pageNum)}
+/>
 
                       {/* Scaled single-layer search overlay */}
                       {highlightPageNumber === pageNum && (
@@ -2321,27 +2375,30 @@ if (showSetup) {
           </div>
         </div>
 
-        <InputPanel
-          currentMark={currentMark}
-          currentIndex={currentMarkIndex}
-          totalMarks={marks.length}
-          value={currentValue}
-          onChange={handleEntryChange}
-          onNext={nextMark}
-          onPrev={prevMark}
-          canNext={marks.length > 0}
-          canPrev={currentMarkIndex > 0 || panelMode === 'group'}
-          mode={panelMode}
-          groupName={currentGroupMeta?.name}
-          groupInstrumentSummary={currentGroupInstrumentSummary}
-          showGroupSlide={panelMode === 'group' && isMasterMarkSet === false}
-          groupSlideLabel={
-            currentGroupMeta
-              ? `Slide to start "${currentGroupMeta.name}"`
-              : 'Slide to start this group'
-          }
-          onGroupSlideComplete={proceedFromGroupToMarks}
-        />
+        <div id="mobile-input-panel">
+          <InputPanel
+            currentMark={currentMark}
+            currentIndex={currentMarkIndex}
+            totalMarks={marks.length}
+            value={currentValue}
+            onChange={handleEntryChange}
+            onNext={nextMark}
+            onPrev={prevMark}
+            canNext={marks.length > 0}
+            canPrev={currentMarkIndex > 0 || panelMode === 'group'}
+            mode={panelMode}
+            groupName={currentGroupMeta?.name}
+            groupInstrumentSummary={currentGroupInstrumentSummary}
+            showGroupSlide={panelMode === 'group' && isMasterMarkSet === false}
+            groupSlideLabel={
+              currentGroupMeta
+                ? `Slide to start "${currentGroupMeta.name}"`
+                : 'Slide to start this group'
+            }
+            onGroupSlideComplete={proceedFromGroupToMarks}
+          />
+        </div>
+
 
         {/* 🔹 Review overlay (mobile) */}
         {showReview && (
@@ -2445,24 +2502,23 @@ if (showSetup) {
                 style={{ position: 'absolute', top, left: 0, right: 0 }}
                 ref={(el) => { pageElsRef.current[pageNum - 1] = el; }}
               >
-                <PageCanvas
-                  pdf={pdf}
-                  pageNumber={pageNum}
-                  zoom={zoom}
-                  flashRect={
-                    flashRect?.pageNumber === pageNum
-                      ? { x: flashRect.x, y: flashRect.y, w: flashRect.w, h: flashRect.h }
-                      : null
-                  }
-                  selectedRect={
-                    selectedRect?.pageNumber === pageNum
-                      ? { x: selectedRect.x, y: selectedRect.y, w: selectedRect.w, h: selectedRect.h }
-                      : null
-                  }
-                  // NEW: show ALL marks of current group while we are in "slide to start" state
-                  groupRects={getCurrentGroupRectsForPage(pageNum)}
-                />
-
+ <PageCanvas
+  pdf={pdf}
+  pageNumber={pageNum}
+  zoom={zoom}
+  flashRect={
+    flashRect?.pageNumber === pageNum
+      ? { x: flashRect.x, y: flashRect.y, w: flashRect.w, h: flashRect.h }
+      : null
+  }
+  selectedRect={
+    selectedRect?.pageNumber === pageNum
+      ? { x: selectedRect.x, y: selectedRect.y, w: selectedRect.w, h: selectedRect.h }
+      : null
+  }
+  groupRects={getCurrentGroupRectsForPage(pageNum)}
+  groupOutlineRect={getCurrentGroupOutlineForPage(pageNum)}
+/>
 
 
                 {/* Scaled single-layer search overlay */}
