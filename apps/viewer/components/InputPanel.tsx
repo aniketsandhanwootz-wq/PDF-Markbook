@@ -240,7 +240,7 @@ export default function InputPanel({
     };
   }, []);
 
-   const floating = vvSupported && kbOverlap > 0 && selfFocused;
+  const floating = vvSupported && kbOverlap > 0 && selfFocused;
   const isGroupMode = mode === 'group';
 
 
@@ -364,9 +364,6 @@ export default function InputPanel({
             lineHeight: 1.4,
           }}
         >
-          <div style={{ fontWeight: 600, marginBottom: 2 }}>
-            Group overview
-          </div>
           <div>
             Review all ballons of <strong>{headingText}</strong> on the drawing above.
           </div>
@@ -375,9 +372,6 @@ export default function InputPanel({
               <strong>Instrument:</strong> {groupInstrumentSummary}
             </div>
           )}
-          <div style={{ marginTop: 6, fontStyle: 'italic', color: '#777' }}>
-            Slide below to start entering values for this group.
-          </div>
         </div>
       ) : (
         <div
