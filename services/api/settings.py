@@ -25,6 +25,15 @@ class Settings(BaseSettings):
     smtp_from_email: str = "aniket.sandhan@wootz.work"
     smtp_from_name: str = "Wootz Markbook System"
     
+    # Report / generation limits
+    # Max number of marks that will be included in a single report (Excel/PDF).
+    # This protects against OOM if a map accidentally has too many marks.
+    max_marks_per_report: int = 300
+
+    # Max number of heavy report-generation jobs (Excel bundle) running in parallel
+    # per application instance. 1 = strictly serialize them (safest).
+    max_parallel_reports: int = 1
+
     model_config = ConfigDict(
         env_file=".env",
         extra='ignore'  # Changed from 'forbid' to 'ignore'

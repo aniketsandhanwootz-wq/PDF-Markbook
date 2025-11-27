@@ -1,12 +1,15 @@
 # services/api/routers/reports_excel.py
-from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from typing import Dict, Optional
 from fastapi.responses import StreamingResponse
 import io
+import logging
 
 from core.report_excel import generate_report_excel
+from settings import get_settings
+logger = logging.getLogger(__name__)
+
 
 def get_storage():
     from main import get_storage_adapter, get_settings
@@ -40,6 +43,16 @@ async def generate_excel_report(body: ExcelReportBody, storage = Depends(get_sto
 
     marks = storage.list_marks(body.mark_set_id)
     entries = body.entries or {}
+
+    # Enforce global cap on number of marks per report
+    settings = get_settings()
+    max_marks = getattr(settings, "max_marks_per_report", 300)
+    if len(marks) > max_marks:
+        logger.warning(
+            f"Trimming marks for /reports-excel/generate: {len(marks)} → {max_marks} "
+            f"(max_marks_per_report)"
+        )
+        marks = marks[:max_marks]
 
     try:
         excel_bytes = await generate_report_excel(

@@ -6,7 +6,7 @@ async def test():
     settings = get_settings()
     
     success = await send_email_with_attachments(
-        to_email="vinaywootz@wootz.work",  # Change this
+        to_email="vinaywootz@wootz.work, aniket.sandhan@wootz.work",  # Change this
         subject="Test Email from Markbook",
         body_html="<h1>Test</h1><p>This is a test email.</p>",
         attachments=[

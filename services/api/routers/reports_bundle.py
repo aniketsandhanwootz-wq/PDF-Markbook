@@ -28,7 +28,7 @@ from core.report_excel import generate_report_excel
 
 # Set up logger
 logger = logging.getLogger(__name__)
-
+settings = get_settings()
 router = APIRouter(prefix="/reports/bundle", tags=["reports-bundle"])
 
 
@@ -379,13 +379,31 @@ async def _generate_and_send_excel_bundle(
     req: ReportBundleRequest,
 ) -> None:
     """
+    Thin wrapper that enforces concurrency limits via app.state.report_semaphore,
+    then delegates to _do_generate_and_send_excel_bundle.
+    """
+    sem = getattr(getattr(app, "state", None), "report_semaphore", None)
+    if sem is None:
+        # No semaphore configured → run directly (e.g. tests)
+        await _do_generate_and_send_excel_bundle(app, req)
+        return
+
+    async with sem:
+        await _do_generate_and_send_excel_bundle(app, req)
+
+
+async def _do_generate_and_send_excel_bundle(
+    app,
+    req: ReportBundleRequest,
+) -> None:
+    """
     Background job:
     - Resolve master vs QC mark sets.
-    - Count master marks.
-    - Generate Excel (master marks + QC inputs).
+    - Compute subset of master marks that belong to this QC markset
+      (via groups + user inputs).
+    - Enforce max_marks_per_report cap.
+    - Generate Excel only for that subset.
     - Send email with ONLY Excel attached.
-
-    Uses app.state.storage_adapter (Sheets adapter) configured in main.py.
     """
 
     try:
@@ -426,58 +444,103 @@ async def _generate_and_send_excel_bundle(
         master_mark_set_id = master_ms["mark_set_id"]
         qc_mark_set_id = qc_ms["mark_set_id"]
 
-        # 2) Count master marks (fixes "62 of 0 marks" bug)
-        total_marks = _count_master_marks(storage, req.doc_id, master_mark_set_id)
-
-        # 3) Get user inputs and compute completed count
+        # 2) Get user inputs (for this QC run)
         try:
             user_inputs = storage.get_user_inputs(
                 mark_set_id=qc_mark_set_id,
                 submitted_by=req.submitted_by,
             )
-            completed_marks = len(
-                {
-                    ui.get("mark_id")
-                    for ui in user_inputs
-                    if ui.get("mark_id") and (ui.get("user_value") or "").strip() != ""
-                }
-            )
         except Exception as e:
-            logger.error(f"Failed to get user inputs: {e}")
+            logger.error(f"Failed to get user inputs for {qc_mark_set_id}: {e}")
             user_inputs = []
-            completed_marks = 0
 
-        # 4) Build Excel bytes using the common template (master marks + QC results)
-        report_name = req.report_name or f"{doc.get('part_number') or 'inspection'}-QC"
+        # 3) Get groups for this QC mark set
+        try:
+            groups = storage.list_groups_for_mark_set(qc_mark_set_id)
+        except Exception as e:
+            logger.error(f"Failed to list groups for {qc_mark_set_id}: {e}")
+            groups = []
 
-        # Build mark_id -> user_value map (reuse same user_inputs we used for completed_marks)
-        mark_id_to_value: Dict[str, str] = {}
+        # 4) Build allowed_mark_ids from:
+        #    - marks that appear in any group for this QC markset
+        #    - marks that have a user input in this QC run
+        allowed_mark_ids: set[str] = set()
+
         for ui in user_inputs:
+            mid = ui.get("mark_id")
+            if mid:
+                allowed_mark_ids.add(mid)
+
+        for g in groups:
             try:
-                mid = ui.get("mark_id")
-                if not mid:
-                    continue
-                mark_id_to_value[mid] = ui.get("user_value", "")
+                for mid in (g.get("mark_ids") or []):
+                    if mid:
+                        allowed_mark_ids.add(mid)
             except Exception as e:
-                logger.warning(f"Error processing user input for Excel: {e}")
+                logger.warning(f"Error processing group for allowed_mark_ids: {e}")
                 continue
 
-        # Fetch master marks (for geometry, labels, etc.)
+        # 5) Fetch master marks and filter down to the ones that belong to this QC markset
         try:
             master_marks = storage.list_marks(master_mark_set_id)
         except Exception as e:
             logger.error(f"Failed to list marks for {master_mark_set_id}: {e}")
             return
 
+        if allowed_mark_ids:
+            filtered_marks = [m for m in master_marks if m.get("mark_id") in allowed_mark_ids]
+        else:
+            # If we somehow have no allowed IDs, treat as "no relevant marks"
+            filtered_marks = []
+
+        # 6) Enforce global cap on number of marks per report
+        max_marks = getattr(settings, "max_marks_per_report", 300)
+        if len(filtered_marks) > max_marks:
+            logger.warning(
+                f"Trimming marks for bundle report: {len(filtered_marks)} → {max_marks} "
+                f"(max_marks_per_report)"
+            )
+            filtered_marks = filtered_marks[:max_marks]
+
+        filtered_ids = {m.get("mark_id") for m in filtered_marks if m.get("mark_id")}
+
+        # total_marks should reflect the marks actually going into this report
+        total_marks = len(filtered_ids)
+
+        # 7) Compute completed marks only within filtered_ids
+        completed_marks = len(
+            {
+                ui.get("mark_id")
+                for ui in user_inputs
+                if ui.get("mark_id") in filtered_ids
+                and (ui.get("user_value") or "").strip() != ""
+            }
+        )
+
+        # 8) Build mark_id -> user_value map ONLY for filtered marks
+        mark_id_to_value: Dict[str, str] = {}
+        for ui in user_inputs:
+            try:
+                mid = ui.get("mark_id")
+                if not mid or mid not in filtered_ids:
+                    continue
+                mark_id_to_value[mid] = ui.get("user_value", "")
+            except Exception as e:
+                logger.warning(f"Error processing user input for Excel: {e}")
+                continue
+
         pdf_url = doc.get("pdf_url")
         if not pdf_url:
             logger.error(f"Missing pdf_url for doc {req.doc_id}, cannot build Excel")
             return
 
+        report_name = req.report_name or f"{doc.get('part_number') or 'inspection'}-QC"
+
+        # 9) Build Excel bytes using ONLY the filtered marks
         try:
             excel_bytes = await generate_report_excel(
                 pdf_url=pdf_url,
-                marks=master_marks,
+                marks=filtered_marks,
                 entries=mark_id_to_value,
                 user_email=req.submitted_by or req.email_to,
                 mark_set_id=qc_mark_set_id,
@@ -485,15 +548,13 @@ async def _generate_and_send_excel_bundle(
                 part_number=doc.get("part_number", "") or "",
                 external_id=doc.get("external_id", "") or "",
                 padding_pct=0.25,
-                # Same logo URL as everywhere else
                 logo_url="https://res.cloudinary.com/dbwg6zz3l/image/upload/v1753101276/Black_Blue_ctiycp.png",
             )
         except Exception as e:
             logger.exception(f"Failed to build Excel: {e}")
             return
 
-
-        # 5) Send email with ONLY Excel attached (async)
+        # 10) Send email with ONLY Excel attached (async)
         await _send_excel_email(
             to_email=req.email_to,
             report_name=report_name,
@@ -507,7 +568,6 @@ async def _generate_and_send_excel_bundle(
 
     except Exception as e:
         logger.exception(f"Unexpected error in background task: {e}")
-
 
 # ========== Public Endpoint ==========
 
