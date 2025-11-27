@@ -13,6 +13,10 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 from core.report_pdf import _require_pdfium, _fetch_pdf_bytes
 
+from collections import defaultdict
+import gc
+from PIL import Image  # for type hints / safety
+from settings import get_settings
 
 
 def _bytes_to_tempfile(data: bytes, suffix: str = ".png") -> str:
@@ -97,11 +101,16 @@ async def generate_report_excel(
           C/D: Tolerance Min/Max (left empty)
           E: Observed Value (user input)
           F/G: Status, Comment (left empty)
+
+    Optimised for:
+      - Per-page PDF rendering (render each page once, crop many marks)
+      - Using temp files for images so openpyxl never sees raw PIL Images
+      - Basic mark cap from settings.max_marks_per_report (default 300)
     """
+    # ---------- PDF + template ----------
     _require_pdfium()
     pdf_bytes = await _fetch_pdf_bytes(pdf_url)
 
-    # Use XLSX template (no macros)
     template_path = os.path.join(
         os.path.dirname(__file__),
         "../templates/report_template.xlsx",
@@ -109,150 +118,191 @@ async def generate_report_excel(
     if not os.path.exists(template_path):
         raise FileNotFoundError(f"Template not found: {template_path}")
 
-    # No keep_vba – we are on .xlsx
     wb = load_workbook(template_path)
     ws = wb.active
 
     _tempfiles: List[str] = []
 
+    # ---------- Settings: cap marks ----------
     try:
-        # ========= HEADER (coordinates assume your new template layout) =========
-        # Row 4: Part Number | ID
-        # Row 5: MarkSet Name | Created By
-        # Row 6: Created At
-        # (All of these can be merged ranges; _write_merged handles that.)
+        settings = get_settings()
+        max_marks = getattr(settings, "max_marks_per_report", 300)
+    except Exception:
+        max_marks = 300
 
-        # Part Number value (next to "Part Number:")
+    # Sort and apply cap here (extra safety – caller should already filter)
+    marks_sorted = sorted(
+        marks,
+        key=lambda m: (int(m.get("order_index", 0)), str(m.get("name", ""))),
+    )
+    if len(marks_sorted) > max_marks:
+        marks_sorted = marks_sorted[:max_marks]
+
+    # ---------- Group marks by page ----------
+    marks_by_page: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
+    for m in marks_sorted:
+        try:
+            page_idx = int(m.get("page_index", 0))
+        except Exception:
+            page_idx = 0
+        marks_by_page[page_idx].append(m)
+
+    import pypdfium2 as pdfium  # type: ignore
+    doc = pdfium.PdfDocument(pdf_bytes)
+
+    def crop_from_page(page_img: Image.Image, rect_norm, padding: float) -> Image.Image:
+        """
+        Local helper: crop from a pre-rendered page image using the same
+        normalized-rect + padding logic as _render_crop, but WITHOUT re-rendering.
+        """
+        W, H = page_img.size
+        nx, ny, nw, nh = rect_norm
+
+        rx = round(nx * W)
+        ry = round(ny * H)
+        rw = round(nw * W)
+        rh = round(nh * H)
+
+        pad_px = round(padding * max(rw, rh))
+        x0 = max(0, rx - pad_px)
+        y0 = max(0, ry - pad_px)
+        x1 = min(W, rx + rw + pad_px)
+        y1 = min(H, ry + rh + pad_px)
+
+        return page_img.crop((x0, y0, x1, y1)).convert("RGB")
+
+    try:
+        # =====================================================
+        # HEADER
+        # =====================================================
         _write_merged(ws, "B4", part_number or "")
-
-        # ID: external_id preferred, fallback to mark_set_id
         _write_merged(ws, "F4", (external_id or mark_set_id or ""))
-
-        # MarkSet Name
         _write_merged(ws, "B5", mark_set_label or "")
-
-        # Created By
         _write_merged(ws, "F5", user_email or "viewer_user")
-
-        # Created At
         _write_merged(
             ws,
             "F6",
             datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
         )
 
-        # ========= LOGO (top, same as before) =========
+        # ---------- LOGO ----------
         if logo_url:
             try:
                 logo_bytes = await _fetch_pdf_bytes(logo_url)
                 logo_path = _bytes_to_tempfile(logo_bytes, suffix=".png")
                 _tempfiles.append(logo_path)
-                img = OpenpyxlImage(logo_path)
-                img.width = 150
-                img.height = 60
-                # Anchor near the center top; adjust if needed
-                ws.add_image(img, "C1")
+
+                logo_img = OpenpyxlImage(logo_path)  # pass PATH, not PIL
+                logo_img.width = 150
+                logo_img.height = 60
+                ws.add_image(logo_img, "C1")
+                # no need to keep logo_img reference
+                del logo_img
             except Exception as e:
                 print(f"Logo failed: {e}")
 
-        # ========= ROWS (table) =========
-        # Table header is in row 7 in your screenshot:
-        # 7: Label | Required Value | Tolerance (Min/Max) | Observed | Status | Comment
-        # Data starts at row 8.
+        # =====================================================
+        # TABLE ROWS
+        # =====================================================
         start_row = 8
+        current_row = start_row
 
-        # Sort marks by order_index then name
-        marks_sorted = sorted(
-            marks,
-            key=lambda m: (int(m.get("order_index", 0)), str(m.get("name", ""))),
-        )
+        # Process pages in ascending order
+        for page_index in sorted(marks_by_page.keys()):
+            marks_on_page = marks_by_page[page_index]
+            if not marks_on_page:
+                continue
 
-        import pypdfium2 as pdfium  # type: ignore
-        doc = pdfium.PdfDocument(pdf_bytes)
-
-        # Group marks by page_index so we render each page once
-        # Dict[int, List[tuple[index, mark_dict]]]
-        marks_by_page: Dict[int, List[tuple[int, Dict[str, Any]]]] = {}
-        for idx, m in enumerate(marks_sorted, start=1):
-            page_index = int(m["page_index"])
-            marks_by_page.setdefault(page_index, []).append((idx, m))
-
-        for page_index, items in marks_by_page.items():
-            # Render this page once at the desired zoom
-            page = doc[page_index]
-            pil_page = page.render(scale=render_zoom).to_pil()
-
+            # Render this page ONCE at the requested zoom
             try:
-                for idx, m in items:
-                    r = start_row + (idx - 1)
+                page = doc[page_index]
+                page_img = page.render(scale=render_zoom).to_pil()
+            except Exception as e:
+                print(f"Failed to render page {page_index}: {e}")
+                page_img = None
 
-                    mark_id = m.get("mark_id", "")
-                    nx, ny, nw, nh = float(m["nx"]), float(m["ny"]), float(m["nw"]), float(m["nh"])
-                    label = (m.get("label") or f"Mark {idx}").strip()
-                    observed = (entries.get(mark_id, "") or "").strip()
+            # Process all marks on this page (sorted)
+            marks_on_page_sorted = sorted(
+                marks_on_page,
+                key=lambda m: (int(m.get("order_index", 0)), str(m.get("name", ""))),
+            )
 
-                    # --- Text cells ---
-                    # A: Label
-                    ws.cell(row=r, column=1).value = label
+            for m in marks_on_page_sorted:
+                r = current_row
+                current_row += 1
 
-                    # C/D: Tolerance Min/Max → left empty for user to fill later
+                mark_id = m.get("mark_id", "")
+                nx = float(m["nx"])
+                ny = float(m["ny"])
+                nw = float(m["nw"])
+                nh = float(m["nh"])
+                label = (m.get("label") or f"Mark {r - start_row + 1}").strip()
+                observed = (entries.get(mark_id, "") or "").strip()
 
-                    # E: Observed Value
-                    ws.cell(row=r, column=5).value = observed
+                # Text cells
+                ws.cell(row=r, column=1).value = label   # A: Label
+                ws.cell(row=r, column=5).value = observed  # E: Observed
+                ws.row_dimensions[r].height = 75         # row height for thumbnail
 
-                    # F/G: Status, Comment → keep empty
+                # Image thumbnail into column B
+                if page_img is None:
+                    continue  # can't render thumbnail without page
 
-                    # Row height ~100 px to match thumbnail
-                    ws.row_dimensions[r].height = 75
+                try:
+                    crop_img = crop_from_page(
+                        page_img,
+                        (nx, ny, nw, nh),
+                        padding_pct,
+                    )
 
-                    # --- Image thumbnail into column B ("Required Value") ---
-                    try:
-                        crop_img = _crop_from_page_image(
-                            pil_page=pil_page,
-                            rect_norm=(nx, ny, nw, nh),
-                            padding_pct=padding_pct,
-                        )
+                    # Write to temp file so openpyxl sees a filename (has fp)
+                    bio = io.BytesIO()
+                    crop_img.save(bio, format="PNG")
+                    crop_png = bio.getvalue()
+                    thumb_path = _bytes_to_tempfile(crop_png, suffix=".png")
+                    _tempfiles.append(thumb_path)
 
-                        img = OpenpyxlImage(crop_img)
-                        img_w_px, img_h_px = crop_img.size
+                    thumb_img = OpenpyxlImage(thumb_path)  # IMPORTANT: pass path
+                    img_w_px, img_h_px = crop_img.size
 
-                        # Fit into B cell (approx 175x100 px)
-                        cell_w_px = 175
-                        cell_h_px = 100
-                        scale = min(cell_w_px / img_w_px, cell_h_px / img_h_px) * 0.9
-                        img.width = int(img_w_px * scale)
-                        img.height = int(img_h_px * scale)
+                    # Fit within approx 175x100 px box
+                    cell_w_px = 175
+                    cell_h_px = 100
+                    scale = min(cell_w_px / img_w_px, cell_h_px / img_h_px) * 0.9
+                    thumb_img.width = int(img_w_px * scale)
+                    thumb_img.height = int(img_h_px * scale)
 
-                        ws.add_image(img, f"B{r}")
+                    ws.add_image(thumb_img, f"B{r}")
 
-                        # Drop references ASAP so GC can free memory
-                        del img
-                        del crop_img
-                    except Exception as e:
-                        print(f"Image failed for mark {idx}: {e}")
-                        continue
-            finally:
-                # Done with this page: free the large page image
-                del pil_page
+                    # Drop references ASAP for GC
+                    del crop_img
+                    del thumb_img
+                    del bio
 
-        # ========= SAVE =========
+                except Exception as e:
+                    print(f"Image failed for mark on page {page_index}, row {r}: {e}")
+                    continue
+
+            # Drop big page image
+            if page_img is not None:
+                del page_img
+                gc.collect()
+
+        # =====================================================
+        # SAVE TO BYTES
+        # =====================================================
         out = io.BytesIO()
         wb.save(out)
         out.seek(0)
-        data = out.read()
-        return data
+
+        # Encourage cleanup of any lingering image state
+        gc.collect()
+        return out.read()
 
     finally:
-        # Cleanup temp files (logo, etc.)
+        # Cleanup temp files
         for p in _tempfiles:
             try:
                 os.unlink(p)
             except Exception:
                 pass
-        # Hint the GC to clean up image objects
-        try:
-            import gc
-            gc.collect()
-        except Exception:
-            pass
-
