@@ -11,7 +11,8 @@ from openpyxl.drawing.image import Image as OpenpyxlImage
 from openpyxl.cell.cell import MergedCell
 from openpyxl.worksheet.worksheet import Worksheet
 
-from core.report_pdf import _require_pdfium, _render_crop, _fetch_pdf_bytes
+from core.report_pdf import _require_pdfium, _fetch_pdf_bytes
+
 
 
 def _bytes_to_tempfile(data: bytes, suffix: str = ".png") -> str:
@@ -42,6 +43,36 @@ def _write_merged(ws: Worksheet, coord: str, value) -> None:
     else:
         cell.value = value
 
+def _crop_from_page_image(
+    *,
+    pil_page,
+    rect_norm,
+    padding_pct: float,
+):
+    """
+    Crop a normalized rectangle (nx, ny, nw, nh) from a pre-rendered
+    PIL page image, with padding. This is essentially the same math
+    as _render_crop but WITHOUT re-rendering or drawing boxes.
+    """
+    from PIL import Image as PilImage  # local import to avoid global dependency
+
+    W, H = pil_page.size
+    nx, ny, nw, nh = rect_norm
+
+    rx = round(nx * W)
+    ry = round(ny * H)
+    rw = round(nw * W)
+    rh = round(nh * H)
+
+    pad = round(padding_pct * max(rw, rh))
+
+    x0 = max(0, rx - pad)
+    y0 = max(0, ry - pad)
+    x1 = min(W, rx + rw + pad)
+    y1 = min(H, ry + rh + pad)
+
+    crop = pil_page.crop((x0, y0, x1, y1))
+    return crop.convert("RGB")
 
 async def generate_report_excel(
     *,
@@ -139,70 +170,89 @@ async def generate_report_excel(
         import pypdfium2 as pdfium  # type: ignore
         doc = pdfium.PdfDocument(pdf_bytes)
 
+        # Group marks by page_index so we render each page once
+        # Dict[int, List[tuple[index, mark_dict]]]
+        marks_by_page: Dict[int, List[tuple[int, Dict[str, Any]]]] = {}
         for idx, m in enumerate(marks_sorted, start=1):
-            r = start_row + (idx - 1)
-
             page_index = int(m["page_index"])
-            mark_id = m.get("mark_id", "")
-            nx, ny, nw, nh = float(m["nx"]), float(m["ny"]), float(m["nw"]), float(m["nh"])
-            label = (m.get("label") or f"Mark {idx}").strip()
-            observed = (entries.get(mark_id, "") or "").strip()
+            marks_by_page.setdefault(page_index, []).append((idx, m))
 
-            # --- Text cells ---
-            # A: Label
-            ws.cell(row=r, column=1).value = label
+        for page_index, items in marks_by_page.items():
+            # Render this page once at the desired zoom
+            page = doc[page_index]
+            pil_page = page.render(scale=render_zoom).to_pil()
 
-            # C/D: Tolerance Min/Max → left empty for user to fill later
-
-            # E: Observed Value
-            ws.cell(row=r, column=5).value = observed
-
-            # F/G: Status, Comment → keep empty
-
-            # Row height ~100 px to match thumbnail
-            ws.row_dimensions[r].height = 75
-
-            # --- Image thumbnail into column B ("Required Value") ---
             try:
-                crop_img = _render_crop(
-                    doc=doc,
-                    page_index=page_index,
-                    rect_norm=(nx, ny, nw, nh),
-                    render_zoom=render_zoom,
-                    padding_pct=padding_pct,
-                )
+                for idx, m in items:
+                    r = start_row + (idx - 1)
 
-                bio = io.BytesIO()
-                crop_img.save(bio, format="PNG")
-                crop_png = bio.getvalue()
+                    mark_id = m.get("mark_id", "")
+                    nx, ny, nw, nh = float(m["nx"]), float(m["ny"]), float(m["nw"]), float(m["nh"])
+                    label = (m.get("label") or f"Mark {idx}").strip()
+                    observed = (entries.get(mark_id, "") or "").strip()
 
-                img_path = _bytes_to_tempfile(crop_png, suffix=".png")
-                _tempfiles.append(img_path)
+                    # --- Text cells ---
+                    # A: Label
+                    ws.cell(row=r, column=1).value = label
 
-                img = OpenpyxlImage(img_path)
-                img_w_px, img_h_px = crop_img.size
+                    # C/D: Tolerance Min/Max → left empty for user to fill later
 
-                # Fit into B cell (approx 175x100 px); tweak if you adjust column width
-                cell_w_px = 175
-                cell_h_px = 100
-                scale = min(cell_w_px / img_w_px, cell_h_px / img_h_px) * 0.9
-                img.width = int(img_w_px * scale)
-                img.height = int(img_h_px * scale)
+                    # E: Observed Value
+                    ws.cell(row=r, column=5).value = observed
 
-                ws.add_image(img, f"B{r}")
-            except Exception as e:
-                print(f"Image failed for mark {idx}: {e}")
+                    # F/G: Status, Comment → keep empty
+
+                    # Row height ~100 px to match thumbnail
+                    ws.row_dimensions[r].height = 75
+
+                    # --- Image thumbnail into column B ("Required Value") ---
+                    try:
+                        crop_img = _crop_from_page_image(
+                            pil_page=pil_page,
+                            rect_norm=(nx, ny, nw, nh),
+                            padding_pct=padding_pct,
+                        )
+
+                        img = OpenpyxlImage(crop_img)
+                        img_w_px, img_h_px = crop_img.size
+
+                        # Fit into B cell (approx 175x100 px)
+                        cell_w_px = 175
+                        cell_h_px = 100
+                        scale = min(cell_w_px / img_w_px, cell_h_px / img_h_px) * 0.9
+                        img.width = int(img_w_px * scale)
+                        img.height = int(img_h_px * scale)
+
+                        ws.add_image(img, f"B{r}")
+
+                        # Drop references ASAP so GC can free memory
+                        del img
+                        del crop_img
+                    except Exception as e:
+                        print(f"Image failed for mark {idx}: {e}")
+                        continue
+            finally:
+                # Done with this page: free the large page image
+                del pil_page
 
         # ========= SAVE =========
         out = io.BytesIO()
         wb.save(out)
         out.seek(0)
-        return out.read()
+        data = out.read()
+        return data
 
     finally:
-        # Cleanup temp files
+        # Cleanup temp files (logo, etc.)
         for p in _tempfiles:
             try:
                 os.unlink(p)
             except Exception:
                 pass
+        # Hint the GC to clean up image objects
+        try:
+            import gc
+            gc.collect()
+        except Exception:
+            pass
+
