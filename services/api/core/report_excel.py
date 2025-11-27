@@ -5,7 +5,7 @@ import os
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 from tempfile import NamedTemporaryFile
-
+from zoneinfo import ZoneInfo
 from openpyxl import load_workbook
 from openpyxl.drawing.image import Image as OpenpyxlImage
 from openpyxl.cell.cell import MergedCell
@@ -175,15 +175,39 @@ async def generate_report_excel(
         # =====================================================
         # HEADER
         # =====================================================
-        _write_merged(ws, "B4", part_number or "")
-        _write_merged(ws, "F4", (external_id or mark_set_id or ""))
-        _write_merged(ws, "B5", mark_set_label or "")
-        _write_merged(ws, "F5", user_email or "viewer_user")
-        _write_merged(
-            ws,
-            "F6",
-            datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
-        )
+        # ========= HEADER (coordinates assume your template layout) =========
+        # Row 3: ID: <external_id / mark_set_id>
+        id_val = (external_id or mark_set_id or "").strip()
+        if id_val:
+            # A3:G3 is merged; write "ID: <value>" into the merged cell
+            _write_merged(ws, "A3", f"ID: {id_val}")
+
+        # Row 4: "Part Number: <part_number>" in merged A4:C4
+        part_num = (part_number or "").strip()
+        if part_num:
+            _write_merged(ws, "A4", f"Part Number: {part_num}")
+        else:
+            # keep the original label if we have no value
+            _write_merged(ws, "A4", "Part Number:")
+
+        # Row 5: "MarkSet Name: <mark_set_label>" in merged A5:C5
+        ms_label_val = (mark_set_label or "").strip()
+        if ms_label_val:
+            _write_merged(ws, "A5", f"MarkSet Name: {ms_label_val}")
+        else:
+            _write_merged(ws, "A5", "MarkSet Name:")
+
+        # Row 4 right: "Created By: <email>" in merged E4:G4
+        created_by = (user_email or "viewer_user").strip()
+        _write_merged(ws, "E4", f"Created By: {created_by}")
+
+        # Row 5 right: "Created At: <timestamp>" in merged E5:G5
+        #created_at_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+        #_write_merged(ws, "E5", f"Created At: {created_at_str}")
+        # Row 5 right: "Created At: <IST timestamp>" in merged E5:G5
+        ist_time = datetime.now(ZoneInfo("Asia/Kolkata"))
+        created_at_str = ist_time.strftime("%Y-%m-%d %H:%M IST")
+        _write_merged(ws, "E5", f"Created At: {created_at_str}")
 
         # ---------- LOGO ----------
         if logo_url:
