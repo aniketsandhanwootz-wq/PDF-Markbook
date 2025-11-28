@@ -69,11 +69,11 @@ export default function MarkList({
         {sorted.map((m) => {
           const isSelected = selectedMarkId === m.mark_id;
           return (
-    <div
-      key={m.mark_id}
-      className="mark-row"
-      data-mark-row
-      style={{
+            <div
+              key={m.mark_id}
+              className="mark-row"
+              data-mark-row
+              style={{
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
@@ -180,18 +180,18 @@ export default function MarkList({
                   : '1px solid #eee',
               }}
             >
-<div
-  data-group-header
-  style={{
-    display: 'flex',
-    alignItems: 'center',
-    gap: 6,
-    fontSize: 13,
-    fontWeight: 600,
-    cursor: onGroupSelect ? 'pointer' : 'default',
-  }}
-  onClick={() => {
-    // expand this group in the sidebar
+              <div
+                data-group-header
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: onGroupSelect ? 'pointer' : 'default',
+                }}
+                onClick={() => {
+                  // expand this group in the sidebar
 
                   setCollapsed((prev) => {
                     const next = new Set(prev);
@@ -218,6 +218,7 @@ export default function MarkList({
                       fontSize: 11,
                       cursor: 'pointer',
                       background: '#fff',
+                      transform: 'scaleX(-1)',
                     }}
                   >
                     ✏️
@@ -281,11 +282,11 @@ export default function MarkList({
                 {gmarks.map((m) => {
                   const isSelected = selectedMarkId === m.mark_id;
                   return (
-<div
-  key={m.mark_id}
-  className="mark-row"
-  data-mark-row
-  style={{
+                    <div
+                      key={m.mark_id}
+                      className="mark-row"
+                      data-mark-row
+                      style={{
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'space-between',

@@ -83,6 +83,56 @@ function overlaps(
 
 type DrawRect = { x: number; y: number; w: number; h: number } | null;
 
+// Simple 3×3 sharpen filter (similar to OpenCV kernel)
+// kernel = [[0, -1, 0],
+//           [-1, 5, -1],
+//           [0, -1, 0]]
+function applySharpenFilter(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number
+) {
+  const imageData = ctx.getImageData(0, 0, width, height);
+  const src = imageData.data;
+  const out = new Uint8ClampedArray(src.length);
+
+  const w = width;
+  const h = height;
+  const kernel = [0, -1, 0, -1, 5, -1, 0, -1, 0];
+  const kSize = 3;
+  const half = 1;
+
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let r = 0,
+        g = 0,
+        b = 0;
+
+      for (let ky = -half; ky <= half; ky++) {
+        const yy = Math.min(h - 1, Math.max(0, y + ky));
+        for (let kx = -half; kx <= half; kx++) {
+          const xx = Math.min(w - 1, Math.max(0, x + kx));
+          const weight = kernel[(ky + half) * kSize + (kx + half)];
+          const idx = (yy * w + xx) * 4;
+
+          r += src[idx] * weight;
+          g += src[idx + 1] * weight;
+          b += src[idx + 2] * weight;
+        }
+      }
+
+      const outIdx = (y * w + x) * 4;
+      out[outIdx] = Math.min(255, Math.max(0, r));
+      out[outIdx + 1] = Math.min(255, Math.max(0, g));
+      out[outIdx + 2] = Math.min(255, Math.max(0, b));
+      out[outIdx + 3] = src[outIdx + 3]; // keep alpha
+    }
+  }
+
+  imageData.data.set(out);
+  ctx.putImageData(imageData, 0, 0);
+}
+
 export default function GroupEditor({
     isOpen,
     pdf,
@@ -315,21 +365,26 @@ export default function GroupEditor({
                 ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
                 ctx.clearRect(0, 0, cssWidth, cssHeight);
 
-                // --- 5) Crop from offscreen page → visible preview ---
-                ctx.drawImage(
-                    offCanvas,
-                    gx * dpr,
-                    gy * dpr,
-                    gw * dpr,
-                    gh * dpr,
-                    0,
-                    0,
-                    cssWidth,
-                    cssHeight
-                );
+// --- 5) Crop from offscreen page → visible preview ---
+ctx.drawImage(
+  offCanvas,
+  gx * dpr,
+  gy * dpr,
+  gw * dpr,
+  gh * dpr,
+  0,
+  0,
+  cssWidth,
+  cssHeight
+);
 
-                // Overlay (green mark boxes) uses this size
-                setOverlaySize({ w: cssWidth, h: cssHeight });
+// 🔍 Apply a light sharpen filter to make the preview crisper
+// Use the real canvas buffer size (already scaled by dpr)
+applySharpenFilter(ctx, canvas.width, canvas.height);
+
+// Overlay (green mark boxes) uses this size
+setOverlaySize({ w: cssWidth, h: cssHeight });
+
             } catch (e) {
                 if (!cancelled) {
                     console.warn('Failed to render group preview', e);
