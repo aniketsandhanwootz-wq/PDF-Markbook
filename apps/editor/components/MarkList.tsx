@@ -62,17 +62,18 @@ export default function MarkList({
       >
         {sorted.length === 0 && (
           <div style={{ fontSize: 13, color: '#777', padding: '8px 4px' }}>
-            No marks yet. Draw on the PDF to create marks.
+            No Groups created yet, select a view to create one.
           </div>
         )}
 
         {sorted.map((m) => {
           const isSelected = selectedMarkId === m.mark_id;
           return (
-            <div
-              key={m.mark_id}
-              className="mark-row"
-              style={{
+    <div
+      key={m.mark_id}
+      className="mark-row"
+      data-mark-row
+      style={{
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
@@ -179,17 +180,19 @@ export default function MarkList({
                   : '1px solid #eee',
               }}
             >
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  fontSize: 13,
-                  fontWeight: 600,
-                  cursor: onGroupSelect ? 'pointer' : 'default',
-                }}
-                onClick={() => {
-                  // expand this group in the sidebar
+<div
+  data-group-header
+  style={{
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    fontSize: 13,
+    fontWeight: 600,
+    cursor: onGroupSelect ? 'pointer' : 'default',
+  }}
+  onClick={() => {
+    // expand this group in the sidebar
+
                   setCollapsed((prev) => {
                     const next = new Set(prev);
                     next.delete(group.group_id);
@@ -278,10 +281,11 @@ export default function MarkList({
                 {gmarks.map((m) => {
                   const isSelected = selectedMarkId === m.mark_id;
                   return (
-                    <div
-                      key={m.mark_id}
-                      className="mark-row"
-                      style={{
+<div
+  key={m.mark_id}
+  className="mark-row"
+  data-mark-row
+  style={{
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'space-between',

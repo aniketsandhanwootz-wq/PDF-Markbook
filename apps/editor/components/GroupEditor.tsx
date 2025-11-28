@@ -119,6 +119,9 @@ export default function GroupEditor({
     );
 
     const [selected, setSelected] = useState<Set<string>>(new Set());
+    // once user manually changes selection, stop auto-initialising it
+    const userSelectionTouchedRef = useRef(false);
+
 
     const previewCanvasRef = useRef<HTMLCanvasElement | null>(null);
     const previewContainerRef = useRef<HTMLDivElement | null>(null);
@@ -143,14 +146,6 @@ export default function GroupEditor({
     );
     const suggestionsAbortRef = useRef<AbortController | null>(null);
 
-    // hydrate selected marks whenever area or marks change
-    // Initialise and keep selection stable:
-    // - when dialog opens:
-    //    • edit mode  → use initialSelectedMarkIds
-    //    • create mode → select all marks in area
-    // - when marksInArea changes:
-    //    • keep existing selection if possible
-    //    • don't auto-reselect marks that user unchecked
     useEffect(() => {
         if (!isOpen) return;
 
@@ -159,30 +154,34 @@ export default function GroupEditor({
                 marksInArea.map((m) => m.mark_id).filter(Boolean) as string[]
             );
 
-            // first time (prev empty) → initialise from props
-            let base: Set<string>;
-            if (prev.size === 0) {
-                if (initialSelectedMarkIds && initialSelectedMarkIds.length > 0) {
-                    base = new Set(
-                        initialSelectedMarkIds.filter((id) => idsInArea.has(id))
-                    );
-                } else {
-                    // create mode default: everything in area selected
-                    base = new Set(idsInArea);
-                }
-            } else {
-                // subsequent updates: keep only ids that still exist in area
-                base = new Set<string>();
+            // After user has changed selection once, never auto-add marks again.
+            // Only keep those that still exist in this area.
+            if (userSelectionTouchedRef.current) {
+                const next = new Set<string>();
                 prev.forEach((id) => {
-                    if (idsInArea.has(id)) base.add(id);
+                    if (idsInArea.has(id)) next.add(id);
                 });
+                return next;
             }
 
+            // Before user interaction → initial selection
+            let base: Set<string>;
+            if (initialSelectedMarkIds && initialSelectedMarkIds.length > 0) {
+                base = new Set(
+                    initialSelectedMarkIds.filter((id) => idsInArea.has(id))
+                );
+            } else {
+                // create mode default: everything in area selected
+                base = new Set(idsInArea);
+            }
             return base;
         });
     }, [isOpen, marksInArea, initialSelectedMarkIds]);
 
     const toggleMarkSelected = (id: string) => {
+        // user has manually changed selection at least once
+        userSelectionTouchedRef.current = true;
+
         setSelected((prev) => {
             const next = new Set(prev);
             if (next.has(id)) next.delete(id);
@@ -344,8 +343,10 @@ export default function GroupEditor({
     }, [isOpen, pdf, pageIndex, rect]);
 
 
-    // Mouse handlers on the HTML overlay (not the canvas) – fixes dpr misalignment
     const handleOverlayMouseDown = (e: React.MouseEvent) => {
+        // Clicking anywhere on the preview background should clear current highlight
+        setHighlightedMarkId(null);
+
         if (!onCreateMarkInGroup) return; // nothing to do if mark creation disabled
 
         const overlay = overlayRef.current;
@@ -359,6 +360,7 @@ export default function GroupEditor({
         setDrawStart({ x, y });
         setCurrentRect({ x, y, w: 0, h: 0 });
     };
+
 
     const handleOverlayMouseMove = (e: React.MouseEvent) => {
         if (!isDrawing || !drawStart) return;
@@ -448,20 +450,33 @@ export default function GroupEditor({
 
         const newId = onCreateMarkInGroup(pageIndex, markRect);
 
-
-        // auto-select only the new mark (do NOT disturb existing selections)
         if (newId) {
+            // Newly created balloons should start as NON-critical.
+            // Existing DB marks keep their original is_required state.
+            if (onUpdateMark) {
+                onUpdateMark(newId, { is_required: false });
+            }
+
+            // user interacted with selection
+            userSelectionTouchedRef.current = true;
+
+            // auto-select the new mark (keep any existing ones)
             setSelected((prev) => {
                 const next = new Set(prev);
                 next.add(newId);
                 return next;
             });
+
+            // and focus it visually (yellow border + list highlight)
+            setHighlightedMarkId(newId);
         }
+
 
         setIsDrawing(false);
         setCurrentRect(null);
         setDrawStart(null);
     };
+
 
     const handleSave = async () => {
         if (!ownerMarkSetId) {
@@ -562,8 +577,13 @@ export default function GroupEditor({
                     flexDirection: 'column',
                     gap: 8,
                 }}
+                onMouseDown={(e) => {
+                    // only clear when clicking the empty background, not children
+                    if (e.target === e.currentTarget) {
+                        setHighlightedMarkId(null);
+                    }
+                }}
             >
-
 
                 {/* Header */}
                 <div
@@ -862,8 +882,8 @@ export default function GroupEditor({
                                     No balloons in group, select dimensions to create.
                                     <br />
                                     {onCreateMarkInGroup
-                                        ? 'Draw a rectangle in the preview to create a mark, then set instrument / required here.'
-                                        : 'Create marks on the Master mark set for this document, then come back here to group them.'}
+                                        ? ''
+                                        : 'Select dimensions to create balloons for'}
                                 </div>
                             )}
 
@@ -939,79 +959,80 @@ export default function GroupEditor({
                                                 {m.label || '—'}
                                             </span>
 
-                <input
-                    type="text"
-                    list="ge-instrument-suggestions"
-                    defaultValue={m.instrument || ''}
-                    onChange={(e) => {
-                        const v = e.target.value;
-                        setInstrumentQuery(v);
-                        fetchSuggestions(v);
-                        onUpdateMark(m.mark_id, {
-                            instrument: v || undefined,
-                        });
-                    }}
-                    placeholder="Instrument..."
-                    style={{
-                        border: '1px solid #ddd',
-                        borderRadius: 4,
-                        fontSize: 12,
-                        padding: '4px 6px',
-                        minWidth: 160,
-                        flex: 1,
-                    }}
-                />
+                                            <input
+                                                type="text"
+                                                list="ge-instrument-suggestions"
+                                                defaultValue={m.instrument || ''}
+                                                onChange={(e) => {
+                                                    const v = e.target.value;
+                                                    setInstrumentQuery(v);
+                                                    fetchSuggestions(v);
+                                                    onUpdateMark(m.mark_id, {
+                                                        instrument: v || undefined,
+                                                    });
+                                                }}
+                                                placeholder="Instrument..."
+                                                style={{
+                                                    border: '1px solid #ddd',
+                                                    borderRadius: 4,
+                                                    fontSize: 12,
+                                                    padding: '4px 6px',
+                                                    minWidth: 160,
+                                                    flex: 1,
+                                                }}
+                                            />
 
-                {/* Cross immediately after instrument box, only for NEW balloons */}
-                {onDeleteMark && isNew && (
-                    <button
-                        type="button"
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            onDeleteMark(m.mark_id);
-                        }}
-                        title="Delete this balloon"
-                        style={{
-                            border: 'none',
-                            background: 'transparent',
-                            cursor: 'pointer',
-                            fontSize: 18,
-                            color: '#b71c1c',
-                            lineHeight: 1,
-                            marginLeft: 2,
-                        }}
-                    >
-                        ×
-                    </button>
-                )}
+                                            {/* Cross immediately after instrument box, only for NEW balloons */}
+                                            {onDeleteMark && isNew && (
+                                                <button
+                                                    type="button"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        onDeleteMark(m.mark_id);
+                                                    }}
+                                                    title="Delete this balloon"
+                                                    style={{
+                                                        border: 'none',
+                                                        background: 'transparent',
+                                                        cursor: 'pointer',
+                                                        fontSize: 18,
+                                                        color: '#b71c1c',
+                                                        lineHeight: 1,
+                                                        marginLeft: 2,
+                                                    }}
+                                                >
+                                                    ×
+                                                </button>
+                                            )}
 
-                {/* Spacer to push critical icon to the right end */}
-                <div style={{ flex: 1 }} />
+                                            {/* Spacer to push critical icon to the right end */}
+                                            <div style={{ flex: 1 }} />
 
-                {/* Required toggle at far right of the line */}
-                <button
-                    type="button"
-                    onClick={(e) => {
-                        e.stopPropagation();
-                        onUpdateMark(m.mark_id, {
-                            is_required: !required,
-                        });
-                    }}
-                    title={
-                        required
-                            ? 'Required measurement'
-                            : 'Optional measurement'
-                    }
-                    style={{
-                        border: 'none',
-                        background: 'transparent',
-                        cursor: 'pointer',
-                        fontSize: 18,
-                        color: required ? '#FF3b3b' : '#ccc',
-                    }}
-                >
-                    ‼
-                </button>
+                                            {/* Required toggle at far right of the line */}
+                                            <button
+                                                type="button"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    onUpdateMark(m.mark_id, {
+                                                        is_required: !required,
+                                                    });
+                                                }}
+                                                title={
+                                                    required
+                                                        ? 'Required measurement'
+                                                        : 'Optional measurement'
+                                                }
+                                                style={{
+                                                    border: 'none',
+                                                    background: 'transparent',
+                                                    cursor: 'pointer',
+                                                    fontSize: 18,
+                                                    color: required ? '#910404ff' : '#ccc',
+                                                    fontWeight: 'bolder',
+                                                }}
+                                            >
+                                                ⓘ
+                                            </button>
 
                                         </div>
                                     </div>

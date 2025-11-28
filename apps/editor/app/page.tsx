@@ -436,7 +436,7 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
             </div>
           )}
 
-           {/* Description + created_by (no balloon count) */}
+          {/* Description + created_by (no balloon count) */}
           <div style={{ fontSize: 12, color: '#666', marginTop: 2 }}>
             {ms.description && ms.description.trim() !== ''
               ? ms.description
@@ -844,7 +844,9 @@ function EditorContent() {
   const [editStart, setEditStart] = useState<{ x: number; y: number; rect: Rect } | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
+  const sidebarRef = useRef<HTMLDivElement>(null);
   const pageHeightsRef = useRef<number[]>([]);
+  const autoSelectGroupRef = useRef<{ mode: 'create' | 'edit'; groupId?: string } | null>(null);
   const pdfUrl = useRef<string>('');
   const markSetId = useRef<string>('');
   const ownerMarkSetId = useRef<string>('');
@@ -937,6 +939,28 @@ function EditorContent() {
     }
   }, []);
 
+  // After groups reload, auto-select a group if requested
+  useEffect(() => {
+    if (!autoSelectGroupRef.current) return;
+    const { mode, groupId } = autoSelectGroupRef.current;
+
+    let target: Group | undefined;
+
+    if (mode === 'edit' && groupId) {
+      // Edited group: find same id
+      target = groups.find((g) => g.group_id === groupId);
+    } else if (mode === 'create' && groups.length > 0) {
+      // Newly created group: assume it's the last one
+      target = groups[groups.length - 1];
+    }
+
+    if (target) {
+      setSelectedGroupId(target.group_id);
+      setSelectedMarkId(null);   // no specific mark selected
+    }
+
+    autoSelectGroupRef.current = null;
+  }, [groups]);
 
   useEffect(() => {
     if (showSetup) return;
@@ -1195,20 +1219,31 @@ function EditorContent() {
 
     // briefly highlight group rectangle on that page
     if (pdf) {
-      pdf.getPage(group.page_index + 1)
+      pdf
+        .getPage(group.page_index + 1)
         .then((page) => {
           const vp = page.getViewport({ scale: zoom });
-          setFlashRect({
+          const rect = {
             pageNumber: group.page_index + 1,
             x: group.nx * vp.width,
             y: group.ny * vp.height,
             w: group.nw * vp.width,
             h: group.nh * vp.height,
-          });
+          };
+
+          // set flash once
+          setFlashRect(rect);
+
+          // ⬇️ clear it after the flash so random re-renders / clicks
+          // on the PDF DO NOT re-play the last flash
+          setTimeout(() => {
+            setFlashRect((prev) => (prev === rect ? null : prev));
+          }, 1200);
         })
         .catch((e) => console.warn('Failed to compute group flash rect', e));
     }
   }, [pdf, zoom, pageTopFor]);
+
 
   // Open GroupEditor for an existing group (pencil icon)
   const handleEditGroup = useCallback(
@@ -1653,6 +1688,33 @@ function EditorContent() {
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, []);
 
+  // Global click-outside: clear selected mark/group when clicking anywhere
+  // that is NOT a mark row, group header, or mark rectangle on the PDF
+  useEffect(() => {
+    const handleGlobalMouseDown = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+
+      // If click happened on a mark row, group header, or mark rect, ignore
+      const selectable = target.closest(
+        '[data-mark-row], [data-group-header], [data-mark-rect]'
+      );
+      if (selectable) {
+        return;
+      }
+
+      // Otherwise clear selection
+      setSelectedMarkId(null);
+      setSelectedGroupId(null);
+    };
+
+    document.addEventListener('mousedown', handleGlobalMouseDown);
+    return () => {
+      document.removeEventListener('mousedown', handleGlobalMouseDown);
+    };
+  }, []);
+
+
   // Mouse event handlers for drawing and editing marks
   const handleMouseDown = useCallback(
     (e: React.MouseEvent, pageIndex: number) => {
@@ -1931,7 +1993,10 @@ function EditorContent() {
 
   return (
     <div className="editor-container">
-      <div className={`sidebar ${sidebarOpen ? 'open' : 'closed'}`}>
+      <div
+        className={`sidebar ${sidebarOpen ? 'open' : 'closed'}`}
+        ref={sidebarRef}
+      >
         <div className="sidebar-header">
           <button className="sidebar-toggle" onClick={() => setSidebarOpen(!sidebarOpen)}>
             {sidebarOpen ? '◀' : '▶'}
@@ -2012,13 +2077,12 @@ function EditorContent() {
                   pageNumber={pageNum}
                   zoom={zoom}
                   onReady={(height) => handlePageReady(pageNum, height)}
+                  // Pass same object to keep React.memo happy – flash only when
+                  // navigateToGroup changes flashRect or clears it.
                   flashRect={
-                    flashRect?.pageNumber === pageNum
-                      ? { x: flashRect.x, y: flashRect.y, w: flashRect.w, h: flashRect.h }
-                      : null
+                    flashRect && flashRect.pageNumber === pageNum ? flashRect : null
                   }
                 />
-
                 {/* Search Highlights */}
                 {highlightPageNumber === pageNum && searchHighlights.map((highlight, idx) => (
                   <div
@@ -2072,6 +2136,7 @@ function EditorContent() {
                       <div
                         key={overlay.markId}
                         className={`mark-rect ${selectedMarkId === overlay.markId ? 'selected' : ''} ${editingMarkId === overlay.markId ? 'editing' : ''}`}
+                        data-mark-rect
                         style={{
                           position: 'absolute',
                           left: overlay.style.left,
@@ -2165,54 +2230,68 @@ function EditorContent() {
             // ✅ groups belong to this QC mark-set
             ownerMarkSetId={ownerMarkSetId.current}
             nextGroupNumber={groups.length + 1}
-                originalMarkIds={originalMarksRef.current.map((m) => m.mark_id)}
+            originalMarkIds={originalMarksRef.current.map((m) => m.mark_id)}
 
-    onUpdateMark={updateMark}
-    // ❌ only these marks (created in this GroupEditor session) can be deleted via "×"
-    deletableMarkIds={pendingGroupMarkIds}
-    onDeleteMark={(markId) => {
-      // Only allow deleting marks that were created during this session
-      if (!pendingGroupMarkIds.includes(markId)) return;
+            onUpdateMark={updateMark}
+            // ❌ only these marks (created in this GroupEditor session) can be deleted via "×"
+            deletableMarkIds={pendingGroupMarkIds}
+            onDeleteMark={(markId) => {
+              // Only allow deleting marks that were created during this session
+              if (!pendingGroupMarkIds.includes(markId)) return;
 
-      deleteMark(markId);
-      setPendingGroupMarkIds((prev) =>
-        prev.filter((id) => id !== markId)
-      );
-    }}
-    onFocusMark={(markId) => {
-      const m = marks.find((mm) => mm.mark_id === markId);
-      if (m) navigateToMark(m);
-    }}
-    // ✅ QC can create new marks inside this group area
-    onCreateMarkInGroup={createMarkFromGroup}
-    onClose={() => {
-      // ❌ User cancelled – drop any marks that were created
-      // inside this GroupEditor session and never saved.
-      if (pendingGroupMarkIds.length) {
-        setMarks((prev) =>
-          prev.filter((m) => !pendingGroupMarkIds.includes(m.mark_id))
-        );
-        setPendingGroupMarkIds([]);
-      }
-      setGroupEditorOpen(false);
-      setPendingGroup(null);
-      setEditingGroup(null);
-      setDrawMode('mark');
-    }}
-    onSaved={() => {
-      // ✅ User clicked "Save Group" – marks created in this session
-      // become part of the normal mark pool; just clear the tracking list.
-      setGroupEditorOpen(false);
-      setPendingGroup(null);
-      setEditingGroup(null);
-      setDrawMode('mark');
-      setPendingGroupMarkIds([]);
-      addToast('Group saved', 'success');
-      // 🔹 refresh sidebar groups for this QC mark-set
-      fetchGroups();
-    }}
-  />
-)}
+              deleteMark(markId);
+              setPendingGroupMarkIds((prev) =>
+                prev.filter((id) => id !== markId)
+              );
+            }}
+            onFocusMark={(markId) => {
+              const m = marks.find((mm) => mm.mark_id === markId);
+              if (m) navigateToMark(m);
+            }}
+            // ✅ QC can create new marks inside this group area
+            onCreateMarkInGroup={createMarkFromGroup}
+            onClose={() => {
+              // ❌ User cancelled – drop any marks that were created
+              // inside this GroupEditor session and never saved.
+              if (pendingGroupMarkIds.length) {
+                setMarks((prev) =>
+                  prev.filter((m) => !pendingGroupMarkIds.includes(m.mark_id))
+                );
+                setPendingGroupMarkIds([]);
+              }
+              setGroupEditorOpen(false);
+              setPendingGroup(null);
+              setEditingGroup(null);
+              setDrawMode('mark');
+            }}
+            onSaved={() => {
+              // 🧠 Remember which group we should auto-select
+              if (editingGroup) {
+                // Existing group edited → reselect same one
+                autoSelectGroupRef.current = {
+                  mode: 'edit',
+                  groupId: editingGroup.group_id,
+                };
+              } else {
+                // New group created → select the "latest" one after reload
+                autoSelectGroupRef.current = { mode: 'create' };
+              }
+
+              // Close editor & reset transient state
+              setGroupEditorOpen(false);
+              setPendingGroup(null);
+              setEditingGroup(null);
+              setDrawMode('mark');
+              setPendingGroupMarkIds([]);
+
+              addToast('Group saved', 'success');
+
+              // 🔹 Refresh sidebar groups – the useEffect([groups])
+              // will notice autoSelectGroupRef and call setSelectedGroupId()
+              fetchGroups();
+            }}
+          />
+        )}
 
 
       </div>

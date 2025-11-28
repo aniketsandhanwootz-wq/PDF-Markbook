@@ -365,7 +365,7 @@ export default function InputPanel({
           }}
         >
           <div>
-            Review all ballons of <strong>{headingText}</strong> on the drawing above.
+            Identify the above view and Position yourself accordingly.
           </div>
           {groupInstrumentSummary && (
             <div style={{ marginTop: 4, color: '#333' }}>

@@ -1530,8 +1530,8 @@ function ViewerContent() {
 
       const prevGroupIdx =
         prevIdx >= 0 &&
-        prevIdx < marks.length &&
-        markToGroupIndex[prevIdx] != null
+          prevIdx < marks.length &&
+          markToGroupIndex[prevIdx] != null
           ? markToGroupIndex[prevIdx]
           : gi;
 

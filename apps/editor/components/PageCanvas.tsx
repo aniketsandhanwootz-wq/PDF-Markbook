@@ -251,7 +251,12 @@ function PageCanvas({
           transition: 'opacity 0.2s'
         }}
       />
-      <canvas ref={overlayRef} className="page-overlay" />
+      <canvas
+        ref={overlayRef}
+        className="page-overlay"
+        style={{ pointerEvents: 'none' }}
+      />
+
     </div>
   );
 }
