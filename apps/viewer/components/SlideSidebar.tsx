@@ -83,11 +83,15 @@ export default function SlideSidebar({
             style={{
               width: 44,
               height: 36,
-              borderRadius: 12,
-              border: '1px solid #e5e5e5',
-              background: '#f8f8f8',
-              fontSize: 18,
+              borderRadius: 10,
+              border: '1px solid #D99E02',
+              background: '#D99E02',
+              fontSize: 20,
               lineHeight: 1,
+              color: '#FFFFFF',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
             }}
           >
             <span style={{ display: 'inline-block', transform: 'rotate(90deg)' }}>☰</span>

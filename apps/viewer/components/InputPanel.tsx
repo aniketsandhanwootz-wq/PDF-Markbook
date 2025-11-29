@@ -240,9 +240,8 @@ export default function InputPanel({
     };
   }, []);
 
-  const floating = vvSupported && kbOverlap > 0 && selfFocused;
+   const floating = vvSupported && kbOverlap > 0 && selfFocused;
   const isGroupMode = mode === 'group';
-
 
   if (!currentMark) {
     return (
@@ -260,9 +259,15 @@ export default function InputPanel({
       </div>
     );
   }
+
   const baseHeading = currentMark.instrument?.trim() || currentMark.name;
   const headingText = isGroupMode ? groupName || baseHeading : baseHeading;
   const displayLabel = currentMark.label ?? indexToLabel(currentIndex);
+
+  // 👇 group vs mark specific header pieces – SAFE now
+  const showMarkBadge = !isGroupMode;
+  const showRequiredIcon =
+    !isGroupMode && currentMark.is_required !== false;
 
 
   return (
@@ -319,6 +324,8 @@ export default function InputPanel({
             alignItems: 'center',
             justifyContent: 'center',
             boxShadow: '0 1px 3px rgba(0,0,0,0.25)',
+                        // 👇 hide completely in group mode but keep layout grid stable
+            opacity: showMarkBadge ? 1 : 0,
           }}
         >
           {displayLabel}
@@ -340,17 +347,19 @@ export default function InputPanel({
         </div>
 
 
-        <div
+               <div
           style={{
             fontSize: 18,
-            opacity: 0.95,
             whiteSpace: 'nowrap',
             justifySelf: 'end',
-            color: currentMark.is_required !== false ? '#FF3B3B' : 'transparent',
+            color: showRequiredIcon ? '#EF4345' : 'transparent',
+            opacity: showRequiredIcon ? 0.95 : 0,
+            pointerEvents: 'none',
           }}
         >
-          ‼
+          ⓘ
         </div>
+
 
       </div>
 

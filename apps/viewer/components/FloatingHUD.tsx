@@ -43,6 +43,9 @@ export default function FloatingHUD({
             fontSize: 28,
             borderRadius: 10,              // full pill shape
             boxShadow: '0 4px 10px rgba(0,0,0,0.25)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
           }}
         >
           <span
