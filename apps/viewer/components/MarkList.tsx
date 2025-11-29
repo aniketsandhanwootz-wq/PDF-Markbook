@@ -97,7 +97,7 @@ export default function MarkList({
         maxHeight: '100%',
         overflowY: 'auto',
         WebkitOverflowScrolling: 'touch',
-        background: '#fff',
+        background: '#171717',
         padding: 0,              // 👈 override global .mark-list padding
       }}
     >
@@ -108,8 +108,8 @@ export default function MarkList({
           top: 0,
           zIndex: 3,
           padding: '0 12px 8px',
-          borderBottom: '1px solid #eee',
-          background: '#fff',
+          borderBottom: '1px solid #3B3B3B',
+          background: '#171717',
         }}
       >
         <div style={{ position: 'relative' }}>
@@ -121,17 +121,19 @@ export default function MarkList({
             style={{
               width: '100%',
               padding: '8px 32px 8px 12px',
-              border: '1px solid #ddd',
+              border: '1px solid #3B3B3B',
               borderRadius: 8,
               fontSize: 14,
+              color: '#C9C9C9',
+              fontWeight: 400,
               outline: 'none',
-              background: '#fff',
+              background: '#1F1F1F',
             }}
             onFocus={(e) => {
-              e.currentTarget.style.borderColor = '#1976d2';
+              e.currentTarget.style.borderColor = '#D99E02';
             }}
             onBlur={(e) => {
-              e.currentTarget.style.borderColor = '#ddd';
+              e.currentTarget.style.borderColor = '#3B3B3B';
             }}
           />
           {searchQuery && (
@@ -162,10 +164,10 @@ export default function MarkList({
           )}
         </div>
 
-        <div style={{ fontSize: 12, color: '#666', marginTop: 8, fontWeight: 500 }}>
+        <div style={{ fontSize: 12, color: '#C9C9C9', marginTop: 8, fontWeight: 500 }}>
           {searchQuery ? (
             <>
-              <span style={{ color: '#1976d2' }}>{filteredCount}</span> of {marks.length} marks
+              <span style={{ color: '#D99E02' }}>{filteredCount}</span> of {marks.length} marks
             </>
           ) : (
             <>All Marks ({marks.length})</>
@@ -192,12 +194,12 @@ export default function MarkList({
                   padding: '10px 12px',
                   marginBottom: 6,
                   borderRadius: 8,
-                  background: isActive ? '#E3F2FD' : '#FFFFFF',
+                  background: isActive ? '#1F1F1F' : '#171717',
                   border: isActive
-                    ? '2px solid #1976d2'
+                    ? '2px solid #D99E02'
                     : isFilled
-                    ? '1.5px solid #c5e1a5'
-                    : '1.5px solid #E0E0E0',
+                    ? '1.5px solid #bbe58aff'
+                    : '1.5px solid #C9C9C9',
                   boxShadow: 'none',
                   cursor: 'pointer',
                   transition:
@@ -220,14 +222,14 @@ export default function MarkList({
                       minWidth: 24,
                       height: 24,
                       borderRadius: '50%',
-                      border: '2px solid #1976d2',
+                      border: '2px solid #ebbb34ff',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
                       fontSize: 12,
                       fontWeight: 700,
-                      background: '#fff',
-                      color: '#1976d2',
+                      background: '#1F1F1F',
+                      color: '#D99E02',
                       flexShrink: 0,
                     }}
                     title="Label"
@@ -241,7 +243,7 @@ export default function MarkList({
                       style={{
                         fontSize: 14,
                         fontWeight: 600,
-                        color: '#333',
+                        color: '#FFFFFF',
                         marginBottom: 4,
                         whiteSpace: 'normal',
                         wordBreak: 'break-word',
@@ -251,7 +253,7 @@ export default function MarkList({
                     >
                       {mark.instrument?.trim() || mark.name}
                     </div>
-                    <div style={{ fontSize: 12, color: '#666' }}>
+                    <div style={{ fontSize: 12, color: '#9D9D9D' }}>
                       Page {mark.page_index + 1}
                     </div>
                   </div>
@@ -267,7 +269,7 @@ export default function MarkList({
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      border: isFilled ? 'none' : '2px solid #BDBDBD',
+                      border: isFilled ? 'none' : '2px solid #9D9D9D',
                       background: isFilled ? '#43A047' : 'transparent',
                     }}
                   >
@@ -305,7 +307,7 @@ export default function MarkList({
                       fontWeight: 700,
                       textTransform: 'uppercase',
                       letterSpacing: 0.6,
-                      color: '#555',
+                      color: '#C9C9C9',
                       margin: '8px 2px',
                     }}
                   >
@@ -322,7 +324,7 @@ export default function MarkList({
                   style={{
                     padding: '32px 20px',
                     textAlign: 'center',
-                    color: '#999',
+                    color: '#C9C9C9',
                     fontSize: 14,
                   }}
                 >
@@ -337,7 +339,7 @@ export default function MarkList({
                   ) : (
                     <>
                       <div style={{ fontSize: 32, marginBottom: 8 }}>📋</div>
-                      <div>No marks in this document</div>
+                      <div>No balloons in this document</div>
                     </>
                   )}
                 </div>
@@ -375,7 +377,7 @@ export default function MarkList({
                 ) : (
                   <>
                     <div style={{ fontSize: 32, marginBottom: 8 }}>📋</div>
-                    <div>No marks in this document</div>
+                    <div>No balloons in this document</div>
                   </>
                 )}
               </div>

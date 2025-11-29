@@ -53,7 +53,7 @@ export default function SlideSidebar({
           left: 0,
           width,
           maxWidth: '86vw',
-          background: '#fff',
+          background: '#171717',
           boxShadow: '2px 0 18px rgba(0,0,0,0.2)',
           transform: open ? 'translateX(0)' : 'translateX(-105%)',
           transition: 'transform 200ms ease',
@@ -72,8 +72,8 @@ export default function SlideSidebar({
             alignItems: 'center',
             gap: 12,
             padding: '12px 16px',     // header padding
-            background: '#fff',
-            borderBottom: '1px solid #eee',
+            background: '#1F1F1F',
+            borderBottom: '1px solid #3B3B3B',
           }}
         >
           <button
@@ -92,10 +92,19 @@ export default function SlideSidebar({
           >
             <span style={{ display: 'inline-block', transform: 'rotate(90deg)' }}>☰</span>
           </button>
-          <h3 style={{ margin: 0, fontSize: 18 }}>{title}</h3>
+          <h3
+            style={{
+              margin: 0,
+              fontSize: 18,
+              color: '#C9C9C9',   // <-- dark bg par off-white text
+              fontWeight: 600,
+            }}
+          >
+            {title}
+          </h3>
         </div>
 
-         {/* Body — dedicated scroll area so search stays, list scrolls */}
+        {/* Body — dedicated scroll area so search stays, list scrolls */}
         <div
           style={{
             flex: 1,

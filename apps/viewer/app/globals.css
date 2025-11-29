@@ -52,7 +52,7 @@ body {
 
 /* Error: keep as-is, no animation */
 .error {
-  color: #d32f2f;
+  color: #EF4345;
   animation: none;
 }
 

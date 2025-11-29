@@ -24,6 +24,7 @@ from cachetools import TTLCache
 from schemas.document import DocumentInit, DocumentWithMarkSets
 from schemas.user_input import UserInputBatchCreate
 import uuid
+import asyncio
 import logging
 import os
 from typing import Optional
@@ -795,6 +796,16 @@ async def startup_event():
         logger.info(f"Spreadsheet ID: {SHEETS_SPREADSHEET_ID}")
         logger.info(f"Schema: 4-tab (documents→pages→mark_sets→marks)")
     logger.info(f"Allowed origins: {ALLOWED_ORIGINS}")
+    # Initialize semaphore for heavy report generation (Excel bundle)
+    try:
+        max_parallel = getattr(settings, "max_parallel_reports", 1)
+        if max_parallel <= 0:
+            max_parallel = 1
+        app.state.report_semaphore = asyncio.Semaphore(max_parallel)
+        logger.info(f"Report semaphore initialized with max_parallel_reports={max_parallel}")
+    except Exception as e:
+        logger.error(f"Failed to initialize report semaphore: {e}")
+
 
 @app.on_event("shutdown")
 async def shutdown_event():
