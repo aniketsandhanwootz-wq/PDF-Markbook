@@ -320,7 +320,7 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
     <div
       style={{
         minHeight: '100vh',
-        background: '#f5f5f5',
+        background: '#171717',
         padding: 20,
         display: 'flex',
         alignItems: 'center',
@@ -329,7 +329,7 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
     >
       <div
         style={{
-          background: '#fff',
+          background: '#1F1F1F',
           width: '100%',
           maxWidth: 860,
           borderRadius: 8,
@@ -339,15 +339,17 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
       >
         <div
           style={{
-            textAlign: 'center',
+            textAlign: 'left',
             marginBottom: 18,
           }}
         >
           <h1
             style={{
-              fontSize: 22,
-              fontWeight: 700,
+              fontSize: 14,
+              fontWeight: 600,
               marginBottom: 4,
+              color: '#C9C9C9'
+              
             }}
           >
             {extId}
@@ -355,6 +357,8 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
           <p
             style={{
               color: '#666',
+              fontSize: 14,
+              fontWeight: 400,
               margin: 0,
             }}
           >
@@ -433,8 +437,12 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
             style={{
               padding: 12,
               borderRadius: 6,
-              background: '#f9f9f9',
-              border: '1px solid #eee',
+              background: '#1F1F1F',
+              border: '1px solid #3B3B3B',
+              fontSize: 12,
+              fontWeight: 400,
+              fontStyle: 'italic',
+              color: '#C9C9C9',
             }}
           >
             Initializing document… please wait.
@@ -550,18 +558,21 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
               <div style={{ marginTop: 16 }}>
                 <div
                   style={{
+                    fontWeight: 400,
+                    fontSize: 14,
+                    color: '#C9C9C9',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'space-between',
                     marginBottom: 8,
                   }}
                 >
-                  <div style={{ fontWeight: 600 }}>Inspection Maps</div>
+                  <div style={{ fontWeight: 600 }}>Available Inspection Maps</div>
                 </div>
                 <div
                   style={{
                     display: 'grid',
-                    gap: 8,
+                    gap: 12,
                     maxHeight: 320,
                     overflowY: 'auto',
                   }}
@@ -578,10 +589,11 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
                       <div
                         key={ms.mark_set_id}
                         style={{
-                          border: '1px solid #ddd',
-                          borderRadius: 6,
-                          padding: 10,
-                          background: '#fff',
+                          border: '1px solid #3B3B3B',
+                          borderRadius: 8,
+                          padding: '12px 16px',
+                          background: '#1F1F1F',
+                          minHeight: 76,
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'space-between',
@@ -589,12 +601,12 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
                       >
                         <div>
                           <div
-                            style={{ fontWeight: 600, color: '#333' }}
+                            style={{ fontWeight: 600, color: '#FFFFFF', fontSize: 10 }}
                           >
                             {ms.label}
                           </div>
 
-                          {ms.description && (
+   {/*                       {ms.description && (
                             <div
                               style={{
                                 color: '#444',
@@ -607,21 +619,20 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
                               {ms.description}
                             </div>
                           )}
-
+*/}
                           <div
                             style={{
                               marginTop: 6,
-                              fontSize: 12,
-                              color: '#666',
+                              fontWeight: 400,
+                              fontSize: 8,
+                              color: '#FFFFFF',
                               display: 'flex',
                               gap: 8,
                               flexWrap: 'wrap',
                             }}
                           >
-                            <span>{count} marks</span>
-                            {ms.created_by && (
-                              <span>• by {ms.created_by}</span>
-                            )}
+                        {/*    <span>{count} marks</span> */}
+                             {ms.created_by && <span>{ms.created_by}</span>}
                           </div>
                         </div>
 
@@ -629,7 +640,7 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
                           onClick={() => handleOpenMarkset(ms.mark_set_id)}
                           style={btn}
                         >
-                          Open
+                          Start
                         </button>
                       </div>
                     );
@@ -659,7 +670,7 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
 
 // small styles for setup
 const inp: CSSProperties = { padding: '10px 12px', border: '1px solid #ddd', borderRadius: 4, fontSize: 14, outline: 'none' };
-const btn: CSSProperties = { padding: '8px 14px', border: '1px solid #ccc', borderRadius: 6, background: '#fff', cursor: 'pointer' };
+const btn: CSSProperties = { padding: '8px 14px', border: '1px solid #D99E02', borderRadius: 6, background: '#D99E02',color:'#FFFFFF', cursor: 'pointer' };
 const btnPrimary: CSSProperties = { ...btn, borderColor: '#1976d2', color: '#1976d2', fontWeight: 700 };
 
 // Main Viewer Component

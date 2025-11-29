@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
 /* Prevent page zoom on mobile, allow PDF zoom only */
 html {
   touch-action: auto;
@@ -22,7 +24,8 @@ body {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    Roboto, 'Helvetica Neue', Arial, sans-serif;
 }
 
 .viewer-container {
@@ -199,14 +202,17 @@ body {
   background: #525252;
   /* Allow native scroll in both directions; pinch is disabled by meta & our code */
   touch-action: pan-x pan-y;
-  -webkit-overflow-scrolling: touch; /* smooth on iOS */
-  overscroll-behavior: contain;      /* avoid page pull-to-refresh */
+  -webkit-overflow-scrolling: touch;
+  /* smooth on iOS */
+  overscroll-behavior: contain;
+  /* avoid page pull-to-refresh */
 }
 
 /* Optional: show grab cursor on desktop/touch emulators */
 .pdf-surface-wrap {
   cursor: grab;
 }
+
 .pdf-surface-wrap:active {
   cursor: grabbing;
 }
@@ -667,9 +673,11 @@ body {
   contain: layout paint size;
   backface-visibility: hidden;
 }
+
 .page-overlay {
   contain: strict;
 }
+
 .pdf-surface-wrap {
   transform: translateZ(0);
   will-change: scroll-position;
@@ -683,6 +691,7 @@ body {
   will-change: transform;
 }
 
-html, body {
+html,
+body {
   overscroll-behavior: none;
 }
