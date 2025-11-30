@@ -85,7 +85,7 @@ function SlideToAct({ label, onComplete }: SlideToActProps) {
         width: '100%',
         height: 48,
         borderRadius: 24,
-        background: '#e3f2fd',
+        background: '#352E1F',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -102,7 +102,8 @@ function SlideToAct({ label, onComplete }: SlideToActProps) {
           top: 0,
           bottom: 0,
           width: filledWidth,
-          background: '#1976d233',
+          borderRadius: 24,
+          background: '#855F0F',
           transition: isDragging ? 'none' : 'width 0.2s ease',
         }}
       />
@@ -114,7 +115,7 @@ function SlideToAct({ label, onComplete }: SlideToActProps) {
           zIndex: 1,
           fontSize: 14,
           fontWeight: 600,
-          color: '#0d47a1',
+          color: '#FFFFFF',
           whiteSpace: 'nowrap',
         }}
       >
@@ -139,7 +140,10 @@ function SlideToAct({ label, onComplete }: SlideToActProps) {
           transition: isDragging ? 'none' : 'left 0.2s ease',
         }}
       >
-        <span style={{ fontSize: 20, color: '#1976d2' }}>➜</span>
+        <span style={{
+          fontSize: 20,
+          color: '#D99E02',
+        }}>➜</span>
       </div>
     </div>
   );
@@ -240,7 +244,7 @@ export default function InputPanel({
     };
   }, []);
 
-   const floating = vvSupported && kbOverlap > 0 && selfFocused;
+  const floating = vvSupported && kbOverlap > 0 && selfFocused;
   const isGroupMode = mode === 'group';
 
   if (!currentMark) {
@@ -277,7 +281,7 @@ export default function InputPanel({
         height: 'auto',
         minHeight: 160,
         maxHeight: '32vh',
-        background: 'white',
+        background: '#1F1F1F',
         display: 'flex',
         flexDirection: 'column',
         flexShrink: 0,
@@ -299,8 +303,8 @@ export default function InputPanel({
       <div
         style={{
           padding: '10px 14px',
-          background: '#1976d2',
-          color: 'white',
+          background: '#343434',
+          color: '#FFFFFF',
           display: 'grid',
           gridTemplateColumns: 'auto 1fr auto',
           columnGap: 10,
@@ -316,15 +320,15 @@ export default function InputPanel({
             minWidth: 28,
             height: 28,
             borderRadius: '50%',
-            background: 'white',
-            color: '#1976d2',
+            background: '#302f2fff',
+            color: '#D99E02',
             fontWeight: 700,
             fontSize: 14,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             boxShadow: '0 1px 3px rgba(0,0,0,0.25)',
-                        // 👇 hide completely in group mode but keep layout grid stable
+            // 👇 hide completely in group mode but keep layout grid stable
             opacity: showMarkBadge ? 1 : 0,
           }}
         >
@@ -347,7 +351,7 @@ export default function InputPanel({
         </div>
 
 
-               <div
+        <div
           style={{
             fontSize: 18,
             whiteSpace: 'nowrap',
@@ -369,7 +373,7 @@ export default function InputPanel({
           style={{
             padding: '8px 12px 6px',
             fontSize: 13,
-            color: '#555',
+            color: '#9D9D9D',
             lineHeight: 1.4,
           }}
         >
@@ -377,7 +381,7 @@ export default function InputPanel({
             Identify the above view and Position yourself accordingly.
           </div>
           {groupInstrumentSummary && (
-            <div style={{ marginTop: 4, color: '#333' }}>
+            <div style={{ marginTop: 4, color: '#FFFFFF' }}>
               <strong>Instrument:</strong> {groupInstrumentSummary}
             </div>
           )}
@@ -403,18 +407,20 @@ export default function InputPanel({
               width: '100%',
               padding: '10px 12px',
               fontSize: 16,
-              border: '2px solid #ddd',
+              border: '2px solid #3B3B3B',
               borderRadius: 8,
               outline: 'none',
               transition: 'border-color 0.2s',
               height: 44,
+              background: '#1F1F1F',
+              color: '#FFFFFF',
             }}
             onFocus={(e) => {
               setSelfFocused(true);
-              e.target.style.borderColor = '#1976d2';
+              e.target.style.borderColor = '#D99E02';
             }}
             onBlur={(e) => {
-              e.target.style.borderColor = '#ddd';
+              e.target.style.borderColor = '#3B3B3B';
               setTimeout(() => {
                 setSelfFocused(false);
               }, 80);
@@ -434,8 +440,8 @@ export default function InputPanel({
         <div
           style={{
             padding: '8px 10px',
-            background: '#f9f9f9',
-            borderTop: '1px solid #eee',
+            background: '#1F1F1F',
+            borderTop: '1px solid #3B3B3B',
             flexShrink: 0,
             paddingBottom: floating ? 6 : 'env(safe-area-inset-bottom, 6px)',
           }}
@@ -449,8 +455,8 @@ export default function InputPanel({
         <div
           style={{
             padding: '4px 10px',
-            background: '#f9f9f9',
-            borderTop: '1px solid #eee',
+            background: '#1F1F1F',
+            borderTop: '1px solid #3B3B3B',
             display: 'flex',
             gap: 6,
             flexShrink: 0,
@@ -465,9 +471,9 @@ export default function InputPanel({
               padding: '8px 12px',
               fontSize: 16,
               fontWeight: 700,
-              border: '2px solid #ddd',
-              background: canPrev ? 'white' : '#f5f5f5',
-              color: canPrev ? '#333' : '#999',
+              border: '2px solid #C9C9C9',
+              background: canPrev ? '#1F1F1F' : '#1F1F1F',
+              color: canPrev ? '#FFFFFF' : '#9D9D9D',
               borderRadius: 10,
               cursor: canPrev ? 'pointer' : 'not-allowed',
               minHeight: 44,
@@ -484,8 +490,8 @@ export default function InputPanel({
               fontSize: 16,
               fontWeight: 700,
               border: 'none',
-              background: '#1976d2',
-              color: 'white',
+              background: '#D99E02',
+              color: '#FFFFFF',
               borderRadius: 10,
               cursor: 'pointer',
               minHeight: 44,
