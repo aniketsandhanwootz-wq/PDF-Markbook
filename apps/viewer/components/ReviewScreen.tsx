@@ -41,7 +41,7 @@ export default function ReviewScreen({
         left: 0,
         right: 0,
         bottom: 0,
-        background: 'white',
+        background: '#171717',
         zIndex: 1000,
         display: 'flex',
         flexDirection: 'column',
@@ -52,12 +52,12 @@ export default function ReviewScreen({
       <div
         style={{
           padding: '16px',
-          background: '#1976d2',
-          color: 'white',
-          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+          background: '#171717',
+          color: '#FFFFFF',
+          boxShadow: '0 2px 4px #9D9D9D',
         }}
       >
-        <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 600 }}>📋 Review Your Entries</h2>
+        <h2 style={{ margin: 0, fontSize: '22px', fontWeight: 700 }}>Review Your Entries</h2>
         <p style={{ margin: '4px 0 0 0', fontSize: '14px', opacity: 0.9 }}>
           Check all values before submitting
         </p>
@@ -67,8 +67,8 @@ export default function ReviewScreen({
       <div
         style={{
           padding: '16px',
-          background: allFilled ? '#e8f5e9' : '#fff3e0',
-          borderBottom: '1px solid #ddd',
+          background: allFilled ? '#1F1F1F' : '#1F1F1F',
+          borderBottom: '1px solid #C9C9C9',
         }}
       >
         <div
@@ -79,17 +79,17 @@ export default function ReviewScreen({
             marginBottom: '8px',
           }}
         >
-          <div style={{ fontSize: '16px', fontWeight: 600, color: '#333' }}>
+          <div style={{ fontSize: '16px', fontWeight: 600, color: '#9D9D9D' }}>
             Progress: {completedCount} / {marks.length} marks
           </div>
-          <div style={{ fontSize: '24px', fontWeight: 700, color: allFilled ? '#4caf50' : '#ff9800' }}>
+          <div style={{ fontSize: '24px', fontWeight: 700, color: allFilled ? '#4caf50' : '#D99E02' }}>
             {pct}%
           </div>
         </div>
         <div
           style={{
             height: '8px',
-            background: '#e0e0e0',
+            background: '#1F1F1F',
             borderRadius: '4px',
             overflow: 'hidden',
           }}
@@ -97,7 +97,7 @@ export default function ReviewScreen({
           <div
             style={{
               height: '100%',
-              background: allFilled ? '#4caf50' : '#ff9800',
+              background: allFilled ? '#4caf50' : '#D99E02',
               width: `${marks.length ? (completedCount / marks.length) * 100 : 0}%`,
               transition: 'width 0.3s',
             }}
@@ -138,8 +138,8 @@ export default function ReviewScreen({
                 gap: '10px',
                 marginBottom: '12px',
                 padding: '12px',
-                background: '#fff',
-                border: '1px solid #eee',        // <<< neutral, no red/green border
+                background: '#343434',
+                border: '1px solid #D99E02',        // <<< neutral, no red/green border
                 borderRadius: '8px',
                 cursor: isSubmitting ? 'not-allowed' : 'pointer',
                 userSelect: 'none',
@@ -162,7 +162,7 @@ export default function ReviewScreen({
                   width: '24px',
                   height: '24px',
                   borderRadius: '50%',
-                  border: `2px solid ${isFilled ? '#4caf50' : '#ff5252'}`,
+                  border: `2px solid ${isFilled ? '#4caf50' : '#EF4345'}`,
                   background: isFilled ? '#4caf50' : 'white',
                   display: 'flex',
                   alignItems: 'center',
@@ -191,7 +191,7 @@ export default function ReviewScreen({
                     height="14"
                     viewBox="0 0 24 24"
                     fill="none"
-                    stroke="#ff5252"
+                    stroke="#EF4345"
                     strokeWidth="3"
                     strokeLinecap="round"
                     strokeLinejoin="round"
@@ -208,7 +208,7 @@ export default function ReviewScreen({
                   style={{
                     fontSize: '14px',
                     fontWeight: 600,
-                    color: '#333',
+                    color: '#FFFFFF',
                     marginBottom: '4px',
                     whiteSpace: 'normal',
                     overflowWrap: 'anywhere',
@@ -223,9 +223,9 @@ export default function ReviewScreen({
                   <div
                     style={{
                       fontSize: '14px',
-                      color: '#666',
+                      color: '#C9C9C9',
                       padding: '8px',
-                      background: '#f9f9f9',
+                      background: '#352E1F',
                       borderRadius: '4px',
                       wordBreak: 'break-word',
                     }}
@@ -236,11 +236,11 @@ export default function ReviewScreen({
                   <div
                     style={{
                       fontSize: '13px',
-                      color: '#d32f2f',
+                      color: '#EF4345',
                       fontStyle: 'italic',
                     }}
                   >
-                    Missing - Please fill this mark
+                    Missing - Please fill this balloon
                   </div>
                 )}
               </div>
@@ -254,14 +254,14 @@ export default function ReviewScreen({
         <div
           style={{
             padding: '12px 16px',
-            background: '#fff3e0',
-            borderTop: '1px solid #ffb74d',
-            color: '#e65100',
+            background: '#1F1F1F',
+            borderTop: '1px solid #1F1F1F',
+            color: '#FFB5B6',
             fontSize: '14px',
             fontWeight: 500,
           }}
         >
-          ⚠️ Please fill all {Math.max(0, marks.length - completedCount)} missing mark(s) before
+          ⚠️ Please fill all {Math.max(0, marks.length - completedCount)} missing balloon(s) before
           submitting
         </div>
       )}
@@ -270,8 +270,8 @@ export default function ReviewScreen({
       <div
         style={{
           padding: '16px',
-          background: '#f9f9f9',
-          borderTop: '2px solid #ddd',
+          background: '#1F1F1F',
+          borderTop: '2px solid #C9C9C9',
           display: 'flex',
           gap: '12px',
         }}
@@ -284,9 +284,9 @@ export default function ReviewScreen({
             padding: '14px',
             fontSize: '16px',
             fontWeight: 600,
-            border: '2px solid #ddd',
-            background: 'white',
-            color: '#333',
+            border: '2px solid #C9C9C9',
+            background: '#1F1F1F',
+            color: '#FFFFFF',
             borderRadius: '8px',
             cursor: isSubmitting ? 'not-allowed' : 'pointer',
             minHeight: '44px',
@@ -303,8 +303,8 @@ export default function ReviewScreen({
             fontSize: '16px',
             fontWeight: 600,
             border: 'none',
-            background: isSubmitting ? '#81c784' : '#4caf50',
-            color: 'white',
+            background: isSubmitting ? '#d6bc74ff' : '#D99E02',
+            color: '#FFFFFF',
             borderRadius: '8px',
             cursor: isSubmitting ? 'not-allowed' : 'pointer',
             minHeight: '44px',
