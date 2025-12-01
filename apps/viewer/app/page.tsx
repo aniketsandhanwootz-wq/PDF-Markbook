@@ -303,7 +303,7 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
   // Master Report download handler
   const handleDownloadMasterReport = async () => {
     if (!boot) return;
-    
+
     setErr('');
     try {
       setLoading(true);
@@ -314,7 +314,7 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
         report_title: `${partNumber} Master Report`,
         apiBase,
       });
-      
+
       // Show success toast (optional, or use native alert)
       alert('✓ Master report downloaded successfully!');
     } catch (e: any) {
@@ -378,7 +378,7 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
               fontWeight: 600,
               marginBottom: 4,
               color: '#C9C9C9'
-              
+
             }}
           >
             {extId}
@@ -582,7 +582,7 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
               </div>
             )} */}
 
-{/* Other Mark Sets */}
+            {/* Other Mark Sets */}
             {otherMarksets.length > 0 && (
               <div style={{ marginTop: 16 }}>
                 <div
@@ -598,7 +598,7 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
                   }}
                 >
                   <div style={{ fontWeight: 600 }}>Available Inspection Maps</div>
-                  
+
                   {/* 🔥 NEW: Master Report button */}
                   <button
                     onClick={handleDownloadMasterReport}
@@ -619,7 +619,7 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
                     {loading ? 'Generating...' : 'Master Report'}
                   </button>
                 </div>
-                 <div
+                <div
                   style={{
                     display: 'grid',
                     gap: 12,
@@ -691,7 +691,7 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
                     );
                   })}
                 </div>
-              </div>  
+              </div>
             )}
 
             {!masterMarkset && otherMarksets.length === 0 && (
@@ -715,7 +715,7 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
 
 // small styles for setup
 const inp: CSSProperties = { padding: '10px 12px', border: '1px solid #ddd', borderRadius: 4, fontSize: 14, outline: 'none' };
-const btn: CSSProperties = { padding: '8px 14px', border: '1px solid #D99E02', borderRadius: 6, background: '#D99E02',color:'#FFFFFF', cursor: 'pointer' };
+const btn: CSSProperties = { padding: '8px 14px', border: '1px solid #D99E02', borderRadius: 6, background: '#D99E02', color: '#FFFFFF', cursor: 'pointer' };
 const btnPrimary: CSSProperties = { ...btn, borderColor: '#1976d2', color: '#1976d2', fontWeight: 700 };
 
 // Main Viewer Component
@@ -1154,7 +1154,7 @@ function ViewerContent() {
     isDemo
       ? 'https://mozilla.github.io/pdf.js/web/compressed.tracemonkey-pldi-09.pdf'
       : effectivePdfUrl ||
-        'https://mozilla.github.io/pdf.js/web/compressed.tracemonkey-pldi-09.pdf'
+      'https://mozilla.github.io/pdf.js/web/compressed.tracemonkey-pldi-09.pdf'
   );
 
   const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
@@ -1538,14 +1538,22 @@ function ViewerContent() {
         }
       }
 
-      const base = basePageSizeRef.current[pageIndex];
+      let base = basePageSizeRef.current[pageIndex];
       if (!base) {
-        console.warn('[navigateToMark] base page size missing for pageIndex=', pageIndex);
-        return;
+        const ensuredBase = await ensureBasePageSize(pageIndex);
+        if (!ensuredBase) {
+          console.warn(
+            '[navigateToMark] could not resolve base size for pageIndex=',
+            pageIndex
+          );
+          return;
+        }
+        base = ensuredBase;
       }
 
       const containerW = container.clientWidth;
       const containerH = container.clientHeight;
+
 
       // ---------- MASTER / LEGACY (no group info) → old mark-wise auto zoom ----------
       if (isMaster || !hasGroup || !gMeta) {
@@ -1777,6 +1785,7 @@ function ViewerContent() {
       isMobileInputMode,
       setZoomQ,
       groupZoomCache,
+      ensureBasePageSize,  // ⬅️ NEW
     ]
   );
 
@@ -1798,9 +1807,11 @@ function ViewerContent() {
   );
 
 
-  // When marks + PDF are ready, start at first group (QC) or first mark (master/legacy)
+  // When marks + PDF are ready *and* title is confirmed,
+  // start at first group (QC) or first mark (master/legacy)
   useEffect(() => {
     if (!pdf || !marks.length) return;
+    if (showReportTitle) return;  // ⬅️ NEW: wait until title is confirmed
 
     // Only run ONCE per load
     if (hasBootstrappedViewerRef.current) return;
@@ -1829,7 +1840,9 @@ function ViewerContent() {
     currentMarkIndex,
     navigateToGroup,
     navigateToMark,
+    showReportTitle,   // ⬅️ NEW
   ]);
+
 
   const proceedFromGroupToMarks = useCallback(() => {
     setPanelMode('mark');
@@ -2209,6 +2222,19 @@ function ViewerContent() {
     });
   }, [pdf]);
 
+  // Stage-1: as soon as the PDF is ready *and* the title panel is showing,
+  // fit page 1 to width so user first sees a clean full-page view.
+  useEffect(() => {
+    if (!pdf || !numPages) return;
+    if (showSetup) return;         // still on bootstrap screen
+    if (!showReportTitle) return;  // only while title panel is visible
+
+    // Don't interfere once we've started the mark/group flow
+    if (hasBootstrappedViewerRef.current) return;
+
+    fitToWidthZoom();
+  }, [pdf, numPages, showSetup, showReportTitle, fitToWidthZoom]);
+
   // PATCH: desktop wheel/trackpad zoom anchored at cursor, scoped to container
   useEffect(() => {
     const container = containerRef.current;
@@ -2349,9 +2375,9 @@ function ViewerContent() {
     numPages === 0
       ? []
       : Array.from(
-          { length: Math.max(0, visibleRange[1] - visibleRange[0] + 1) },
-          (_, i) => visibleRange[0] + i
-        );
+        { length: Math.max(0, visibleRange[1] - visibleRange[0] + 1) },
+        (_, i) => visibleRange[0] + i
+      );
 
 
   if (showSetup) {

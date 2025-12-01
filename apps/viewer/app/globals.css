@@ -414,13 +414,14 @@ body {
   backface-visibility: hidden;
 }
 
-/* Desktop viewer vertical layout */
+/* Desktop viewer vertical layout – use flex, not fixed height */
 .viewer-container .main-content {
   display: flex;
   flex-direction: column;
-  height: 100dvh;
-  /* includes mobile browser UI properly */
+  flex: 1;
+  min-height: 0;
 }
+
 
 /* Scroll area should take the remaining height above the input panel */
 .viewer-container .pdf-surface-wrap {
@@ -691,11 +692,12 @@ body {
   padding-bottom: env(safe-area-inset-bottom);
 }
 
-/* PATCH[globals.css] — help the browser isolate scrolling/painting work */
+/* PATCH[globals.css] — lighter containment to avoid scroll issues on desktop */
 .pdf-surface-wrap {
-  contain: layout paint size;
+  contain: paint;
   backface-visibility: hidden;
 }
+
 
 .page-overlay {
   contain: strict;
