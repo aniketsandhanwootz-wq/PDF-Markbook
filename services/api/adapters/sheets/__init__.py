@@ -88,6 +88,7 @@ HEADERS = {
         "user_value",
         "submitted_at",
         "submitted_by",
+        "report_id",       
     ],
     "inspection_reports": [
         "report_id",
@@ -95,6 +96,8 @@ HEADERS = {
         "inspection_doc_url",
         "created_by",
         "created_at",
+        "report_title",   
+        "submitted_by",    
     ],
 }
 
@@ -1252,43 +1255,56 @@ class SheetsAdapter(StorageAdapter):
         mark_set_id: str,
         user_value: str,
         submitted_by: str,
+        report_id: str | None = None,
     ) -> str:
-        """Create a single user input entry."""
+        """Create a single user input entry.
+
+        report_id groups all inputs that belong to the same QC submission.
+        """
         input_id = _uuid()
         now = _utc_iso()
         self._append_rows(
             "mark_user_input",
-            [[input_id, mark_id, mark_set_id, user_value, now, submitted_by]],
+            [[input_id, mark_id, mark_set_id, user_value, now, submitted_by, report_id or ""]],
         )
-        self._user_input_cache.pop(mark_set_id, None)
+        # Clear cache because we changed user_input table
+        self._user_input_cache.clear()
         return input_id
+
 
     def create_user_inputs_batch(
         self,
         mark_set_id: str,
         entries: dict[str, str],
         submitted_by: str,
+        report_id: str | None = None,
     ) -> int:
-        """Create multiple user input entries in batch."""
+        """Create multiple user input entries in batch.
+
+        All rows get the same report_id, representing one QC submission.
+        """
         now = _utc_iso()
         rows = []
         for mark_id, user_value in entries.items():
             input_id = _uuid()
-            rows.append([input_id, mark_id, mark_set_id, user_value, now, submitted_by])
+            rows.append([input_id, mark_id, mark_set_id, user_value, now, submitted_by, report_id or ""])
 
         if rows:
             self._append_rows("mark_user_input", rows)
-            self._user_input_cache.pop(mark_set_id, None)
+            # Clear cache because mark_user_input changed
+            self._user_input_cache.clear()
 
         return len(rows)
+
 
     def get_user_inputs(
         self,
         mark_set_id: str,
         submitted_by: str | None = None,
+        report_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Get user inputs for a mark set, optionally filtered by user."""
-        cache_key = f"{mark_set_id}:{submitted_by or 'all'}"
+        """Get user inputs for a mark set, optionally filtered by user and/or report."""
+        cache_key = f"{mark_set_id}:{submitted_by or 'all'}:{report_id or 'all'}"
         if cache_key in self._user_input_cache:
             return self._user_input_cache[cache_key]
 
@@ -1298,8 +1314,12 @@ class SheetsAdapter(StorageAdapter):
         if submitted_by:
             filtered = [inp for inp in filtered if inp.get("submitted_by") == submitted_by]
 
+        if report_id:
+            filtered = [inp for inp in filtered if inp.get("report_id") == report_id]
+
         self._user_input_cache[cache_key] = filtered
         return filtered
+
 
     def update_user_input(self, input_id: str, user_value: str) -> dict[str, Any]:
         """Update a user input entry."""
@@ -1345,15 +1365,33 @@ class SheetsAdapter(StorageAdapter):
         mark_set_id: str,
         inspection_doc_url: str,
         created_by: str | None,
+        report_id: str | None = None,
+        report_title: str | None = None,
+        submitted_by: str | None = None,
     ) -> str:
-        """Persist a generated report record."""
-        rid = _uuid()
+        """Persist a generated report record.
+
+        If report_id is provided (e.g. from the Viewer), it is reused so that
+        inspection_reports.report_id matches mark_user_input.report_id.
+        Otherwise, a fresh UUID is generated.
+        """
+        rid = report_id or _uuid()
         now = _utc_iso()
         self._append_rows(
             "inspection_reports",
-            [[rid, mark_set_id, inspection_doc_url, (created_by or ""), now]],
+            [[
+                rid,
+                mark_set_id,
+                inspection_doc_url,
+                (created_by or ""),
+                now,
+                (report_title or ""),
+                (submitted_by or ""),
+            ]],
         )
         return rid
+
+
 
     def list_reports(self, mark_set_id: str) -> list[dict[str, Any]]:
         """List all reports for a mark set."""

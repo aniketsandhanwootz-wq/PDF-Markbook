@@ -12,6 +12,7 @@ import MarkList from '../components/MarkList';
 import FloatingHUD from '../components/FloatingHUD';
 import InputPanel from '../components/InputPanel';
 import ReviewScreen from '../components/ReviewScreen';
+import ReportTitlePanel from '../components/ReportTitlePanel';
 import { clampZoom } from '../lib/pdf';
 import PDFSearch from '../components/PDFSearch';
 import SlideSidebar from '../components/SlideSidebar';
@@ -780,6 +781,17 @@ function ViewerContent() {
 
   const layoutRafRef = useRef<number | null>(null);
 
+  // Report metadata
+  const [reportTitle, setReportTitle] = useState('');
+  const [showReportTitle, setShowReportTitle] = useState(true);
+
+  // Generate a unique report ID once per viewer session
+  const [reportId] = useState(() => {
+    if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+      return (crypto as any).randomUUID();
+    }
+    return `rpt_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  });
 
   // keep current zoom in a ref for synchronous math
   const zoomRef = useRef(zoom);
@@ -1934,6 +1946,13 @@ function ViewerContent() {
       return;
     }
 
+    // Safety: should never happen because ReportTitlePanel blocks,
+    // but guard anyway so backend ALWAYS sees a title.
+    if (!reportTitle.trim()) {
+      toast.error('Please enter a report title before submitting.');
+      return;
+    }
+
     setIsSubmitting(true);
 
     // Fill missing entries as "NA"
@@ -1961,6 +1980,10 @@ function ViewerContent() {
           user_email: userEmail,   // still accepted (alias user_mail also works server-side)
           padding_pct: 0.25,
           office_variant: 'o365',
+
+          // 🔴 NEW: pass viewer metadata through
+          report_title: reportTitle.trim(),
+          report_id: reportId,
         }),
       });
 
@@ -1986,7 +2009,9 @@ function ViewerContent() {
 
       // Navigate back to the mark-set chooser (same behavior you had)
       setTimeout(() => {
-        const qs = sessionStorage.getItem('viewerLastSetupParams') || window.location.search.slice(1);
+        const qs =
+          sessionStorage.getItem('viewerLastSetupParams') ||
+          window.location.search.slice(1);
         const sp = new URLSearchParams(qs);
         sp.set('autoboot', '1');
         sp.delete('pdf_url');
@@ -2000,7 +2025,18 @@ function ViewerContent() {
     } finally {
       setIsSubmitting(false);
     }
-  }, [markSetId, entries, apiBase, rawPdfUrl, searchParams, qUser, marks]);
+  }, [
+    markSetId,
+    entries,
+    apiBase,
+    rawPdfUrl,
+    searchParams,
+    qUser,
+    marks,
+    reportTitle,   // 🔴 NEW dep
+    reportId,      // 🔴 NEW dep
+  ]);
+
 
   const swipeHandlers = useSwipeable({
     onSwipedLeft: () => {
@@ -2389,28 +2425,41 @@ function ViewerContent() {
         </div>
 
         <div id="mobile-input-panel">
-          <InputPanel
-            currentMark={currentMark}
-            currentIndex={currentMarkIndex}
-            totalMarks={marks.length}
-            value={currentValue}
-            onChange={handleEntryChange}
-            onNext={nextMark}
-            onPrev={prevMark}
-            canNext={marks.length > 0}
-            canPrev={currentMarkIndex > 0 || panelMode === 'group'}
-            mode={panelMode}
-            groupName={currentGroupMeta?.name}
-            groupInstrumentSummary={currentGroupInstrumentSummary}
-            showGroupSlide={panelMode === 'group' && isMasterMarkSet === false}
-            groupSlideLabel={
-              currentGroupMeta
-                ? `Slide to start "${currentGroupMeta.name}"`
-                : 'Slide to start this group'
-            }
-            onGroupSlideComplete={proceedFromGroupToMarks}
-          />
+          {showReportTitle ? (
+            <ReportTitlePanel
+              value={reportTitle}
+              onChange={setReportTitle}
+              reportId={reportId}
+              onConfirm={() => {
+                if (!reportTitle.trim()) return;
+                setShowReportTitle(false);
+              }}
+            />
+          ) : (
+            <InputPanel
+              currentMark={currentMark}
+              currentIndex={currentMarkIndex}
+              totalMarks={marks.length}
+              value={currentValue}
+              onChange={handleEntryChange}
+              onNext={nextMark}
+              onPrev={prevMark}
+              canNext={marks.length > 0}
+              canPrev={currentMarkIndex > 0 || panelMode === 'group'}
+              mode={panelMode}
+              groupName={currentGroupMeta?.name}
+              groupInstrumentSummary={currentGroupInstrumentSummary}
+              showGroupSlide={panelMode === 'group' && isMasterMarkSet === false}
+              groupSlideLabel={
+                currentGroupMeta
+                  ? `Slide to start "${currentGroupMeta.name}"`
+                  : 'Slide to start this group'
+              }
+              onGroupSlideComplete={proceedFromGroupToMarks}
+            />
+          )}
         </div>
+
 
 
         {/* 🔹 Review overlay (mobile) */}
@@ -2579,32 +2628,45 @@ function ViewerContent() {
 
       {/* Keep Input Panel OUTSIDE the scroll area */}
       <div className="input-panel-section">
-        <InputPanel
-          currentMark={marks[currentMarkIndex] ?? null}
-          currentIndex={currentMarkIndex}
-          totalMarks={marks.length}
-          value={
-            (marks[currentMarkIndex]?.mark_id &&
-              entries[marks[currentMarkIndex]!.mark_id!]) ||
-            ''
-          }
-          onChange={handleEntryChange}
-          onNext={nextMark}
-          onPrev={prevMark}
-          canPrev={currentMarkIndex > 0 || panelMode === 'group'}
-          canNext={marks.length > 0}
-          mode={panelMode}
-          groupName={currentGroupMetaDesktop?.name}
-          groupInstrumentSummary={currentGroupInstrumentSummaryDesktop}
-          showGroupSlide={panelMode === 'group' && isMasterMarkSet === false}
-          groupSlideLabel={
-            currentGroupMetaDesktop
-              ? `Slide to start "${currentGroupMetaDesktop.name}"`
-              : 'Slide to start this group'
-          }
-          onGroupSlideComplete={proceedFromGroupToMarks}
-        />
+        {showReportTitle ? (
+          <ReportTitlePanel
+            value={reportTitle}
+            onChange={setReportTitle}
+            reportId={reportId}
+            onConfirm={() => {
+              if (!reportTitle.trim()) return;
+              setShowReportTitle(false);
+            }}
+          />
+        ) : (
+          <InputPanel
+            currentMark={marks[currentMarkIndex] ?? null}
+            currentIndex={currentMarkIndex}
+            totalMarks={marks.length}
+            value={
+              (marks[currentMarkIndex]?.mark_id &&
+                entries[marks[currentMarkIndex]!.mark_id!]) ||
+              ''
+            }
+            onChange={handleEntryChange}
+            onNext={nextMark}
+            onPrev={prevMark}
+            canPrev={currentMarkIndex > 0 || panelMode === 'group'}
+            canNext={marks.length > 0}
+            mode={panelMode}
+            groupName={currentGroupMetaDesktop?.name}
+            groupInstrumentSummary={currentGroupInstrumentSummaryDesktop}
+            showGroupSlide={panelMode === 'group' && isMasterMarkSet === false}
+            groupSlideLabel={
+              currentGroupMetaDesktop
+                ? `Slide to start "${currentGroupMetaDesktop.name}"`
+                : 'Slide to start this group'
+            }
+            onGroupSlideComplete={proceedFromGroupToMarks}
+          />
+        )}
       </div>
+
 
       {/* PDFSearch should stay inside main-content, after the viewer area */}
       <PDFSearch

@@ -6,10 +6,12 @@ from typing import Dict, List, Any, Optional
 from datetime import datetime
 from tempfile import NamedTemporaryFile
 from zoneinfo import ZoneInfo
+from copy import copy
 from openpyxl import load_workbook
 from openpyxl.drawing.image import Image as OpenpyxlImage
 from openpyxl.cell.cell import MergedCell
 from openpyxl.worksheet.worksheet import Worksheet
+from openpyxl.worksheet.datavalidation import DataValidation
 
 from core.report_pdf import _require_pdfium, _fetch_pdf_bytes
 
@@ -88,6 +90,7 @@ async def generate_report_excel(
     mark_set_label: str = "",
     part_number: str = "",
     external_id: str = "",
+    report_title: str = "",
     padding_pct: float = 0.25,
     render_zoom: float = 2.2,
     logo_url: str = "https://res.cloudinary.com/dbwg6zz3l/image/upload/v1753101276/Black_Blue_ctiycp.png",
@@ -120,6 +123,26 @@ async def generate_report_excel(
 
     wb = load_workbook(template_path)
     ws = wb.active
+    # Use row 9 as the "template" for data row styling (borders, fonts, etc.)
+    template_row_index = 9
+    template_row_cells = {
+        col: ws.cell(row=template_row_index, column=col)
+        for col in range(1, 8)  # columns A..G
+    }
+
+    def _apply_row_style(target_row: int) -> None:
+        """
+        Clone the border/fill/font/alignment/number_format from the template
+        data row into the given target_row.
+        """
+        for col, tmpl_cell in template_row_cells.items():
+            cell = ws.cell(row=target_row, column=col)
+            cell.border = copy(tmpl_cell.border)
+            cell.font = copy(tmpl_cell.font)
+            cell.fill = copy(tmpl_cell.fill)
+            cell.alignment = copy(tmpl_cell.alignment)
+            cell.number_format = tmpl_cell.number_format
+
 
     _tempfiles: List[str] = []
 
@@ -173,41 +196,46 @@ async def generate_report_excel(
 
     try:
         # =====================================================
-        # HEADER
+        # HEADER (matches Excel template layout)
         # =====================================================
-        # ========= HEADER (coordinates assume your template layout) =========
-        # Row 3: ID: <external_id / mark_set_id>
+
+        # Row 3: "Report Title: <title>"
+        title_val = (report_title or "").strip()
+        if title_val:
+            _write_merged(ws, "A3", f"Report Title: {title_val}")
+        else:
+            # keep static label if no title provided
+            _write_merged(ws, "A3", "Report Title:")
+
+        # Row 4: "ID: <external_id / mark_set_id>"
         id_val = (external_id or mark_set_id or "").strip()
         if id_val:
-            # A3:G3 is merged; write "ID: <value>" into the merged cell
-            _write_merged(ws, "A3", f"ID: {id_val}")
+            _write_merged(ws, "A4", f"ID: {id_val}")
+        else:
+            _write_merged(ws, "A4", "ID:")
 
-        # Row 4: "Part Number: <part_number>" in merged A4:C4
+        # Row 5: "Part Number: <part_number>"
         part_num = (part_number or "").strip()
         if part_num:
-            _write_merged(ws, "A4", f"Part Number: {part_num}")
+            _write_merged(ws, "A5", f"Part Number: {part_num}")
         else:
-            # keep the original label if we have no value
-            _write_merged(ws, "A4", "Part Number:")
+            _write_merged(ws, "A5", "Part Number:")
 
-        # Row 5: "MarkSet Name: <mark_set_label>" in merged A5:C5
+        # Row 6: "MarkSet Name: <mark_set_label>"
         ms_label_val = (mark_set_label or "").strip()
         if ms_label_val:
-            _write_merged(ws, "A5", f"MarkSet Name: {ms_label_val}")
+            _write_merged(ws, "A6", f"MarkSet Name: {ms_label_val}")
         else:
-            _write_merged(ws, "A5", "MarkSet Name:")
+            _write_merged(ws, "A6", "MarkSet Name:")
 
-        # Row 4 right: "Created By: <email>" in merged E4:G4
+        # Row 5 right: "Created By: <email>" in merged E5:G5
         created_by = (user_email or "viewer_user").strip()
-        _write_merged(ws, "E4", f"Created By: {created_by}")
+        _write_merged(ws, "E5", f"Created By: {created_by}")
 
-        # Row 5 right: "Created At: <timestamp>" in merged E5:G5
-        #created_at_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
-        #_write_merged(ws, "E5", f"Created At: {created_at_str}")
-        # Row 5 right: "Created At: <IST timestamp>" in merged E5:G5
+        # Row 6 right: "Created At: <IST timestamp>" in merged E6:G6
         ist_time = datetime.now(ZoneInfo("Asia/Kolkata"))
         created_at_str = ist_time.strftime("%Y-%m-%d %H:%M IST")
-        _write_merged(ws, "E5", f"Created At: {created_at_str}")
+        _write_merged(ws, "E6", f"Created At: {created_at_str}")
 
         # ---------- LOGO ----------
         if logo_url:
@@ -228,7 +256,7 @@ async def generate_report_excel(
         # =====================================================
         # TABLE ROWS
         # =====================================================
-        start_row = 8
+        start_row = 9
         current_row = start_row
 
         # Process pages in ascending order
@@ -255,6 +283,10 @@ async def generate_report_excel(
                 r = current_row
                 current_row += 1
 
+                # Ensure this row has the same borders / style as the template data row
+                if r >= template_row_index:
+                    _apply_row_style(r)
+
                 mark_id = m.get("mark_id", "")
                 nx = float(m["nx"])
                 ny = float(m["ny"])
@@ -263,10 +295,10 @@ async def generate_report_excel(
                 label = (m.get("label") or f"Mark {r - start_row + 1}").strip()
                 observed = (entries.get(mark_id, "") or "").strip()
 
-                # Text cells
-                ws.cell(row=r, column=1).value = label   # A: Label
-                ws.cell(row=r, column=5).value = observed  # E: Observed
-                ws.row_dimensions[r].height = 75         # row height for thumbnail
+                # Text cells (merge-safe)
+                _write_merged(ws, f"A{r}", label)      # A: Label
+                _write_merged(ws, f"E{r}", observed)   # E: Observed
+                ws.row_dimensions[r].height = 75       # row height for thumbnail
 
                 # Image thumbnail into column B
                 if page_img is None:
@@ -311,6 +343,21 @@ async def generate_report_excel(
             if page_img is not None:
                 del page_img
                 gc.collect()
+
+        # =====================================================
+        # DATA VALIDATION: Status column dropdown
+        # =====================================================
+        first_mark_row = start_row
+        last_mark_row = current_row - 1
+
+        if last_mark_row >= first_mark_row:
+            status_dv = DataValidation(
+                type="list",
+                formula1='"Pass,Fail,Doubt"',
+                allow_blank=True,
+            )
+            ws.add_data_validation(status_dv)
+            status_dv.add(f"F{first_mark_row}:F{last_mark_row}")
 
         # =====================================================
         # SAVE TO BYTES

@@ -5,7 +5,12 @@ from fastapi import APIRouter, HTTPException, status
 from typing import List, Optional
 import logging
 
-from schemas.user_input import UserInputCreate, UserInputBatchCreate, UserInputOut, UserInputUpdate
+from schemas.user_input import (
+    UserInputCreate,
+    UserInputBatchCreate,
+    UserInputOut,
+    UserInputUpdate,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/user-input", tags=["user_input"])
@@ -26,7 +31,9 @@ async def create_user_input(data: UserInputCreate):
             mark_id=data.mark_id,
             mark_set_id=data.mark_set_id,
             user_value=data.user_value,
-            submitted_by=data.submitted_by
+            submitted_by=data.submitted_by,
+            # NEW
+            report_id=data.report_id,
         )
         return {"input_id": input_id, "status": "created"}
     except ValueError as e:
@@ -44,7 +51,9 @@ async def create_user_inputs_batch(data: UserInputBatchCreate):
         count = storage.create_user_inputs_batch(
             mark_set_id=data.mark_set_id,
             entries=data.entries,
-            submitted_by=data.submitted_by
+            submitted_by=data.submitted_by,
+            # NEW
+            report_id=data.report_id,
         )
         return {"count": count, "status": "created"}
     except ValueError as e:
@@ -55,11 +64,20 @@ async def create_user_inputs_batch(data: UserInputBatchCreate):
 
 
 @router.get("", response_model=List[dict])
-async def get_user_inputs(mark_set_id: str, submitted_by: Optional[str] = None):
-    """Get user inputs for a mark set, optionally filtered by user."""
+async def get_user_inputs(
+    mark_set_id: str,
+    submitted_by: Optional[str] = None,
+    # NEW: allow filtering by report_id as well
+    report_id: Optional[str] = None,
+):
+    """Get user inputs for a mark set, optionally filtered by user and report."""
     try:
         storage = get_storage()
-        inputs = storage.get_user_inputs(mark_set_id=mark_set_id, submitted_by=submitted_by)
+        inputs = storage.get_user_inputs(
+            mark_set_id=mark_set_id,
+            submitted_by=submitted_by,
+            report_id=report_id,
+        )
         return inputs
     except Exception as e:
         logger.error(f"Error fetching user inputs: {e}")

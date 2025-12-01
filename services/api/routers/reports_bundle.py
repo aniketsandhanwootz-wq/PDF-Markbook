@@ -39,16 +39,19 @@ class ReportBundleRequest(BaseModel):
     Request body for generating & emailing a report bundle.
 
     Semantics:
-    - doc_id:      the document being inspected
-    - mark_set_id: the *QC* mark_set_id (where user inputs & groups live)
-    - email_to:    recipient email
+    - doc_id:       the document being inspected
+    - mark_set_id:  the *QC* mark_set_id (where user inputs & groups live)
+    - email_to:     recipient email
     - submitted_by: (optional) who filled the QC; used to filter inputs
+    - report_name:  (optional) human-friendly title shown in email/Excel
+    - report_id:    (optional) unique ID for this submission, used to isolate inputs
     """
     doc_id: str
     mark_set_id: str
     email_to: EmailStr
     submitted_by: Optional[str] = None
     report_name: Optional[str] = None
+    report_id: Optional[str] = None
 
 
 class ReportBundleQueuedResponse(BaseModel):
@@ -314,16 +317,21 @@ async def _send_excel_email(
             or doc.get("doc_id")
             or "Document"
         )
-        # master_label = master_ms.get("name", "Master")
         qc_label = qc_ms.get("name", "QC Run")
 
-        subject = f"Dimensional Inspection Report for {doc_label}"
+        # Subject: include report_name if provided
+        if report_name:
+            subject = f"{report_name} – Dimensional Inspection Report for {doc_label}"
+        else:
+            subject = f"Dimensional Inspection Report for {doc_label}"
+
+        report_line = f"<li>Report title: {report_name}</li>" if report_name else ""
 
         body_html = (
             f"<p>Hello,</p>"
             f"<p>Your Dimensional Inspection report for Part <b>{doc_label}</b> is ready.</p>"
             f"<ul>"
-            # f"<li>Master set: {master_label}</li>"
+            f"{report_line}"
             f"<li>Inspection Map: {qc_label}</li>"
             f"<li>Completed marks: {completed_marks} of {total_marks}</li>"
             f"</ul>"
@@ -449,6 +457,7 @@ async def _do_generate_and_send_excel_bundle(
             user_inputs = storage.get_user_inputs(
                 mark_set_id=qc_mark_set_id,
                 submitted_by=req.submitted_by,
+                report_id=req.report_id,
             )
         except Exception as e:
             logger.error(f"Failed to get user inputs for {qc_mark_set_id}: {e}")
@@ -508,14 +517,19 @@ async def _do_generate_and_send_excel_bundle(
         total_marks = len(filtered_ids)
 
         # 7) Compute completed marks only within filtered_ids
+        #    Treat "NA" (any case) as NOT completed.
         completed_marks = len(
             {
                 ui.get("mark_id")
                 for ui in user_inputs
                 if ui.get("mark_id") in filtered_ids
-                and (ui.get("user_value") or "").strip() != ""
+                and (
+                    (ui.get("user_value") or "").strip() != ""
+                    and (ui.get("user_value") or "").strip().upper() != "NA"
+                )
             }
         )
+
 
         # 8) Build mark_id -> user_value map ONLY for filtered marks
         mark_id_to_value: Dict[str, str] = {}
@@ -547,12 +561,31 @@ async def _do_generate_and_send_excel_bundle(
                 mark_set_label=qc_ms.get("name", "") or qc_ms.get("label", ""),
                 part_number=doc.get("part_number", "") or "",
                 external_id=doc.get("external_id", "") or "",
+                report_title=req.report_name or "",
                 padding_pct=0.25,
                 logo_url="https://res.cloudinary.com/dbwg6zz3l/image/upload/v1753101276/Black_Blue_ctiycp.png",
             )
         except Exception as e:
             logger.exception(f"Failed to build Excel: {e}")
             return
+
+        # 9b) Create a report history record (inspection_reports) using the SAME report_id
+        try:
+            if hasattr(storage, "create_report_record"):
+                storage.create_report_record(
+                    mark_set_id=qc_mark_set_id,
+                    # If you later upload the Excel anywhere, store that URL here
+                    inspection_doc_url="",
+                    created_by=req.submitted_by or req.email_to,
+                    # 🔑 keep this in sync with mark_user_input.report_id
+                    report_id=req.report_id,
+                    # store the human-friendly title used in email/Excel
+                    report_title=report_name,
+                    submitted_by=req.submitted_by or req.email_to,
+                )
+        except Exception as e:
+            logger.warning(f"Failed to create report record: {e}")
+
 
         # 10) Send email with ONLY Excel attached (async)
         await _send_excel_email(

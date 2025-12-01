@@ -22,6 +22,7 @@ class ExcelReportBody(BaseModel):
     entries: Dict[str, str] = {}
     pdf_url: Optional[str] = None
     user_email: Optional[str] = None
+    report_title: Optional[str] = None
     padding_pct: float = 0.25
     logo_url: Optional[str] = None  # allow override if needed
 

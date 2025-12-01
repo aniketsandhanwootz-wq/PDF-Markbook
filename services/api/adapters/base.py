@@ -413,14 +413,26 @@ class StorageAdapter(Protocol):
         mark_set_id: str,
         inspection_doc_url: str,
         created_by: Optional[str],
+        report_id: Optional[str] = None,
+        report_title: Optional[str] = None,
+        submitted_by: Optional[str] = None,
     ) -> str:
         """
-        Persist a report metadata record (e.g. generated PDF URL).
+        Persist a report metadata record (e.g. generated Excel/PDF URL).
+
+        Args:
+            mark_set_id: QC mark_set_id
+            inspection_doc_url: Where the generated file is stored (can be empty for now)
+            created_by: Who created the report record
+            report_id: Optional externally supplied ID so it matches mark_user_input.report_id
+            report_title: Optional human-readable title
+            submitted_by: Optional who actually submitted the QC
 
         Returns:
-            Generated report_id.
+            report_id (either the supplied one or a generated UUID).
         """
         ...
+
 
     def list_reports(self, mark_set_id: str) -> List[Dict[str, Any]]:
         """

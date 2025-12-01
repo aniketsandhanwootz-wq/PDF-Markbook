@@ -34,6 +34,11 @@ class ReportBundleLegacyBody(BaseModel):
     padding_pct: float = 0.25
     office_variant: Optional[str] = None   # ignored here; kept for backward compat
 
+    # 🔴 NEW: viewer metadata
+    report_title: Optional[str] = None     # human-readable title from ReportTitlePanel
+    report_id: Optional[str] = None        # unique QC submission ID from viewer
+
+
 
 @router.post("/generate-bundle")
 async def generate_bundle_legacy(
@@ -62,6 +67,8 @@ async def generate_bundle_legacy(
                         mark_set_id=body.mark_set_id,
                         entries=body.entries,
                         submitted_by=(body.user_email or "viewer_user"),
+                        # 🔴 NEW: forward viewer's report_id into Sheets
+                        report_id=body.report_id,
                     )
             except Exception as e:
                 logger.warning(f"Failed to persist user inputs: {e}")
@@ -115,8 +122,11 @@ async def generate_bundle_legacy(
             "mark_set_id": body.mark_set_id,
             "email_to": body.user_email,
             "submitted_by": body.user_email,
-            "report_name": None,
+            # 🔴 NEW: use viewer's title/id in the new bundle endpoint
+            "report_name": body.report_title,
+            "report_id": body.report_id,
         }
+
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -325,10 +335,14 @@ async def generate_report(body: ReportGenerateBody, storage = Depends(get_storag
                     mark_set_id=body.mark_set_id,
                     inspection_doc_url="",   # replace with uploaded URL if you later store the PDF
                     created_by=body.user_email or body.author or "",
+                    # no explicit report_id here -> SheetsAdapter will generate one
+                    report_title=body.title,
+                    submitted_by=body.user_email or body.author or "",
                 )
         except Exception as e:
             logger.warning(f"Failed to create report record: {e}")
             # Don't fail the request
+
 
         from fastapi.responses import StreamingResponse
         import io
