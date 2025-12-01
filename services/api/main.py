@@ -780,6 +780,9 @@ app.include_router(marks_router.router)
 
 from routers import pages as pages_router
 app.include_router(pages_router.router)
+
+from routers import reports_master
+app.include_router(reports_master.router)
 # ========== End of Submissions ==========
 
 startup_time = time.time()

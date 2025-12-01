@@ -1400,3 +1400,16 @@ class SheetsAdapter(StorageAdapter):
             for r in self._get_all_dicts("inspection_reports")
             if r.get("mark_set_id") == mark_set_id
         ]
+
+    def get_latest_report_for_mark_set(self, mark_set_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get the latest report for a mark set (by created_at desc).
+        Returns None if no reports exist.
+        """
+        reports = self.list_reports(mark_set_id)
+        if not reports:
+            return None
+        
+        # Sort by created_at descending
+        reports.sort(key=lambda r: r.get("created_at", ""), reverse=True)
+        return reports[0]

@@ -117,3 +117,50 @@ export const cancelIdleCallback =
   typeof window !== 'undefined' && 'cancelIdleCallback' in window
     ? window.cancelIdleCallback
     : (id: number) => clearTimeout(id);
+
+/**
+ * Download master report for a document.
+ * Calls the backend /reports/master/generate endpoint.
+ */
+export async function downloadMasterReport(params: {
+  project_name: string;
+  id: string;
+  part_number: string;
+  report_title?: string;
+  apiBase?: string;
+}): Promise<void> {
+  const apiBase = params.apiBase || process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
+  
+  try {
+    const response = await fetch(`${apiBase}/reports/master/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        project_name: params.project_name,
+        id: params.id,
+        part_number: params.part_number,
+        report_title: params.report_title || `${params.part_number} Master Report`,
+        max_runs: 100, // Can be made configurable later
+      }),
+    });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new Error(`Master report generation failed: ${response.status} ${text}`);
+    }
+
+    // Trigger download
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${params.part_number}_master_report.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+  } catch (error) {
+    console.error('Master report download failed:', error);
+    throw error;
+  }
+}

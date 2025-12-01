@@ -13,11 +13,10 @@ import FloatingHUD from '../components/FloatingHUD';
 import InputPanel from '../components/InputPanel';
 import ReviewScreen from '../components/ReviewScreen';
 import ReportTitlePanel from '../components/ReportTitlePanel';
-import { clampZoom } from '../lib/pdf';
+import { clampZoom, downloadMasterReport } from '../lib/pdf';
 import PDFSearch from '../components/PDFSearch';
 import SlideSidebar from '../components/SlideSidebar';
 import usePinchZoom from '../hooks/usePinchZoom';
-
 
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
@@ -297,6 +296,31 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
     };
   }, [boot, apiBase]);
 
+  // Master Report download handler
+  const handleDownloadMasterReport = async () => {
+    if (!boot) return;
+    
+    setErr('');
+    try {
+      setLoading(true);
+      await downloadMasterReport({
+        project_name: projectName,
+        id: extId,
+        part_number: partNumber,
+        report_title: `${partNumber} Master Report`,
+        apiBase,
+      });
+      
+      // Show success toast (optional, or use native alert)
+      alert('✓ Master report downloaded successfully!');
+    } catch (e: any) {
+      console.error('Master report download failed:', e);
+      setErr('Failed to generate master report. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleOpenMarkset = (markSetId: string) => {
     if (!boot?.document?.pdf_url) {
       setErr('No PDF URL on document.');
@@ -554,7 +578,7 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
               </div>
             )} */}
 
-            {/* Other Mark Sets */}
+{/* Other Mark Sets */}
             {otherMarksets.length > 0 && (
               <div style={{ marginTop: 16 }}>
                 <div
@@ -566,9 +590,30 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
                     alignItems: 'center',
                     justifyContent: 'space-between',
                     marginBottom: 8,
+                    gap: 12,
                   }}
                 >
                   <div style={{ fontWeight: 600 }}>Available Inspection Maps</div>
+                  
+                  {/* 🔥 NEW: Master Report button */}
+                  <button
+                    onClick={handleDownloadMasterReport}
+                    disabled={loading}
+                    style={{
+                      padding: '6px 12px',
+                      border: '1px solid #3B3B3B',
+                      borderRadius: 6,
+                      background: loading ? '#3B3B3B' : '#D99E02',
+                      color: '#fff',
+                      cursor: loading ? 'not-allowed' : 'pointer',
+                      fontSize: 12,
+                      fontWeight: 600,
+                      whiteSpace: 'nowrap',
+                    }}
+                    title="Download master inspection report (all marks × all runs)"
+                  >
+                    {loading ? 'Generating...' : 'Master Report'}
+                  </button>
                 </div>
                 <div
                   style={{
