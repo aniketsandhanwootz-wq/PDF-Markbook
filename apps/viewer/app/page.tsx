@@ -2,7 +2,7 @@
 
 import type { MutableRefObject, CSSProperties } from 'react';
 import { useEffect, useState, useRef, useCallback, Suspense } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 import { useSwipeable } from 'react-swipeable';
 import toast, { Toaster } from 'react-hot-toast';
 import * as pdfjsLib from 'pdfjs-dist';
@@ -208,8 +208,11 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string>('');
 
-  // 👉 NEW: computed marks count for QC marksets
-  const [qcMarkCounts, setQcMarkCounts] = useState<Record<string, number>>({});
+  // 👉 NOTE: we no longer show QC mark counts on the initial screen,
+  // so we don't need to compute them here. Keeping this commented so
+  // it's easy to restore in future if UI changes.
+  // const [qcMarkCounts, setQcMarkCounts] = useState<Record<string, number>>({});
+
 
   const hasBootstrapKeys =
     projectName.trim() && extId.trim() && partNumber.trim() && assemblyDrawing.trim();
@@ -248,53 +251,54 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
     }
   }, [hasBootstrapKeys]);
 
-  // 👉 For each QC markset, fetch groups and compute TOTAL mark steps
-  //     (no de-duplication) so this matches what the viewer/HUD sees.
-  useEffect(() => {
-    if (!boot) return;
-
-    const qcSets = boot.mark_sets.filter((ms) => !ms.is_master);
-    if (qcSets.length === 0) {
-      setQcMarkCounts({});
-      return;
-    }
-
-    let cancelled = false;
-
-    (async () => {
-      const result: Record<string, number> = {};
-
-      await Promise.all(
-        qcSets.map(async (ms) => {
-          try {
-            const res = await fetch(`${apiBase}/viewer/groups/${ms.mark_set_id}`);
-            if (!res.ok) return;
-
-            const data = await res.json();
-            const groups: any[] = data.groups || [];
-
-            // count ALL marks in all groups (steps in the viewer)
-            let total = 0;
-            for (const g of groups) {
-              total += (g.marks || []).length;
-            }
-
-            result[ms.mark_set_id] = total;
-          } catch (e) {
-            console.warn('Failed to compute QC mark count for', ms.mark_set_id, e);
-          }
-        })
-      );
-
-      if (!cancelled) {
-        setQcMarkCounts(result);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [boot, apiBase]);
+  // ❌ We used to compute QC mark counts here by calling /viewer/groups
+  //    for every non-master markset, just to show "X marks" in the UI.
+  //    That UI is now disabled, so these network calls are pure overhead.
+  //
+  // useEffect(() => {
+  //   if (!boot) return;
+  //
+  //   const qcSets = boot.mark_sets.filter((ms) => !ms.is_master);
+  //   if (qcSets.length === 0) {
+  //     setQcMarkCounts({});
+  //     return;
+  //   }
+  //
+  //   let cancelled = false;
+  //
+  //   (async () => {
+  //     const result: Record<string, number> = {};
+  //
+  //     await Promise.all(
+  //       qcSets.map(async (ms) => {
+  //         try {
+  //           const res = await fetch(`${apiBase}/viewer/groups/${ms.mark_set_id}`);
+  //           if (!res.ok) return;
+  //
+  //           const data = await res.json();
+  //           const groups: any[] = data.groups || [];
+  //
+  //           let total = 0;
+  //           for (const g of groups) {
+  //             total += (g.marks || []).length;
+  //           }
+  //
+  //           result[ms.mark_set_id] = total;
+  //         } catch (e) {
+  //           console.warn('Failed to compute QC mark count for', ms.mark_set_id, e);
+  //         }
+  //       })
+  //     );
+  //
+  //     if (!cancelled) {
+  //       setQcMarkCounts(result);
+  //     }
+  //   })();
+  //
+  //   return () => {
+  //     cancelled = true;
+  //   };
+  // }, [boot, apiBase]);
 
   // Master Report download handler
   const handleDownloadMasterReport = async () => {
@@ -615,7 +619,7 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
                     {loading ? 'Generating...' : 'Master Report'}
                   </button>
                 </div>
-                <div
+                 <div
                   style={{
                     display: 'grid',
                     gap: 12,
@@ -624,13 +628,6 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
                   }}
                 >
                   {otherMarksets.map((ms) => {
-                    const count =
-                      ms.is_master
-                        ? ms.marks_count ?? 0
-                        : qcMarkCounts[ms.mark_set_id] ??
-                        ms.marks_count ??
-                        0;
-
                     return (
                       <div
                         key={ms.mark_set_id}
@@ -652,7 +649,8 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
                             {ms.label}
                           </div>
 
-   {/*                       {ms.description && (
+                          {/* Description is currently not shown; uncomment if needed later.
+                          {ms.description && (
                             <div
                               style={{
                                 color: '#444',
@@ -665,7 +663,8 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
                               {ms.description}
                             </div>
                           )}
-*/}
+                          */}
+
                           <div
                             style={{
                               marginTop: 6,
@@ -677,8 +676,8 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
                               flexWrap: 'wrap',
                             }}
                           >
-                        {/*    <span>{count} marks</span> */}
-                             {ms.created_by && <span>{ms.created_by}</span>}
+                            {/* We no longer show mark counts here */}
+                            {ms.created_by && <span>{ms.created_by}</span>}
                           </div>
                         </div>
 
@@ -692,7 +691,7 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
                     );
                   })}
                 </div>
-              </div>
+              </div>  
             )}
 
             {!masterMarkset && otherMarksets.length === 0 && (
@@ -722,7 +721,14 @@ const btnPrimary: CSSProperties = { ...btn, borderColor: '#1976d2', color: '#197
 // Main Viewer Component
 function ViewerContent() {
   const searchParams = useSearchParams();
+  const router = useRouter();
+
   const [showSetup, setShowSetup] = useState(true);
+
+  // NEW: keep chosen PDF URL + markset in local state
+  const [selectedPdfUrl, setSelectedPdfUrl] = useState<string | null>(null);
+  const [selectedMarkSetId, setSelectedMarkSetId] = useState<string | null>(null);
+
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [numPages, setNumPages] = useState(0);
   const [marks, setMarks] = useState<Mark[]>([]);
@@ -1094,44 +1100,69 @@ function ViewerContent() {
   const hasBootstrapKeys = !!(qProject && qExtId && qPartNumber && qAssembly);
   const pdfUrlParam = searchParams?.get('pdf_url') || '';
   const markSetIdParam = searchParams?.get('mark_set_id') || '';
-  // Show viewer if pdf_url is present; otherwise, if link has keys, show compact markset list
+  // Show viewer if pdf_url is present OR user already selected a markset
   useEffect(() => {
+    // 1) Direct deep-link with ?pdf_url=... → skip setup
     if (pdfUrlParam) {
       setShowSetup(false);
-    } else if (hasBootstrapKeys) {
+      return;
+    }
+
+    // 2) User just chose a markset in this session → skip setup
+    if (selectedPdfUrl) {
+      setShowSetup(false);
+      return;
+    }
+
+    // 3) Only bootstrap keys present → show setup
+    if (hasBootstrapKeys) {
       setShowSetup(true);
     } else {
       setShowSetup(true);
     }
-  }, [pdfUrlParam, hasBootstrapKeys]);
+  }, [pdfUrlParam, selectedPdfUrl, hasBootstrapKeys]);
+
+  // Prefer the PDF URL chosen in this session; fall back to URL param
+  const effectivePdfUrl = selectedPdfUrl || pdfUrlParam;
 
 
   const handleSetupComplete = (url: string, setId: string) => {
-    const prevQs = sessionStorage.getItem('viewerLastSetupParams')
-      || window.location.search.slice(1); // drop '?'
+    const prevQs =
+      sessionStorage.getItem('viewerLastSetupParams') ||
+      window.location.search.slice(1); // drop '?'
     const params = new URLSearchParams(prevQs);
 
     // keep existing bootstrap params (project_name, id, part_number, user_mail, assembly_drawing)
     params.set('pdf_url', url);
     if (setId) params.set('mark_set_id', setId);
 
-    // persist and navigate
-    sessionStorage.setItem('viewerLastSetupParams', params.toString());
-    const newUrl = `${window.location.pathname}?${params.toString()}`;
-    window.location.href = newUrl;
+    const qsString = params.toString();
+    sessionStorage.setItem('viewerLastSetupParams', qsString);
+
+    // 🔹 NEW: stay on the same page, just flip into viewer mode
+    setSelectedPdfUrl(url);
+    setSelectedMarkSetId(setId || null);
+    setShowSetup(false);
+
+    // 🔹 Keep URL sharable without full reload
+    const newUrl = `${window.location.pathname}?${qsString}`;
+    router.push(newUrl, { scroll: false });
   };
+
 
   const rawPdfUrl = cleanPdfUrl(
     isDemo
       ? 'https://mozilla.github.io/pdf.js/web/compressed.tracemonkey-pldi-09.pdf'
-      : pdfUrlParam || 'https://mozilla.github.io/pdf.js/web/compressed.tracemonkey-pldi-09.pdf'
+      : effectivePdfUrl ||
+        'https://mozilla.github.io/pdf.js/web/compressed.tracemonkey-pldi-09.pdf'
   );
+
   const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
   const pdfUrl = rawPdfUrl
     ? `${apiBase}/proxy-pdf?url=${encodeURIComponent(rawPdfUrl)}`
     : '';
 
-  const markSetId = markSetIdParam;
+  const markSetId = selectedMarkSetId || markSetIdParam;
 
   const demoMarks: Mark[] = [
     {
@@ -1950,30 +1981,73 @@ function ViewerContent() {
   );
 
 
-  const jumpToPage = useCallback((pageNumber: number) => {
-    if (!pdf || !containerRef.current) return;
+  const jumpToPage = useCallback(
+    (pageNumber: number) => {
+      if (!pdf || !containerRef.current) return;
 
-    const container = containerRef.current;
-    const pageEl = pageElsRef.current[pageNumber - 1];
-    if (!pageEl) return;
+      const container = containerRef.current;
+      let pageEl = pageElsRef.current[pageNumber - 1];
 
-    const containerRect = container.getBoundingClientRect();
-    const pageRect = pageEl.getBoundingClientRect();
+      // If the page isn't currently rendered (because of windowing),
+      // scroll to its top using prefixHeights so it enters the window.
+      if (!pageEl) {
+        const pref = prefixHeightsRef.current;
+        if (pref.length >= pageNumber) {
+          const targetTop = pref[pageNumber - 1];
+          container.scrollTo({ top: targetTop, left: 0, behavior: 'auto' });
+        }
 
-    const pageLeftInScroll = container.scrollLeft + (pageRect.left - containerRect.left);
-    const pageTopInScroll = container.scrollTop + (pageRect.top - containerRect.top);
+        // Give React a frame to render the new PageCanvas
+        requestAnimationFrame(() => {
+          const containerNow = containerRef.current;
+          const el = pageElsRef.current[pageNumber - 1];
+          if (!containerNow || !el) return;
 
-    const targetLeft = Math.max(
-      0,
-      pageLeftInScroll + pageEl.clientWidth / 2 - container.clientWidth / 2
-    );
+          const containerRect = containerNow.getBoundingClientRect();
+          const pageRect = el.getBoundingClientRect();
 
-    container.scrollTo({
-      left: targetLeft,
-      top: pageTopInScroll,
-      behavior: 'smooth',
-    });
-  }, [pdf]);
+          const pageLeftInScroll =
+            containerNow.scrollLeft + (pageRect.left - containerRect.left);
+          const pageTopInScroll =
+            containerNow.scrollTop + (pageRect.top - containerRect.top);
+
+          const targetLeft = Math.max(
+            0,
+            pageLeftInScroll + el.clientWidth / 2 - containerNow.clientWidth / 2
+          );
+
+          containerNow.scrollTo({
+            left: targetLeft,
+            top: pageTopInScroll,
+            behavior: 'smooth',
+          });
+        });
+
+        return;
+      }
+
+      // Normal path: page already rendered
+      const containerRect = container.getBoundingClientRect();
+      const pageRect = pageEl.getBoundingClientRect();
+
+      const pageLeftInScroll =
+        container.scrollLeft + (pageRect.left - containerRect.left);
+      const pageTopInScroll =
+        container.scrollTop + (pageRect.top - containerRect.top);
+
+      const targetLeft = Math.max(
+        0,
+        pageLeftInScroll + pageEl.clientWidth / 2 - container.clientWidth / 2
+      );
+
+      container.scrollTo({
+        left: targetLeft,
+        top: pageTopInScroll,
+        behavior: 'smooth',
+      });
+    },
+    [pdf]
+  );
 
   const handleEntryChange = useCallback((value: string) => {
     const currentMark = marks[currentMarkIndex];
@@ -2270,11 +2344,15 @@ function ViewerContent() {
     [panelMode, isMasterMarkSet, groupWindows, currentGroupIndex]
   );
 
-  // Render ALL pages, but still use prefixHeightsRef for vertical layout.
+  // Render only the visible window of pages, based on prefixHeightsRef + scroll.
   const pagesToRender =
     numPages === 0
       ? []
-      : Array.from({ length: numPages }, (_, i) => i + 1);
+      : Array.from(
+          { length: Math.max(0, visibleRange[1] - visibleRange[0] + 1) },
+          (_, i) => visibleRange[0] + i
+        );
+
 
   if (showSetup) {
     return <ViewerSetupScreen onStart={handleSetupComplete} />;

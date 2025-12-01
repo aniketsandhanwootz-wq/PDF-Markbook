@@ -108,31 +108,22 @@ export default function SlideSidebar({
           </h3>
         </div>
 
-        {/* Body — dedicated scroll area so search stays, list scrolls */}
+        {/* Body — children (e.g. MarkList) are responsible for scroll */}
         <div
           style={{
             flex: 1,
-            overflow: 'hidden',          // outer body doesn't scroll
             paddingTop: 0,
             paddingBottom: 12,
             paddingLeft: 12,
             paddingRight: 12,
             display: 'flex',
             flexDirection: 'column',
+            overflow: 'hidden', // prevent side bleed, let child manage its own scroll
           }}
         >
-          {/* This inner div is the scroll container */}
-          <div
-            style={{
-              flex: 1,
-              overflowY: 'auto',
-              WebkitOverflowScrolling: 'touch',
-              marginTop: 0,
-            }}
-          >
-            {children}
-          </div>
+          {children}
         </div>
+
 
       </aside>
     </>

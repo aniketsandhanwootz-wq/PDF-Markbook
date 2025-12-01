@@ -25,6 +25,10 @@ export default function usePinchZoom({
     const el = containerRef.current;
     if (!el) return;
 
+        // Force custom pinch handling: prevent browser-native pinch-zoom
+    const prevTouchAction = el.style.touchAction;
+    el.style.touchAction = 'none';
+
     const pointers = new Map<number, { x: number; y: number; t: number }>();
 
     let isPinching = false;
@@ -133,10 +137,15 @@ export default function usePinchZoom({
     el.addEventListener('pointercancel', onPointerEnd, { passive: true });
 
     return () => {
+      // restore original touch-action so scroll/zoom behaviour outside
+      // viewer doesn't get permanently changed
+      el.style.touchAction = prevTouchAction;
+
       el.removeEventListener('pointerdown', onPointerDown as any);
       el.removeEventListener('pointermove', onPointerMove as any);
       el.removeEventListener('pointerup', onPointerEnd as any);
       el.removeEventListener('pointercancel', onPointerEnd as any);
     };
+
   }, [enabled, zoomAt, clampZoom, containerRef, zoomRef]);
 }
