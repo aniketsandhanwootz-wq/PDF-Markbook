@@ -136,6 +136,13 @@ type FlashRect = {
   h: number;
 } | null;
 
+type Rect = {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+};
+
 type MarkSetInfo = {
   id: string;
   pdf_url: string;
@@ -162,6 +169,69 @@ const TOUCH_GESTURES_ENABLED =
   typeof window !== 'undefined' &&
   ('ontouchstart' in window || (navigator as any).maxTouchPoints > 0);
 
+// Smart sub-region inside a group: quadrant / between quadrants / center.
+// Always returns a rect fully inside the group, ~55% of group size for context.
+function computeSmartRegionWithinGroup(group: Rect, mark: Rect): Rect {
+  const gx = group.x;
+  const gy = group.y;
+  const gw = Math.max(group.w, 1);
+  const gh = Math.max(group.h, 1);
+
+  const markCx = mark.x + mark.w / 2;
+  const markCy = mark.y + mark.h / 2;
+
+  const rx = (markCx - gx) / gw;
+  const ry = (markCy - gy) / gh;
+
+  const crx = Math.min(1, Math.max(0, rx));
+  const cry = Math.min(1, Math.max(0, ry));
+
+  // 3x3 grid thresholds
+  const t1 = 0.33;
+  const t2 = 0.67;
+
+  // Region ~slightly larger than a strict quadrant for more context
+  const baseW = gw * 0.55;
+  const baseH = gh * 0.55;
+
+  const clampRegion = (cx: number, cy: number): Rect => {
+    let x = cx - baseW / 2;
+    let y = cy - baseH / 2;
+    x = Math.max(gx, Math.min(x, gx + gw - baseW));
+    y = Math.max(gy, Math.min(y, gy + gh - baseH));
+    return { x, y, w: baseW, h: baseH };
+  };
+
+  // Center region: mark roughly in center of group
+  if (crx >= t1 && crx <= t2 && cry >= t1 && cry <= t2) {
+    return clampRegion(gx + gw / 2, gy + gh / 2);
+  }
+
+  // Top middle band (between top-left & top-right)
+  if (cry < t1 && crx >= t1 && crx <= t2) {
+    return clampRegion(gx + gw / 2, gy + gh * 0.25);
+  }
+
+  // Bottom middle band (between bottom-left & bottom-right)
+  if (cry > t2 && crx >= t1 && crx <= t2) {
+    return clampRegion(gx + gw / 2, gy + gh * 0.75);
+  }
+
+  // Middle left band (between top-left & bottom-left)
+  if (crx < t1 && cry >= t1 && cry <= t2) {
+    return clampRegion(gx + gw * 0.25, gy + gh / 2);
+  }
+
+  // Middle right band (between top-right & bottom-right)
+  if (crx > t2 && cry >= t1 && cry <= t2) {
+    return clampRegion(gx + gw * 0.75, gy + gh / 2);
+  }
+
+  // Otherwise standard quadrants:
+  const cx = crx < 0.5 ? gx + gw * 0.25 : gx + gw * 0.75;
+  const cy = cry < 0.5 ? gy + gh * 0.25 : gy + gh * 0.75;
+  return clampRegion(cx, cy);
+}
 
 // ------- New types for bootstrap + markset summary -------
 type BootstrapDoc = {
@@ -744,6 +814,9 @@ function ViewerContent() {
   const lastMarkIndexRef = useRef<number | null>(null);
     // When we jump to a group, force first mark navigation to behave as "group overview"
   const pendingGroupOverviewRef = useRef<number | null>(null);
+  // When we come from group view / sidebar / review directly to a mark,
+  // request a smart quadrant-style frame instead of full-group overview.
+  const pendingSmartFrameRef = useRef<boolean>(false);
 
   const [zoom, setZoom] = useState(1.0);
   // Quantized zoom setter (must live at component top-level)
@@ -1598,42 +1671,50 @@ function ViewerContent() {
       const containerW = container.clientWidth;
       const containerH = container.clientHeight;
 
-if (isMaster || !hasGroup || !gMeta) {
-  const rectAt1 = {
-    x: mark.nx * base.w,
-    y: mark.ny * base.h,
-    w: mark.nw * base.w,
-    h: mark.nh * base.h,
-  };
+      // Mark rect on this page at scale = 1
+      const markRectAt1: Rect = {
+        x: mark.nx * base.w,
+        y: mark.ny * base.h,
+        w: mark.nw * base.w,
+        h: mark.nh * base.h,
+      };
 
-  let targetZoom = Math.min(
-    (containerW * 0.8) / rectAt1.w,
-    (containerH * 0.8) / rectAt1.h
-  );
-  targetZoom = Math.min(targetZoom, 4);
-  if (containerW < 600) targetZoom = Math.min(targetZoom, 3);
+      // One-shot flag: did caller request smart framing for this navigation?
+      const wantsSmartFrame = pendingSmartFrameRef.current;
+      pendingSmartFrameRef.current = false;
 
-  const qZoom = setZoomQ(targetZoom, zoomRef);
+      // ---------- MASTER / LEGACY FLOW ----------
+      if (isMaster || !hasGroup || !gMeta) {
+        const rectAt1 = markRectAt1;
 
-  // ✅ prefix + totalHeight ko isi zoom pe update kar do
-  recomputePrefix();
+        let targetZoom = Math.min(
+          (containerW * 0.8) / rectAt1.w,
+          (containerH * 0.8) / rectAt1.h
+        );
+        targetZoom = Math.min(targetZoom, 4);
+        if (containerW < 600) targetZoom = Math.min(targetZoom, 3);
 
-  requestAnimationFrame(async () => {
-    const expectedW = base.w * qZoom;
-    const expectedH = base.h * qZoom;
-    const expectedTotalHeight = totalHeightRef.current;
+        const qZoom = setZoomQ(targetZoom, zoomRef);
 
-    await waitForCanvasLayout(
-      pageEl!,
-      expectedW,
-      expectedH,
-      1500,
-      container,
-      expectedTotalHeight
-    );
+        // ✅ prefix + totalHeight ko isi zoom pe update kar do
+        recomputePrefix();
 
-    const containerRect = container.getBoundingClientRect();
-    const pageRect = pageEl!.getBoundingClientRect();
+        requestAnimationFrame(async () => {
+          const expectedW = base.w * qZoom;
+          const expectedH = base.h * qZoom;
+          const expectedTotalHeight = totalHeightRef.current;
+
+          await waitForCanvasLayout(
+            pageEl!,
+            expectedW,
+            expectedH,
+            1500,
+            container,
+            expectedTotalHeight
+          );
+
+          const containerRect = container.getBoundingClientRect();
+          const pageRect = pageEl!.getBoundingClientRect();
 
           const pageOffsetLeft =
             container.scrollLeft + (pageRect.left - containerRect.left);
@@ -1643,10 +1724,10 @@ if (isMaster || !hasGroup || !gMeta) {
           const z = zoomRef.current || qZoom;
 
           const rectAtZ = {
-            x: mark.nx * base.w * z,
-            y: mark.ny * base.h * z,
-            w: mark.nw * base.w * z,
-            h: mark.nh * base.h * z,
+            x: rectAt1.x * z,
+            y: rectAt1.y * z,
+            w: rectAt1.w * z,
+            h: rectAt1.h * z,
           };
 
           setFlashRect({ pageNumber, ...rectAtZ });
@@ -1680,12 +1761,19 @@ if (isMaster || !hasGroup || !gMeta) {
       const gi = groupIdx!;
       const group = gMeta!;
 
-      const groupRectAt1 = {
+      const groupRectAt1: Rect = {
         x: group.nx * base.w,
         y: group.ny * base.h,
         w: group.nw * base.w,
         h: group.nh * base.h,
       };
+
+      // Smart quadrant-style framing only in MARK mode
+      const smartFrame = wantsSmartFrame && panelMode === 'mark';
+      let smartRegionRectAt1: Rect | null = null;
+      if (smartFrame) {
+        smartRegionRectAt1 = computeSmartRegionWithinGroup(groupRectAt1, markRectAt1);
+      }
 
       // Previous group index (based on last focused mark)
       const prevGroupIdx =
@@ -1707,9 +1795,12 @@ if (isMaster || !hasGroup || !gMeta) {
         pendingGroupOverviewRef.current = null;
       }
 
+      // For smart-frame jumps, we DON'T want full-group overview behaviour.
+      const effectiveGroupChanged = groupChanged && !smartFrame;
+
       let targetZoom = zoomRef.current || 1.0;
 
-      if (groupChanged) {
+      if (effectiveGroupChanged) {
         // Either reuse cached zoom (when coming back to this group in mark mode),
         // or compute a fresh zoom that fits the whole group inside the *actual*
         // scroll container area. We no longer subtract HUD/InputPanel here because
@@ -1747,28 +1838,48 @@ if (isMaster || !hasGroup || !gMeta) {
         recomputePrefix();
       }
 
- requestAnimationFrame(async () => {
-  const expectedW = base.w * targetZoom;
-  const expectedH = base.h * targetZoom;
+      // Smart-frame: compute zoom to fit the chosen quadrant / sub-region
+      if (smartFrame && smartRegionRectAt1) {
+        const containerRect = container.getBoundingClientRect();
+        const margin = 16;
 
-  if (groupChanged) {
-    const expectedTotalHeight = totalHeightRef.current;
+        const usableWidth = Math.max(40, containerRect.width - margin * 2);
+        const usableHeight = Math.max(40, containerRect.height - margin * 2);
 
-    await waitForCanvasLayout(
-      pageEl!,
-      expectedW,
-      expectedH,
-      1500,
-      container,
-      expectedTotalHeight
-    );
+        const rawZoom = computeZoomForRect(
+          { w: usableWidth, h: usableHeight },
+          { w: base.w, h: base.h },
+          smartRegionRectAt1,
+          0.04 // a little padding around that region
+        );
 
-    // double safety: prefix ko layout-stable hone ke baad phir se recompute
-    recomputePrefix();
-  }
+        targetZoom = quantize(rawZoom);
+        setZoomQ(targetZoom, zoomRef);
+        recomputePrefix();
+      }
 
-  const containerRect = container.getBoundingClientRect();
-  const pageRect = pageEl!.getBoundingClientRect();
+      requestAnimationFrame(async () => {
+        const expectedW = base.w * targetZoom;
+        const expectedH = base.h * targetZoom;
+
+        if (effectiveGroupChanged || smartFrame) {
+          const expectedTotalHeight = totalHeightRef.current;
+
+          await waitForCanvasLayout(
+            pageEl!,
+            expectedW,
+            expectedH,
+            1500,
+            container,
+            expectedTotalHeight
+          );
+
+          // double safety: prefix ko layout-stable hone ke baad phir se recompute
+          recomputePrefix();
+        }
+
+        const containerRect = container.getBoundingClientRect();
+        const pageRect = pageEl!.getBoundingClientRect();
         const pageOffsetLeft =
           container.scrollLeft + (pageRect.left - containerRect.left);
         const pageOffsetTop =
@@ -1777,10 +1888,10 @@ if (isMaster || !hasGroup || !gMeta) {
         const z = zoomRef.current || targetZoom;
 
         const rectAtZ = {
-          x: mark.nx * base.w * z,
-          y: mark.ny * base.h * z,
-          w: mark.nw * base.w * z,
-          h: mark.nh * base.h * z,
+          x: markRectAt1.x * z,
+          y: markRectAt1.y * z,
+          w: markRectAt1.w * z,
+          h: markRectAt1.h * z,
         };
 
         const groupRectAtZ = {
@@ -1789,6 +1900,15 @@ if (isMaster || !hasGroup || !gMeta) {
           w: groupRectAt1.w * z,
           h: groupRectAt1.h * z,
         };
+
+        const smartRegionRectAtZ = smartRegionRectAt1
+          ? {
+              x: smartRegionRectAt1.x * z,
+              y: smartRegionRectAt1.y * z,
+              w: smartRegionRectAt1.w * z,
+              h: smartRegionRectAt1.h * z,
+            }
+          : null;
 
         // Highlight current mark box (yellow) + flash
         setFlashRect({ pageNumber, ...rectAtZ });
@@ -1814,13 +1934,22 @@ if (isMaster || !hasGroup || !gMeta) {
         let targetScrollLeft: number;
         let targetScrollTop: number;
 
-        if (groupChanged) {
+        if (effectiveGroupChanged) {
           // Group overview: center the entire group within the viewport.
           const groupCenterX = groupLeft + groupRectAtZ.w / 2;
           const groupCenterY = groupTopAbs + groupRectAtZ.h / 2;
 
           targetScrollLeft = groupCenterX - effectiveViewWidth / 2;
           targetScrollTop = groupCenterY - visibleHeight / 2;
+        } else if (smartFrame && smartRegionRectAtZ) {
+          // Smart-frame view: center the chosen quadrant / sub-region
+          const regionCenterX =
+            pageOffsetLeft + smartRegionRectAtZ.x + smartRegionRectAtZ.w / 2;
+          const regionCenterY =
+            pageOffsetTop + smartRegionRectAtZ.y + smartRegionRectAtZ.h / 2;
+
+          targetScrollLeft = regionCenterX - effectiveViewWidth / 2;
+          targetScrollTop = regionCenterY - visibleHeight / 2;
         } else {
           // Mark-by-mark: treat the viewport as a "window" sliding inside the group.
           // Keep this window wholly inside the group's bounding box.
@@ -1874,8 +2003,6 @@ if (isMaster || !hasGroup || !gMeta) {
       recomputePrefix,
     ]
   );
-
-
 
   // --- Group-aware navigation helpers ---
   const navigateToGroup = useCallback(
@@ -1943,15 +2070,19 @@ if (isMaster || !hasGroup || !gMeta) {
   ]);
 
   const proceedFromGroupToMarks = useCallback(() => {
-    setPanelMode('mark');
     if (!marks.length) return;
+
+    // We're leaving group overview → first mark of this group
+    setPanelMode('mark');
+    pendingSmartFrameRef.current = true; // use quadrant framing for this jump
 
     const safeIndex =
       currentMarkIndex >= 0 && currentMarkIndex < marks.length ? currentMarkIndex : 0;
     navigateToMark(safeIndex);
   }, [currentMarkIndex, marks.length, navigateToMark]);
 
-  const jumpDirectToMark = useCallback(
+
+   const jumpDirectToMark = useCallback(
     (index: number) => {
       if (index < 0 || index >= marks.length) return;
 
@@ -1965,6 +2096,8 @@ if (isMaster || !hasGroup || !gMeta) {
         }
       }
 
+      // Sidebar / review jumps should use smart quadrant framing
+      pendingSmartFrameRef.current = true;
       navigateToMark(index);
     },
     [marks.length, markToGroupIndex, groupWindows, navigateToMark]
