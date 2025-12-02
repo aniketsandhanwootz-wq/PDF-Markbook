@@ -150,12 +150,6 @@ const TOUCH_GESTURES_ENABLED =
   typeof window !== 'undefined' &&
   ('ontouchstart' in window || (navigator as any).maxTouchPoints > 0);
 
-// Reserve some space so PDF content doesn't hide under the floating HUD buttons
-const HUD_TOP_SAFE_PX = 72;   // approx height of top HUD bar
-const HUD_SIDE_SAFE_PX = 90;  // approx width taken by right zoom buttons
-
-// Reserve space at the bottom for the blue InputPanel (mostly mobile)
-const INPUT_PANEL_SAFE_PX_MOBILE = 190; // ≈ height of InputPanel + padding
 
 // ------- New types for bootstrap + markset summary -------
 type BootstrapDoc = {
@@ -1669,6 +1663,7 @@ function ViewerContent() {
         h: group.nh * base.h,
       };
 
+      // Previous group index (based on last focused mark)
       const prevGroupIdx =
         prevIdx >= 0 &&
         prevIdx < marks.length &&
@@ -1678,7 +1673,8 @@ function ViewerContent() {
 
       let groupChanged = gi !== prevGroupIdx;
 
-      // If navigateToGroup just told us "show overview for this group", force groupChanged
+      // If navigateToGroup() explicitly told us "show overview for this group",
+      // force a groupChanged=true for this navigation.
       if (
         pendingGroupOverviewRef.current != null &&
         pendingGroupOverviewRef.current === gi
@@ -1690,6 +1686,10 @@ function ViewerContent() {
       let targetZoom = zoomRef.current || 1.0;
 
       if (groupChanged) {
+        // Either reuse cached zoom (when coming back to this group in mark mode),
+        // or compute a fresh zoom that fits the whole group inside the *actual*
+        // scroll container area. We no longer subtract HUD/InputPanel here because
+        // the layout already gives the PDF only the free space above the panel.
         const cached = groupZoomCache.current.get(gi);
         const useCache = cached && panelMode !== 'group';
 
@@ -1697,34 +1697,25 @@ function ViewerContent() {
           targetZoom = cached;
         } else {
           const containerRect = container.getBoundingClientRect();
-
-          // 🔹 Reserve HUD + input panel areas so group truly fills what's left
-          const isMobileLayout = isMobileInputMode;
-
-          const safeRight = HUD_SIDE_SAFE_PX;
-          const safeTop = isMobileLayout ? 0 : HUD_TOP_SAFE_PX;
-          const safeBottom = isMobileLayout ? INPUT_PANEL_SAFE_PX_MOBILE * 0.7 : 0;
-
           const margin = 16; // small visual margin around the group
 
           const usableWidth = Math.max(
             40,
-            containerRect.width - safeRight - margin * 2
+            containerRect.width - margin * 2
           );
           const usableHeight = Math.max(
             40,
-            containerRect.height - safeTop - safeBottom - margin * 2
+            containerRect.height - margin * 2
           );
 
           const rawZoom = computeZoomForRect(
             { w: usableWidth, h: usableHeight },
             { w: base.w, h: base.h },
             groupRectAt1,
-            0.02 // small 2% padding inside usable rect
+            0.02 // 2% padding inside usable rect
           );
 
           targetZoom = quantize(rawZoom);
-
           groupZoomCache.current.set(gi, targetZoom);
         }
 
@@ -1765,40 +1756,42 @@ function ViewerContent() {
           h: groupRectAt1.h * z,
         };
 
+        // Highlight current mark box (yellow) + flash
         setFlashRect({ pageNumber, ...rectAtZ });
         setSelectedRect({ pageNumber, ...rectAtZ });
         setTimeout(() => setFlashRect(null), 1200);
 
         // ===== SCROLL LOGIC =====
+        // These are absolute positions of the group rect in scroll coordinates.
         const groupLeft = pageOffsetLeft + groupRectAtZ.x;
         const groupTopAbs = pageOffsetTop + groupRectAtZ.y;
         const groupRight = groupLeft + groupRectAtZ.w;
         const groupBottomAbs = groupTopAbs + groupRectAtZ.h;
 
-        const effectiveViewWidth = containerW - HUD_SIDE_SAFE_PX;
+        // The *actual* viewport size is just the container dimensions.
+        // We don't subtract HUD/InputPanel here – the layout already keeps
+        // the InputPanel outside the scroll area.
+        const effectiveViewWidth = containerW;
         const windowWidth = Math.min(groupRectAtZ.w, effectiveViewWidth);
 
-        const isMobileLayout = isMobileInputMode;
-        let visibleHeight =
-          containerRect.height - (isMobileLayout ? 0 : HUD_TOP_SAFE_PX);
-
-        if (visibleHeight < containerRect.height * 0.4) {
-          visibleHeight = containerRect.height * 0.4;
-        }
+        const visibleHeight = containerRect.height;
         const windowHeight = Math.min(groupRectAtZ.h, visibleHeight);
 
         let targetScrollLeft: number;
         let targetScrollTop: number;
 
         if (groupChanged) {
-          // Group overview: center entire group
+          // Group overview: center the entire group within the viewport.
           const groupCenterX = groupLeft + groupRectAtZ.w / 2;
           const groupCenterY = groupTopAbs + groupRectAtZ.h / 2;
 
-          targetScrollLeft = groupCenterX - windowWidth / 2;
-          targetScrollTop = groupCenterY - containerH / 2;
+          targetScrollLeft = groupCenterX - effectiveViewWidth / 2;
+          targetScrollTop = groupCenterY - visibleHeight / 2;
         } else {
-          // Mark-by-mark inside group (quadrant-style window)
+          // Mark-by-mark: treat the viewport as a "window" sliding inside the group.
+          // Keep this window wholly inside the group's bounding box.
+
+          // Horizontal window inside [groupLeft, groupRight]
           const markCenterX = pageOffsetLeft + rectAtZ.x + rectAtZ.w / 2;
           let desiredLeft = markCenterX - windowWidth / 2;
           const minLeft = groupLeft;
@@ -1806,6 +1799,7 @@ function ViewerContent() {
           desiredLeft = Math.max(minLeft, Math.min(desiredLeft, maxLeft));
           targetScrollLeft = desiredLeft;
 
+          // Vertical window inside [groupTopAbs, groupBottomAbs]
           const markCenterY = pageOffsetTop + rectAtZ.y + rectAtZ.h / 2;
           let desiredTop = markCenterY - windowHeight / 2;
           const minTop = groupTopAbs;
