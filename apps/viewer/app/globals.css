@@ -692,10 +692,11 @@ body {
   padding-bottom: env(safe-area-inset-bottom);
 }
 
-/* PATCH[globals.css] — lighter containment to avoid scroll issues on desktop */
 .pdf-surface-wrap {
-  contain: paint;
+  contain: layout style;  /* 🔹 CHANGED: lighter containment, allows scroll to work */
   backface-visibility: hidden;
+  overflow: auto !important;  /* 🔹 ENSURE scroll is always enabled */
+  -webkit-overflow-scrolling: touch;
 }
 
 

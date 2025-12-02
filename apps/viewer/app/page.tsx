@@ -856,10 +856,11 @@ function ViewerContent() {
   const prefixHeightsRef = useRef<number[]>([]);   // top offsets of each page at current zoom
   const totalHeightRef = useRef<number>(0);
   const [visibleRange, setVisibleRange] = useState<[number, number]>([1, 3]); // 1-based inclusive
-  // Whenever the document/page-count changes, reset to a safe initial window
+// Whenever the document/page-count changes, reset to a safe initial window
   useEffect(() => {
     if (!numPages) return;
-    setVisibleRange([1, Math.min(3, numPages)]);
+    // 🔹 NEW: Show more pages initially (up to 5) so user can scroll during title screen
+    setVisibleRange([1, Math.min(5, numPages)]);
   }, [numPages]);
 
   function lowerBound(a: number[], x: number) { // first idx with a[idx] >= x
@@ -1660,13 +1661,15 @@ function ViewerContent() {
       if (isGroupOverviewMode) {
         groupChanged = true;
       }
-
-      // ===== ZOOM LOGIC (with per-group cache) =====
+// ===== ZOOM LOGIC (with per-group cache) =====
       let targetZoom = zoomRef.current || 1.0;
 
       if (groupChanged) {
         const cached = groupZoomCache.current.get(gi);
-        if (cached) {
+        // 🔹 NEW: Only use cache if we're NOT in group overview mode
+        const useCache = cached && panelMode !== 'group';
+        
+        if (useCache) {
           // reuse previously-computed zoom for this group
           targetZoom = cached;
         } else {
@@ -1689,9 +1692,11 @@ function ViewerContent() {
           targetZoom = quantize(clampZoom(rawZoom));
           groupZoomCache.current.set(gi, targetZoom);
         }
-
         // actually apply zoom
         setZoomQ(targetZoom, zoomRef);
+
+        // 🔹 NEW: Force immediate recompute of prefix heights after zoom change
+        recomputePrefix();
       }
 
       requestAnimationFrame(async () => {
@@ -1700,6 +1705,9 @@ function ViewerContent() {
 
         if (groupChanged) {
           await waitForCanvasLayout(pageEl!, expectedW, expectedH, 1500);
+          
+          // 🔹 NEW: After canvas layout, recompute prefix again to be safe
+          recomputePrefix();
         }
 
         const containerRect = container.getBoundingClientRect();
@@ -1741,11 +1749,23 @@ function ViewerContent() {
         let targetScrollTop: number;
         const isMobileLayout = isMobileInputMode;
 
-        if (groupChanged) {
-          // Group overview -> show group top
-          const paddingTopPx = isMobileLayout ? 0 : HUD_TOP_SAFE_PX;
+if (groupChanged) {
+          // Group overview -> show group top, centered vertically if possible
+          const paddingTopPx = isMobileLayout ? 8 : HUD_TOP_SAFE_PX;
           const groupTop = pageOffsetTop + groupRectAtZ.y;
-          targetScrollTop = groupTop - paddingTopPx;
+          
+          // 🔹 NEW: Try to center group vertically in viewport
+          const availableHeight = containerH - paddingTopPx;
+          const groupFitsInView = groupRectAtZ.h <= availableHeight;
+          
+          if (groupFitsInView) {
+            // Center the group vertically
+            const extraSpace = availableHeight - groupRectAtZ.h;
+            targetScrollTop = groupTop - paddingTopPx - (extraSpace / 2);
+          } else {
+            // Group larger than viewport -> show from top
+            targetScrollTop = groupTop - paddingTopPx;
+          }
         } else {
           // Quadrant-style mark-by-mark view
           const containerHeight = containerRect.height;
@@ -1807,8 +1827,8 @@ function ViewerContent() {
 
   // --- Group-aware navigation helpers ---
 
-  const navigateToGroup = useCallback(
-    (groupIdx: number) => {
+const navigateToGroup = useCallback(
+    async (groupIdx: number) => {  // 🔹 CHANGED: make async
       if (!groupWindows || groupIdx < 0 || groupIdx >= groupWindows.length) return;
       const meta = groupWindows[groupIdx];
 
@@ -1816,11 +1836,16 @@ function ViewerContent() {
       setCurrentMarkIndex(meta.startIndex);
       setPanelMode('group');
 
-      navigateToMark(meta.startIndex);
-    },
-    [groupWindows, navigateToMark]
-  );
+      // 🔹 NEW: Clear stale zoom cache for this group so it recalculates fresh
+      groupZoomCache.current.delete(groupIdx);
 
+      // 🔹 NEW: Small delay to let React render state changes before navigating
+      await new Promise((r) => setTimeout(r, 50));
+
+      await navigateToMark(meta.startIndex);  // 🔹 CHANGED: await the navigation
+    },
+    [groupWindows, navigateToMark, groupZoomCache]  // 🔹 ADD groupZoomCache to deps
+  );
 
   // When marks + PDF are ready *and* title is confirmed,
   // start at first group (QC) or first mark (master/legacy)

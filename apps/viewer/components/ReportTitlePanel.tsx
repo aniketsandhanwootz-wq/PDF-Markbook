@@ -69,6 +69,7 @@ export default function ReportTitlePanel({
         marginLeft: floating ? 6 : undefined,
         marginRight: floating ? 6 : undefined,
         transform: floating ? 'translateZ(0)' : undefined,
+        pointerEvents: 'none',  // 🔹 NEW: don't block PDF scroll behind
       }}
     >
       {/* Header */}
@@ -85,6 +86,8 @@ export default function ReportTitlePanel({
           borderTopLeftRadius: 12,
           borderTopRightRadius: 12,
           textAlign: 'center',
+          pointerEvents: 'auto',  // 🔹 NEW: re-enable for interactive content
+
         }}
       >
         <div
@@ -119,6 +122,7 @@ export default function ReportTitlePanel({
           flexDirection: 'column',
           gap: 6,
           flexShrink: 0,
+          pointerEvents: 'auto',  // 🔹 NEW
         }}
       >
         <input
@@ -175,6 +179,7 @@ export default function ReportTitlePanel({
           gap: 6,
           flexShrink: 0,
           paddingBottom: floating ? 6 : 'env(safe-area-inset-bottom, 6px)',
+          pointerEvents: 'auto',  // 🔹 NEW
         }}
       >
         <button
