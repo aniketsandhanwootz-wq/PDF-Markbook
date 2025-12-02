@@ -945,35 +945,48 @@ function ViewerContent() {
     setCurrentPage(idx + 1);
   }, [numPages]);
 
-  // Bind scroll + rAF-throttled resize
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
+ // Bind scroll + rAF-throttled resize
+useEffect(() => {
+  // Don’t bind while we’re still on the setup screen
+  if (showSetup) return;
+  if (!pdf) return;
 
-    const onScroll = () => updateVisibleRange();
+  const el = containerRef.current;
+  if (!el) return;
 
-    let raf: number | null = null;
-    const onResize = () => {
-      if (raf) cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => {
-        recomputePrefix();
-        updateVisibleRange();
-        raf = null;
-      });
-    };
-
-    el.addEventListener('scroll', onScroll, { passive: true });
-    window.addEventListener('resize', onResize, { passive: true });
-
-    // initial compute
+  const onScroll = () => {
     updateVisibleRange();
+  };
 
-    return () => {
-      el.removeEventListener('scroll', onScroll);
-      window.removeEventListener('resize', onResize as any);
-      if (raf) cancelAnimationFrame(raf);
-    };
-  }, [updateVisibleRange, recomputePrefix]);
+  let raf: number | null = null;
+  const onResize = () => {
+    if (raf) cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(() => {
+      recomputePrefix();
+      updateVisibleRange();
+      raf = null;
+    });
+  };
+
+  el.addEventListener('scroll', onScroll, { passive: true });
+  window.addEventListener('resize', onResize, { passive: true });
+
+  // initial compute once listeners are attached
+  recomputePrefix();
+  updateVisibleRange();
+
+  return () => {
+    el.removeEventListener('scroll', onScroll);
+    window.removeEventListener('resize', onResize as any);
+    if (raf) cancelAnimationFrame(raf);
+  };
+}, [
+  pdf,
+  showSetup,
+  isMobileInputMode,   // layout mode affects container size
+  updateVisibleRange,
+  recomputePrefix,
+]);
 
   // ===== IntersectionObserver prefetch (tiny, gated) =====
   useEffect(() => {
@@ -1164,6 +1177,17 @@ function ViewerContent() {
     : '';
 
   const markSetId = selectedMarkSetId || markSetIdParam;
+
+  // Reset viewer bootstrap state when markset changes
+  useEffect(() => {
+    hasBootstrappedViewerRef.current = false;
+    lastMarkIndexRef.current = null;
+    groupZoomCache.current.clear();
+    setCurrentGroupIndex(0);
+    setPanelMode('group'); // QC will immediately jump to group 0; master will override to mark mode
+    setCurrentMarkIndex(0);
+  }, [markSetId]);
+
 
   const demoMarks: Mark[] = [
     {
@@ -1664,40 +1688,56 @@ function ViewerContent() {
 // ===== ZOOM LOGIC (with per-group cache) =====
       let targetZoom = zoomRef.current || 1.0;
 
-      if (groupChanged) {
-        const cached = groupZoomCache.current.get(gi);
-        // 🔹 NEW: Only use cache if we're NOT in group overview mode
-        const useCache = cached && panelMode !== 'group';
-        
-        if (useCache) {
-          // reuse previously-computed zoom for this group
-          targetZoom = cached;
-        } else {
-          const containerRect = container.getBoundingClientRect();
-          const isMobileLayout = isMobileInputMode;
+ if (groupChanged) {
+  const cached = groupZoomCache.current.get(gi);
+  // Only use cache if we're NOT in group overview mode
+  const useCache = cached && panelMode !== 'group';
 
-          let visibleHeight: number;
-          if (isMobileLayout) {
-            visibleHeight = containerRect.height - 8;
-          } else {
-            visibleHeight = containerRect.height - HUD_TOP_SAFE_PX;
-          }
+  if (useCache) {
+    targetZoom = cached;
+  } else {
+    const containerRect = container.getBoundingClientRect();
+    const isMobileLayout = isMobileInputMode;
 
-          if (visibleHeight <= 0) {
-            visibleHeight = containerRect.height * 0.8;
-          }
+    // Usable drawing area inside the scroll container,
+    // respecting HUD and some padding.
+    const padding = 8;
 
-          const rawZoom = visibleHeight / (groupRectAt1.h || 1);
-          // clamp + quantize before storing
-          targetZoom = quantize(clampZoom(rawZoom));
-          groupZoomCache.current.set(gi, targetZoom);
-        }
-        // actually apply zoom
-        setZoomQ(targetZoom, zoomRef);
+    const usableWidth =
+      containerRect.width - HUD_SIDE_SAFE_PX - padding;
 
-        // 🔹 NEW: Force immediate recompute of prefix heights after zoom change
-        recomputePrefix();
-      }
+    let usableHeight: number;
+    if (isMobileLayout) {
+      // On mobile, the InputPanel lives outside this container,
+      // so we just keep a small top/bottom padding.
+      usableHeight = containerRect.height - padding * 2;
+    } else {
+      // On desktop, subtract the HUD bar at the top + a little padding.
+      usableHeight = containerRect.height - HUD_TOP_SAFE_PX - padding;
+    }
+
+    if (usableWidth <= 0 || usableHeight <= 0) {
+      // Fallback: be conservative if layout is weird
+      usableHeight = containerRect.height * 0.8;
+    }
+
+    // Fit group *both* by width and height
+    const zoomY = usableHeight / (groupRectAt1.h || 1);
+    const zoomX = usableWidth / (groupRectAt1.w || 1);
+
+    const rawZoom = Math.min(zoomX, zoomY);
+    targetZoom = quantize(clampZoom(rawZoom));
+
+    // remember per-group zoom for subsequent mark-level navigation
+    groupZoomCache.current.set(gi, targetZoom);
+  }
+
+  // actually apply zoom
+  setZoomQ(targetZoom, zoomRef);
+
+  // Force immediate recompute of prefix heights after zoom change
+  recomputePrefix();
+}
 
       requestAnimationFrame(async () => {
         const expectedW = base.w * targetZoom;
