@@ -1769,7 +1769,7 @@ function ViewerContent() {
       };
 
       // Smart quadrant-style framing only in MARK mode
-      const smartFrame = wantsSmartFrame && panelMode === 'mark';
+const smartFrame = wantsSmartFrame;
       let smartRegionRectAt1: Rect | null = null;
       if (smartFrame) {
         smartRegionRectAt1 = computeSmartRegionWithinGroup(groupRectAt1, markRectAt1);
