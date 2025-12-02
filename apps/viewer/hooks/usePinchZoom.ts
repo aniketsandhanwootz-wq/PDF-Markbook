@@ -28,7 +28,7 @@ export default function usePinchZoom({
     // ✅ Allow vertical scroll, but still let us handle custom pinch zoom.
     // `pan-y` keeps normal vertical scrolling working.
     const prevTouchAction = el.style.touchAction;
-    el.style.touchAction = 'pan-y';
+el.style.touchAction = 'pan-x pan-y';
 
     const pointers = new Map<number, { x: number; y: number; t: number }>();
 

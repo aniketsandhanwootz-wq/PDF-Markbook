@@ -13,7 +13,7 @@ import FloatingHUD from '../components/FloatingHUD';
 import InputPanel from '../components/InputPanel';
 import ReviewScreen from '../components/ReviewScreen';
 import ReportTitlePanel from '../components/ReportTitlePanel';
-import { clampZoom, downloadMasterReport } from '../lib/pdf';
+import { clampZoom, downloadMasterReport, computeZoomForRect } from '../lib/pdf';
 import PDFSearch from '../components/PDFSearch';
 import SlideSidebar from '../components/SlideSidebar';
 import usePinchZoom from '../hooks/usePinchZoom';
@@ -1688,56 +1688,48 @@ function ViewerContent() {
       // ===== ZOOM LOGIC (with per-group cache) =====
       let targetZoom = zoomRef.current || 1.0;
 
-      if (groupChanged) {
-        const cached = groupZoomCache.current.get(gi);
-        // Only use cache if we're NOT in group overview mode
-        const useCache = cached && panelMode !== 'group';
+ if (groupChanged) {
+  const cached = groupZoomCache.current.get(gi);
+  // Only use cache if we're NOT in group overview mode
+  const useCache = cached && panelMode !== 'group';
 
-        if (useCache) {
-          targetZoom = cached;
-        } else {
-          const containerRect = container.getBoundingClientRect();
-          const isMobileLayout = isMobileInputMode;
+  if (useCache) {
+    targetZoom = cached;
+  } else {
+    const containerRect = container.getBoundingClientRect();
 
-          const padding = 8;
+    // Small, symmetric padding around the group
+    const padding = 16;
+    const usableWidth = Math.max(
+      50,
+      containerRect.width - padding * 2
+    );
+    const usableHeight = Math.max(
+      50,
+      containerRect.height - padding * 2
+    );
 
-          // Always reserve space for HUD at the top,
-          // and zoom buttons on the right.
-          const usableWidth =
-            containerRect.width - HUD_SIDE_SAFE_PX - padding;
+    // Let helper choose zoom so the group rect fills the usable area
+    const rawZoom = computeZoomForRect(
+      { w: usableWidth, h: usableHeight },
+      { w: base.w, h: base.h },
+      groupRectAt1,
+      0.04          // ~4% padding around the group
+    );
 
-          const hudTopSafe = HUD_TOP_SAFE_PX;
-          let usableHeight =
-            containerRect.height - hudTopSafe - padding;
+    targetZoom = quantize(rawZoom);
 
-          if (usableHeight <= 0) {
-            // Fallback: be conservative if layout is weird
-            usableHeight = containerRect.height * 0.8;
-          }
+    // remember per-group zoom for subsequent mark-level navigation
+    groupZoomCache.current.set(gi, targetZoom);
+  }
 
+  // actually apply zoom
+  setZoomQ(targetZoom, zoomRef);
 
-          if (usableWidth <= 0 || usableHeight <= 0) {
-            // Fallback: be conservative if layout is weird
-            usableHeight = containerRect.height * 0.8;
-          }
+  // Force immediate recompute of prefix heights after zoom change
+  recomputePrefix();
+}
 
-          // Fit group *both* by width and height
-          const zoomY = usableHeight / (groupRectAt1.h || 1);
-          const zoomX = usableWidth / (groupRectAt1.w || 1);
-
-          const rawZoom = Math.min(zoomX, zoomY);
-          targetZoom = quantize(clampZoom(rawZoom));
-
-          // remember per-group zoom for subsequent mark-level navigation
-          groupZoomCache.current.set(gi, targetZoom);
-        }
-
-        // actually apply zoom
-        setZoomQ(targetZoom, zoomRef);
-
-        // Force immediate recompute of prefix heights after zoom change
-        recomputePrefix();
-      }
 
       requestAnimationFrame(async () => {
         const expectedW = base.w * targetZoom;
