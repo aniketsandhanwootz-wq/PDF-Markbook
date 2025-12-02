@@ -61,25 +61,37 @@ function cleanPdfUrl(url: string): string {
 // --- precise centering helpers ---
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/**
- * Wait until the page's <canvas> reaches the expected CSS size for the target zoom.
- * Prevents "center then resize" drift.
- */
+// 🔧 UPDATED: also wait until scrollHeight matches expected total height
 async function waitForCanvasLayout(
   pageEl: HTMLElement,
   expectedW: number,
   expectedH: number,
-  timeoutMs = 1200
+  timeoutMs = 1200,
+  container?: HTMLElement | null,
+  expectedTotalHeight?: number | null
 ) {
   const t0 = performance.now();
+
   while (performance.now() - t0 < timeoutMs) {
     const canvas = pageEl.querySelector('canvas') as HTMLCanvasElement | null;
     const w = (canvas?.clientWidth ?? pageEl.clientWidth) | 0;
     const h = (canvas?.clientHeight ?? pageEl.clientHeight) | 0;
-    if (Math.abs(w - expectedW) <= 2 && Math.abs(h - expectedH) <= 2) return;
+
+    const sizeOk =
+      Math.abs(w - expectedW) <= 2 && Math.abs(h - expectedH) <= 2;
+
+    let scrollOk = true;
+    if (container && typeof expectedTotalHeight === 'number') {
+      const sh = container.scrollHeight | 0;
+      // thoda tolerance, gutters / rounding ke liye
+      scrollOk = sh >= expectedTotalHeight - 4;
+    }
+
+    if (sizeOk && scrollOk) return;
     await sleep(50);
   }
 }
+
 // --- smooth zoom helpers ---
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 // ease-out cubic for pleasant feel
@@ -1584,32 +1596,42 @@ function ViewerContent() {
       const containerW = container.clientWidth;
       const containerH = container.clientHeight;
 
-      // ---------- MASTER / LEGACY (no group info) ----------
-      if (isMaster || !hasGroup || !gMeta) {
-        const rectAt1 = {
-          x: mark.nx * base.w,
-          y: mark.ny * base.h,
-          w: mark.nw * base.w,
-          h: mark.nh * base.h,
-        };
+if (isMaster || !hasGroup || !gMeta) {
+  const rectAt1 = {
+    x: mark.nx * base.w,
+    y: mark.ny * base.h,
+    w: mark.nw * base.w,
+    h: mark.nh * base.h,
+  };
 
-        let targetZoom = Math.min(
-          (containerW * 0.8) / rectAt1.w,
-          (containerH * 0.8) / rectAt1.h
-        );
-        targetZoom = Math.min(targetZoom, 4);
-        if (containerW < 600) targetZoom = Math.min(targetZoom, 3);
+  let targetZoom = Math.min(
+    (containerW * 0.8) / rectAt1.w,
+    (containerH * 0.8) / rectAt1.h
+  );
+  targetZoom = Math.min(targetZoom, 4);
+  if (containerW < 600) targetZoom = Math.min(targetZoom, 3);
 
-        const qZoom = setZoomQ(targetZoom, zoomRef);
+  const qZoom = setZoomQ(targetZoom, zoomRef);
 
-        requestAnimationFrame(async () => {
-          const expectedW = base.w * qZoom;
-          const expectedH = base.h * qZoom;
+  // ✅ prefix + totalHeight ko isi zoom pe update kar do
+  recomputePrefix();
 
-          await waitForCanvasLayout(pageEl!, expectedW, expectedH, 1500);
+  requestAnimationFrame(async () => {
+    const expectedW = base.w * qZoom;
+    const expectedH = base.h * qZoom;
+    const expectedTotalHeight = totalHeightRef.current;
 
-          const containerRect = container.getBoundingClientRect();
-          const pageRect = pageEl!.getBoundingClientRect();
+    await waitForCanvasLayout(
+      pageEl!,
+      expectedW,
+      expectedH,
+      1500,
+      container,
+      expectedTotalHeight
+    );
+
+    const containerRect = container.getBoundingClientRect();
+    const pageRect = pageEl!.getBoundingClientRect();
 
           const pageOffsetLeft =
             container.scrollLeft + (pageRect.left - containerRect.left);
@@ -1723,18 +1745,28 @@ function ViewerContent() {
         recomputePrefix();
       }
 
-      requestAnimationFrame(async () => {
-        const expectedW = base.w * targetZoom;
-        const expectedH = base.h * targetZoom;
+ requestAnimationFrame(async () => {
+  const expectedW = base.w * targetZoom;
+  const expectedH = base.h * targetZoom;
 
-        if (groupChanged) {
-          await waitForCanvasLayout(pageEl!, expectedW, expectedH, 1500);
-          recomputePrefix();
-        }
+  if (groupChanged) {
+    const expectedTotalHeight = totalHeightRef.current;
 
-        const containerRect = container.getBoundingClientRect();
-        const pageRect = pageEl!.getBoundingClientRect();
+    await waitForCanvasLayout(
+      pageEl!,
+      expectedW,
+      expectedH,
+      1500,
+      container,
+      expectedTotalHeight
+    );
 
+    // double safety: prefix ko layout-stable hone ke baad phir se recompute
+    recomputePrefix();
+  }
+
+  const containerRect = container.getBoundingClientRect();
+  const pageRect = pageEl!.getBoundingClientRect();
         const pageOffsetLeft =
           container.scrollLeft + (pageRect.left - containerRect.left);
         const pageOffsetTop =
