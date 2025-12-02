@@ -244,12 +244,12 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
     }
   };
 
-  // Auto-bootstrap when keys present
-  useEffect(() => {
-    if (!boot && hasBootstrapKeys && !loading) {
-      runBootstrap();
-    }
-  }, [hasBootstrapKeys]);
+useEffect(() => {
+  if (!boot && hasBootstrapKeys && !loading) {
+    runBootstrap();
+  }
+}, [boot, hasBootstrapKeys, loading]);
+
 
   // ❌ We used to compute QC mark counts here by calling /viewer/groups
   //    for every non-master markset, just to show "X marks" in the UI.
@@ -986,6 +986,7 @@ useEffect(() => {
   isMobileInputMode,   // layout mode affects container size
   updateVisibleRange,
   recomputePrefix,
+    showReportTitle, 
 ]);
 
   // ===== IntersectionObserver prefetch (tiny, gated) =====
@@ -1696,25 +1697,25 @@ useEffect(() => {
   if (useCache) {
     targetZoom = cached;
   } else {
-    const containerRect = container.getBoundingClientRect();
-    const isMobileLayout = isMobileInputMode;
+const containerRect = container.getBoundingClientRect();
+const isMobileLayout = isMobileInputMode;
 
-    // Usable drawing area inside the scroll container,
-    // respecting HUD and some padding.
-    const padding = 8;
+const padding = 8;
 
-    const usableWidth =
-      containerRect.width - HUD_SIDE_SAFE_PX - padding;
+// Always reserve space for HUD at the top,
+// and zoom buttons on the right.
+const usableWidth =
+  containerRect.width - HUD_SIDE_SAFE_PX - padding;
 
-    let usableHeight: number;
-    if (isMobileLayout) {
-      // On mobile, the InputPanel lives outside this container,
-      // so we just keep a small top/bottom padding.
-      usableHeight = containerRect.height - padding * 2;
-    } else {
-      // On desktop, subtract the HUD bar at the top + a little padding.
-      usableHeight = containerRect.height - HUD_TOP_SAFE_PX - padding;
-    }
+const hudTopSafe = HUD_TOP_SAFE_PX;
+let usableHeight =
+  containerRect.height - hudTopSafe - padding;
+
+if (usableHeight <= 0) {
+  // Fallback: be conservative if layout is weird
+  usableHeight = containerRect.height * 0.8;
+}
+
 
     if (usableWidth <= 0 || usableHeight <= 0) {
       // Fallback: be conservative if layout is weird
@@ -1790,23 +1791,22 @@ useEffect(() => {
         const isMobileLayout = isMobileInputMode;
 
 if (groupChanged) {
-          // Group overview -> show group top, centered vertically if possible
-          const paddingTopPx = isMobileLayout ? 8 : HUD_TOP_SAFE_PX;
-          const groupTop = pageOffsetTop + groupRectAtZ.y;
-          
-          // 🔹 NEW: Try to center group vertically in viewport
-          const availableHeight = containerH - paddingTopPx;
-          const groupFitsInView = groupRectAtZ.h <= availableHeight;
-          
-          if (groupFitsInView) {
-            // Center the group vertically
-            const extraSpace = availableHeight - groupRectAtZ.h;
-            targetScrollTop = groupTop - paddingTopPx - (extraSpace / 2);
-          } else {
-            // Group larger than viewport -> show from top
-            targetScrollTop = groupTop - paddingTopPx;
-          }
-        } else {
+  // Group overview -> show group area with HUD-safe padding at top
+  const paddingTopPx = HUD_TOP_SAFE_PX;
+  const groupTop = pageOffsetTop + groupRectAtZ.y;
+
+  const availableHeight = containerH - paddingTopPx;
+  const groupFitsInView = groupRectAtZ.h <= availableHeight;
+
+  if (groupFitsInView) {
+    // Center group vertically in the usable area
+    const extraSpace = availableHeight - groupRectAtZ.h;
+    targetScrollTop = groupTop - paddingTopPx - (extraSpace / 2);
+  } else {
+    // Group taller than viewport -> show from top, just under HUD
+    targetScrollTop = groupTop - paddingTopPx;
+  }
+} else {
           // Quadrant-style mark-by-mark view
           const containerHeight = containerRect.height;
           let visibleHeight =
@@ -2448,14 +2448,16 @@ const navigateToGroup = useCallback(
     [panelMode, isMasterMarkSet, groupWindows, currentGroupIndex]
   );
 
-  // Render only the visible window of pages, based on prefixHeightsRef + scroll.
-  const pagesToRender =
-    numPages === 0
-      ? []
+const pagesToRender =
+  numPages === 0
+    ? []
+    : showReportTitle
+      ? [1] // Only first page while title is shown
       : Array.from(
-        { length: Math.max(0, visibleRange[1] - visibleRange[0] + 1) },
-        (_, i) => visibleRange[0] + i
-      );
+          { length: Math.max(0, visibleRange[1] - visibleRange[0] + 1) },
+          (_, i) => visibleRange[0] + i
+        );
+
 
 
   if (showSetup) {
