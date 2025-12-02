@@ -244,11 +244,11 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
     }
   };
 
-useEffect(() => {
-  if (!boot && hasBootstrapKeys && !loading) {
-    runBootstrap();
-  }
-}, [boot, hasBootstrapKeys, loading]);
+  useEffect(() => {
+    if (!boot && hasBootstrapKeys && !loading) {
+      runBootstrap();
+    }
+  }, [boot, hasBootstrapKeys, loading]);
 
   // ❌ We used to compute QC mark counts here by calling /viewer/groups
   //    for every non-master markset, just to show "X marks" in the UI.
@@ -855,7 +855,7 @@ function ViewerContent() {
   const prefixHeightsRef = useRef<number[]>([]);   // top offsets of each page at current zoom
   const totalHeightRef = useRef<number>(0);
   const [visibleRange, setVisibleRange] = useState<[number, number]>([1, 3]); // 1-based inclusive
-// Whenever the document/page-count changes, reset to a safe initial window
+  // Whenever the document/page-count changes, reset to a safe initial window
   useEffect(() => {
     if (!numPages) return;
     // 🔹 NEW: Show more pages initially (up to 5) so user can scroll during title screen
@@ -944,49 +944,49 @@ function ViewerContent() {
     setCurrentPage(idx + 1);
   }, [numPages]);
 
- // Bind scroll + rAF-throttled resize
-useEffect(() => {
-  // Don’t bind while we’re still on the setup screen
-  if (showSetup) return;
-  if (!pdf) return;
+  // Bind scroll + rAF-throttled resize
+  useEffect(() => {
+    // Don’t bind while we’re still on the setup screen
+    if (showSetup) return;
+    if (!pdf) return;
 
-  const el = containerRef.current;
-  if (!el) return;
+    const el = containerRef.current;
+    if (!el) return;
 
-  const onScroll = () => {
-    updateVisibleRange();
-  };
-
-  let raf: number | null = null;
-  const onResize = () => {
-    if (raf) cancelAnimationFrame(raf);
-    raf = requestAnimationFrame(() => {
-      recomputePrefix();
+    const onScroll = () => {
       updateVisibleRange();
-      raf = null;
-    });
-  };
+    };
 
-  el.addEventListener('scroll', onScroll, { passive: true });
-  window.addEventListener('resize', onResize, { passive: true });
+    let raf: number | null = null;
+    const onResize = () => {
+      if (raf) cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        recomputePrefix();
+        updateVisibleRange();
+        raf = null;
+      });
+    };
 
-  // initial compute once listeners are attached
-  recomputePrefix();
-  updateVisibleRange();
+    el.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onResize, { passive: true });
 
-  return () => {
-    el.removeEventListener('scroll', onScroll);
-    window.removeEventListener('resize', onResize as any);
-    if (raf) cancelAnimationFrame(raf);
-  };
-}, [
-  pdf,
-  showSetup,
-  isMobileInputMode,   // layout mode affects container size
-  updateVisibleRange,
-  recomputePrefix,
-    showReportTitle, 
-]);
+    // initial compute once listeners are attached
+    recomputePrefix();
+    updateVisibleRange();
+
+    return () => {
+      el.removeEventListener('scroll', onScroll);
+      window.removeEventListener('resize', onResize as any);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [
+    pdf,
+    showSetup,
+    isMobileInputMode,   // layout mode affects container size
+    updateVisibleRange,
+    recomputePrefix,
+    showReportTitle,
+  ]);
 
   // ===== IntersectionObserver prefetch (tiny, gated) =====
   useEffect(() => {
@@ -1685,59 +1685,59 @@ useEffect(() => {
       if (isGroupOverviewMode) {
         groupChanged = true;
       }
-// ===== ZOOM LOGIC (with per-group cache) =====
+      // ===== ZOOM LOGIC (with per-group cache) =====
       let targetZoom = zoomRef.current || 1.0;
 
- if (groupChanged) {
-  const cached = groupZoomCache.current.get(gi);
-  // Only use cache if we're NOT in group overview mode
-  const useCache = cached && panelMode !== 'group';
+      if (groupChanged) {
+        const cached = groupZoomCache.current.get(gi);
+        // Only use cache if we're NOT in group overview mode
+        const useCache = cached && panelMode !== 'group';
 
-  if (useCache) {
-    targetZoom = cached;
-  } else {
-const containerRect = container.getBoundingClientRect();
-const isMobileLayout = isMobileInputMode;
+        if (useCache) {
+          targetZoom = cached;
+        } else {
+          const containerRect = container.getBoundingClientRect();
+          const isMobileLayout = isMobileInputMode;
 
-const padding = 8;
+          const padding = 8;
 
-// Always reserve space for HUD at the top,
-// and zoom buttons on the right.
-const usableWidth =
-  containerRect.width - HUD_SIDE_SAFE_PX - padding;
+          // Always reserve space for HUD at the top,
+          // and zoom buttons on the right.
+          const usableWidth =
+            containerRect.width - HUD_SIDE_SAFE_PX - padding;
 
-const hudTopSafe = HUD_TOP_SAFE_PX;
-let usableHeight =
-  containerRect.height - hudTopSafe - padding;
+          const hudTopSafe = HUD_TOP_SAFE_PX;
+          let usableHeight =
+            containerRect.height - hudTopSafe - padding;
 
-if (usableHeight <= 0) {
-  // Fallback: be conservative if layout is weird
-  usableHeight = containerRect.height * 0.8;
-}
+          if (usableHeight <= 0) {
+            // Fallback: be conservative if layout is weird
+            usableHeight = containerRect.height * 0.8;
+          }
 
 
-    if (usableWidth <= 0 || usableHeight <= 0) {
-      // Fallback: be conservative if layout is weird
-      usableHeight = containerRect.height * 0.8;
-    }
+          if (usableWidth <= 0 || usableHeight <= 0) {
+            // Fallback: be conservative if layout is weird
+            usableHeight = containerRect.height * 0.8;
+          }
 
-    // Fit group *both* by width and height
-    const zoomY = usableHeight / (groupRectAt1.h || 1);
-    const zoomX = usableWidth / (groupRectAt1.w || 1);
+          // Fit group *both* by width and height
+          const zoomY = usableHeight / (groupRectAt1.h || 1);
+          const zoomX = usableWidth / (groupRectAt1.w || 1);
 
-    const rawZoom = Math.min(zoomX, zoomY);
-    targetZoom = quantize(clampZoom(rawZoom));
+          const rawZoom = Math.min(zoomX, zoomY);
+          targetZoom = quantize(clampZoom(rawZoom));
 
-    // remember per-group zoom for subsequent mark-level navigation
-    groupZoomCache.current.set(gi, targetZoom);
-  }
+          // remember per-group zoom for subsequent mark-level navigation
+          groupZoomCache.current.set(gi, targetZoom);
+        }
 
-  // actually apply zoom
-  setZoomQ(targetZoom, zoomRef);
+        // actually apply zoom
+        setZoomQ(targetZoom, zoomRef);
 
-  // Force immediate recompute of prefix heights after zoom change
-  recomputePrefix();
-}
+        // Force immediate recompute of prefix heights after zoom change
+        recomputePrefix();
+      }
 
       requestAnimationFrame(async () => {
         const expectedW = base.w * targetZoom;
@@ -1745,7 +1745,7 @@ if (usableHeight <= 0) {
 
         if (groupChanged) {
           await waitForCanvasLayout(pageEl!, expectedW, expectedH, 1500);
-          
+
           // 🔹 NEW: After canvas layout, recompute prefix again to be safe
           recomputePrefix();
         }
@@ -1778,111 +1778,57 @@ if (usableHeight <= 0) {
         setSelectedRect({ pageNumber, ...rectAtZ });
         setTimeout(() => setFlashRect(null), 1200);
 
-        // ===== SCROLL LOGIC (QC groups + quadrant positioning) =====
-        const containerWidth = containerRect.width;
-        const containerHeight = containerRect.height;
+                // ===== SCROLL LOGIC =====
 
-        const markCenterX = pageOffsetLeft + rectAtZ.x + rectAtZ.w / 2;
-        const markCenterY = pageOffsetTop + rectAtZ.y + rectAtZ.h / 2;
-
+        // Group bounds (in scroll coordinates) at current zoom
         const groupLeft = pageOffsetLeft + groupRectAtZ.x;
-        const groupTop = pageOffsetTop + groupRectAtZ.y;
-        const groupWidth = groupRectAtZ.w;
-        const groupHeight = groupRectAtZ.h;
-        const groupRight = groupLeft + groupWidth;
-        const groupBottom = groupTop + groupHeight;
+        const groupTopAbs = pageOffsetTop + groupRectAtZ.y;
+        const groupRight = groupLeft + groupRectAtZ.w;
+        const groupBottomAbs = groupTopAbs + groupRectAtZ.h;
 
-        const effectiveViewWidth = containerWidth - HUD_SIDE_SAFE_PX;
-        let visibleHeight = containerHeight - HUD_TOP_SAFE_PX;
+        // Effective “usable” viewport width (right HUD eats a bit)
+        const effectiveViewWidth = containerW - HUD_SIDE_SAFE_PX;
+        const windowWidth = Math.min(groupRectAtZ.w, effectiveViewWidth);
+
+        // Y window height (used for quadrant-style sliding inside the group)
+        const containerHeight = containerRect.height;
+        const isMobileLayout = isMobileInputMode;
+        let visibleHeight =
+          containerHeight - (isMobileLayout ? 0 : HUD_TOP_SAFE_PX);
+
         if (visibleHeight < containerHeight * 0.4) {
           visibleHeight = containerHeight * 0.4;
         }
+        const windowHeight = Math.min(groupRectAtZ.h, visibleHeight);
 
         let targetScrollLeft: number;
         let targetScrollTop: number;
 
         if (groupChanged) {
-          // ▶ GROUP OVERVIEW: show the whole group just under the HUD
+          // 🔹 Group overview: center the ENTIRE group in both X and Y.
+          const groupCenterX = groupLeft + groupRectAtZ.w / 2;
+          const groupCenterY = groupTopAbs + groupRectAtZ.h / 2;
 
-          const paddingTopPx = HUD_TOP_SAFE_PX;
-          const availableHeight = containerHeight - paddingTopPx;
-          const groupFitsInView = groupHeight <= availableHeight;
-
-          if (groupFitsInView) {
-            // Center group vertically in the usable area
-            const groupCenterY = groupTop + groupHeight / 2;
-            targetScrollTop = groupCenterY - (paddingTopPx + availableHeight / 2);
-          } else {
-            // Group taller than viewport -> show from top, just under HUD
-            targetScrollTop = groupTop - paddingTopPx;
-          }
-
-          if (groupWidth <= effectiveViewWidth) {
-            // Center horizontally when group is narrower than view
-            const groupCenterX = groupLeft + groupWidth / 2;
-            targetScrollLeft = groupCenterX - effectiveViewWidth / 2;
-          } else {
-            // Otherwise, center group within the safe area
-            targetScrollLeft = groupLeft + (groupWidth - effectiveViewWidth) / 2;
-          }
+          targetScrollLeft = groupCenterX - windowWidth / 2;
+          targetScrollTop = groupCenterY - containerH / 2;
         } else {
-          // ▶ MARK-BY-MARK: place the mark into one of 4 screen quadrants
-          //    within the group window, while keeping the group in view.
+          // 🔹 Mark-by-mark mode: slide a window INSIDE the group (quadrant-style).
 
-          // --- Horizontal (left/right) ---
-          if (groupWidth <= effectiveViewWidth) {
-            // Group narrower than viewport → keep it centered horizontally
-            const groupCenterX = groupLeft + groupWidth / 2;
-            targetScrollLeft = groupCenterX - effectiveViewWidth / 2;
-          } else {
-            // Decide left/right half based on mark position inside the group
-            const relX =
-              groupWidth > 0 ? (markCenterX - groupLeft) / groupWidth : 0.5;
-            const quadX = relX < 0.5 ? 0 : 1; // 0 = left, 1 = right
+          // Horizontal: keep the mark near center but clamped to group [left, right-windowWidth]
+          const markCenterX = pageOffsetLeft + rectAtZ.x + rectAtZ.w / 2;
+          let desiredLeft = markCenterX - windowWidth / 2;
+          const minLeft = groupLeft;
+          const maxLeft = groupRight - windowWidth;
+          desiredLeft = Math.max(minLeft, Math.min(desiredLeft, maxLeft));
+          targetScrollLeft = desiredLeft;
 
-            const anchorXWithinView =
-              quadX === 0 ? effectiveViewWidth * 0.25 : effectiveViewWidth * 0.75;
-
-            // screenX = markCenterX - scrollLeft ≈ anchorXWithinView
-            let desiredLeft = markCenterX - anchorXWithinView;
-
-            const minLeft = groupLeft;
-            const maxLeft = groupRight - effectiveViewWidth;
-            if (maxLeft <= minLeft) {
-              targetScrollLeft = desiredLeft;
-            } else {
-              targetScrollLeft = Math.max(minLeft, Math.min(desiredLeft, maxLeft));
-            }
-          }
-
-          // --- Vertical (top/bottom) ---
-          if (groupHeight <= visibleHeight) {
-            // Group shorter than viewport → keep it centered vertically
-            const groupCenterY = groupTop + groupHeight / 2;
-            targetScrollTop =
-              groupCenterY - (HUD_TOP_SAFE_PX + visibleHeight / 2);
-          } else {
-            // Decide top/bottom half based on mark position inside the group
-            const relY =
-              groupHeight > 0 ? (markCenterY - groupTop) / groupHeight : 0.5;
-            const quadY = relY < 0.5 ? 0 : 1; // 0 = top, 1 = bottom
-
-            const anchorY =
-              HUD_TOP_SAFE_PX +
-              (quadY === 0 ? visibleHeight * 0.25 : visibleHeight * 0.75);
-
-            // screenY = markCenterY - scrollTop ≈ anchorY
-            let desiredTop = markCenterY - anchorY;
-
-            const minTop = groupTop - HUD_TOP_SAFE_PX;
-            const maxTop = groupBottom - visibleHeight - HUD_TOP_SAFE_PX;
-
-            if (maxTop <= minTop) {
-              targetScrollTop = desiredTop;
-            } else {
-              targetScrollTop = Math.max(minTop, Math.min(desiredTop, maxTop));
-            }
-          }
+          // Vertical: same idea, but within [top, bottom-windowHeight]
+          const markCenterY = pageOffsetTop + rectAtZ.y + rectAtZ.h / 2;
+          let desiredTop = markCenterY - windowHeight / 2;
+          const minTop = groupTopAbs;
+          const maxTop = groupBottomAbs - windowHeight;
+          desiredTop = Math.max(minTop, Math.min(desiredTop, maxTop));
+          targetScrollTop = desiredTop;
         }
 
         const { left: clampedL, top: clampedT } = clampScroll(
@@ -1896,6 +1842,7 @@ if (usableHeight <= 0) {
           top: clampedT,
           behavior: 'smooth',
         });
+
       });
 
       // Remember last index so next call can detect group changes reliably.
@@ -1921,7 +1868,7 @@ if (usableHeight <= 0) {
 
   // --- Group-aware navigation helpers ---
 
-const navigateToGroup = useCallback(
+  const navigateToGroup = useCallback(
     async (groupIdx: number) => {  // 🔹 CHANGED: make async
       if (!groupWindows || groupIdx < 0 || groupIdx >= groupWindows.length) return;
       const meta = groupWindows[groupIdx];
@@ -2502,12 +2449,12 @@ const navigateToGroup = useCallback(
     [panelMode, isMasterMarkSet, groupWindows, currentGroupIndex]
   );
 
-const pagesToRender =
-  numPages === 0
-    ? []
-    : showReportTitle
-      ? [1] // Only first page while title is shown
-      : Array.from(
+  const pagesToRender =
+    numPages === 0
+      ? []
+      : showReportTitle
+        ? [1] // Only first page while title is shown
+        : Array.from(
           { length: Math.max(0, visibleRange[1] - visibleRange[0] + 1) },
           (_, i) => visibleRange[0] + i
         );
@@ -2646,7 +2593,7 @@ const pagesToRender =
                   return (
                     <div
                       key={pageNum}
-                      style={{ position: 'absolute', top, left: 0, right: 0 }}
+      style={{ position: 'absolute', top, left: 0 }}
                       ref={(el) => {
                         pageElsRef.current[pageNum - 1] = el;
                       }}
@@ -2850,7 +2797,7 @@ const pagesToRender =
               return (
                 <div
                   key={pageNum}
-                  style={{ position: 'absolute', top, left: 0, right: 0 }}
+      style={{ position: 'absolute', top, left: 0 }}
                   ref={(el) => {
                     pageElsRef.current[pageNum - 1] = el;
                   }}
