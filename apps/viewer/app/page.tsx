@@ -1525,19 +1525,33 @@ function ViewerContent() {
           container.scrollTo({ top: targetTop, behavior: 'auto' });
         }
 
-        // Wait one animation frame so React can render the new PageCanvas.
-        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        // 🔹 NEW: Wait longer + force updateVisibleRange to ensure windowing renders the page
+        await new Promise<void>((resolve) => {
+          requestAnimationFrame(() => {
+            updateVisibleRange(); // force windowing recalc
+            requestAnimationFrame(() => resolve()); // wait one more frame
+          });
+        });
 
         pageEl = pageElsRef.current[pageIndex];
+
+        // 🔹 NEW: Retry logic if still missing (up to 5 frames)
+        let retries = 0;
+        while (!pageEl && retries < 5) {
+          await new Promise<void>((r) => requestAnimationFrame(() => r()));
+          updateVisibleRange();
+          pageEl = pageElsRef.current[pageIndex];
+          retries++;
+        }
+
         if (!pageEl) {
           console.warn(
-            '[navigateToMark] page element still missing after forcing scroll, pageIndex=',
+            '[navigateToMark] page element still missing after retries, pageIndex=',
             pageIndex
           );
           return;
         }
       }
-
       let base = basePageSizeRef.current[pageIndex];
       if (!base) {
         const ensuredBase = await ensureBasePageSize(pageIndex);
@@ -1786,6 +1800,7 @@ function ViewerContent() {
       setZoomQ,
       groupZoomCache,
       ensureBasePageSize,  // ⬅️ NEW
+      updateVisibleRange,  // 🔹 NEW: needed for windowing sync
     ]
   );
 
@@ -1811,27 +1826,29 @@ function ViewerContent() {
   // start at first group (QC) or first mark (master/legacy)
   useEffect(() => {
     if (!pdf || !marks.length) return;
-    if (showReportTitle) return;  // ⬅️ NEW: wait until title is confirmed
+    if (showReportTitle) return;
 
     // Only run ONCE per load
     if (hasBootstrappedViewerRef.current) return;
 
-    // QC flow → start with group overview + slide
-    if (isMasterMarkSet === false && groupWindows && groupWindows.length) {
-      hasBootstrappedViewerRef.current = true;
-      navigateToGroup(0);
-      return;
-    }
+    // 🔹 NEW: Force re-navigation to ensure proper zoom/scroll after title dismissal
+    const timer = setTimeout(() => {
+      if (isMasterMarkSet === false && groupWindows && groupWindows.length) {
+        hasBootstrappedViewerRef.current = true;
+        // Clear any stale zoom cache from title screen
+        groupZoomCache.current.clear();
+        navigateToGroup(0);
+        return;
+      }
 
-    // Master / legacy → start on first mark
-    if (currentMarkIndex === 0) {
-      hasBootstrappedViewerRef.current = true;
-      setPanelMode('mark');
-      const timer = setTimeout(() => {
+      if (currentMarkIndex === 0) {
+        hasBootstrappedViewerRef.current = true;
+        setPanelMode('mark');
         navigateToMark(0);
-      }, 600);
-      return () => clearTimeout(timer);
-    }
+      }
+    }, 300); // small delay to let title panel unmount cleanly
+
+    return () => clearTimeout(timer);
   }, [
     pdf,
     marks.length,
@@ -1840,9 +1857,9 @@ function ViewerContent() {
     currentMarkIndex,
     navigateToGroup,
     navigateToMark,
-    showReportTitle,   // ⬅️ NEW
+    showReportTitle,
+    groupZoomCache,
   ]);
-
 
   const proceedFromGroupToMarks = useCallback(() => {
     setPanelMode('mark');
@@ -2222,18 +2239,14 @@ function ViewerContent() {
     });
   }, [pdf]);
 
-  // Stage-1: as soon as the PDF is ready *and* the title panel is showing,
-  // fit page 1 to width so user first sees a clean full-page view.
-  useEffect(() => {
-    if (!pdf || !numPages) return;
-    if (showSetup) return;         // still on bootstrap screen
-    if (!showReportTitle) return;  // only while title panel is visible
-
-    // Don't interfere once we've started the mark/group flow
-    if (hasBootstrappedViewerRef.current) return;
-
-    fitToWidthZoom();
-  }, [pdf, numPages, showSetup, showReportTitle, fitToWidthZoom]);
+  // 🔴 REMOVED: This causes wrong scroll position because it zooms before navigation
+  // useEffect(() => {
+  //   if (!pdf || !numPages) return;
+  //   if (showSetup) return;
+  //   if (!showReportTitle) return;
+  //   if (hasBootstrappedViewerRef.current) return;
+  //   fitToWidthZoom();
+  // }, [pdf, numPages, showSetup, showReportTitle, fitToWidthZoom]);
 
   // PATCH: desktop wheel/trackpad zoom anchored at cursor, scoped to container
   useEffect(() => {

@@ -59,7 +59,7 @@ export default function ReportTitlePanel({
         flexShrink: 0,
         borderTopLeftRadius: 12,
         borderTopRightRadius: 12,
-        overflow: 'hidden',
+        overflow: 'visible',  // 🔹 CHANGED: allow scroll to work while title is showing
         boxShadow: '0 -2px 10px rgba(0,0,0,0.08)',
         position: floating ? ('fixed' as const) : 'static',
         left: floating ? 0 : undefined,
