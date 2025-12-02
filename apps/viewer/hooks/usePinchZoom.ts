@@ -25,9 +25,10 @@ export default function usePinchZoom({
     const el = containerRef.current;
     if (!el) return;
 
-        // Force custom pinch handling: prevent browser-native pinch-zoom
+    // ✅ Allow vertical scroll, but still let us handle custom pinch zoom.
+    // `pan-y` keeps normal vertical scrolling working.
     const prevTouchAction = el.style.touchAction;
-    el.style.touchAction = 'none';
+    el.style.touchAction = 'pan-y';
 
     const pointers = new Map<number, { x: number; y: number; t: number }>();
 
@@ -51,11 +52,12 @@ export default function usePinchZoom({
       y: (p1.y + p2.y) / 2,
     });
 
+    // We will NOT use pointer capture for touch – we want the browser scroll
+    // to still work for single-finger drags.
     const onPointerDown = (e: PointerEvent) => {
       if (e.pointerType === 'mouse') return;
       if (!el.contains(e.target as Node)) return;
 
-      el.setPointerCapture?.(e.pointerId);
       pointers.set(e.pointerId, {
         x: e.clientX,
         y: e.clientY,
@@ -80,6 +82,7 @@ export default function usePinchZoom({
         t: performance.now(),
       });
 
+      // Only care about pinch (2 fingers)
       if (pointers.size !== 2) return;
 
       const [p1, p2] = Array.from(pointers.values());
@@ -88,8 +91,8 @@ export default function usePinchZoom({
       if (!isPinching) {
         if (Math.abs(currDist - baseDistance) > PINCH_START_THRESHOLD) {
           isPinching = true;
-          // Lock scroll during pinch so browser doesn’t fight us
-          el.style.overflow = 'hidden';
+          // Lock scroll during the *actual* pinch so browser doesn’t fight us
+          el.style.overflowY = 'hidden';
         } else {
           return;
         }
@@ -111,6 +114,8 @@ export default function usePinchZoom({
       // Zoom anchored at the pinch center
       zoomAt(targetZoom, pinchCenter.x, pinchCenter.y);
 
+      // During the pinch we "own" the gesture to prevent weirdness,
+      // but this only applies while two fingers are down.
       e.preventDefault();
       e.stopPropagation();
     };
@@ -120,15 +125,14 @@ export default function usePinchZoom({
 
       if (isPinching && pointers.size < 2) {
         isPinching = false;
-        el.style.overflow = '';
+        // Restore scroll after pinch ends
+        el.style.overflowY = '';
       }
 
       if (pointers.size === 0) {
         isPinching = false;
         baseDistance = 0;
       }
-
-      el.releasePointerCapture?.(e.pointerId);
     };
 
     el.addEventListener('pointerdown', onPointerDown, { passive: false });
@@ -137,15 +141,17 @@ export default function usePinchZoom({
     el.addEventListener('pointercancel', onPointerEnd, { passive: true });
 
     return () => {
-      // restore original touch-action so scroll/zoom behaviour outside
+      // ✅ restore original touch-action so scroll/zoom behaviour outside
       // viewer doesn't get permanently changed
       el.style.touchAction = prevTouchAction;
+
+      // also restore overflow in case we unmount mid-gesture
+      el.style.overflowY = '';
 
       el.removeEventListener('pointerdown', onPointerDown as any);
       el.removeEventListener('pointermove', onPointerMove as any);
       el.removeEventListener('pointerup', onPointerEnd as any);
       el.removeEventListener('pointercancel', onPointerEnd as any);
     };
-
   }, [enabled, zoomAt, clampZoom, containerRef, zoomRef]);
 }

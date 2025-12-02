@@ -250,7 +250,6 @@ useEffect(() => {
   }
 }, [boot, hasBootstrapKeys, loading]);
 
-
   // ❌ We used to compute QC mark counts here by calling /viewer/groups
   //    for every non-master markset, just to show "X marks" in the UI.
   //    That UI is now disabled, so these network calls are pure overhead.
@@ -1779,56 +1778,111 @@ if (usableHeight <= 0) {
         setSelectedRect({ pageNumber, ...rectAtZ });
         setTimeout(() => setFlashRect(null), 1200);
 
-        // ===== SCROLL LOGIC =====
+        // ===== SCROLL LOGIC (QC groups + quadrant positioning) =====
+        const containerWidth = containerRect.width;
+        const containerHeight = containerRect.height;
 
-        // X: center mark, but bias away from right HUD
         const markCenterX = pageOffsetLeft + rectAtZ.x + rectAtZ.w / 2;
-        const effectiveViewWidth = containerW - HUD_SIDE_SAFE_PX;
-        const targetScrollLeft = markCenterX - effectiveViewWidth / 2;
+        const markCenterY = pageOffsetTop + rectAtZ.y + rectAtZ.h / 2;
 
-        // Y: group overview vs quadrant window
+        const groupLeft = pageOffsetLeft + groupRectAtZ.x;
+        const groupTop = pageOffsetTop + groupRectAtZ.y;
+        const groupWidth = groupRectAtZ.w;
+        const groupHeight = groupRectAtZ.h;
+        const groupRight = groupLeft + groupWidth;
+        const groupBottom = groupTop + groupHeight;
+
+        const effectiveViewWidth = containerWidth - HUD_SIDE_SAFE_PX;
+        let visibleHeight = containerHeight - HUD_TOP_SAFE_PX;
+        if (visibleHeight < containerHeight * 0.4) {
+          visibleHeight = containerHeight * 0.4;
+        }
+
+        let targetScrollLeft: number;
         let targetScrollTop: number;
-        const isMobileLayout = isMobileInputMode;
 
-if (groupChanged) {
-  // Group overview -> show group area with HUD-safe padding at top
-  const paddingTopPx = HUD_TOP_SAFE_PX;
-  const groupTop = pageOffsetTop + groupRectAtZ.y;
+        if (groupChanged) {
+          // ▶ GROUP OVERVIEW: show the whole group just under the HUD
 
-  const availableHeight = containerH - paddingTopPx;
-  const groupFitsInView = groupRectAtZ.h <= availableHeight;
+          const paddingTopPx = HUD_TOP_SAFE_PX;
+          const availableHeight = containerHeight - paddingTopPx;
+          const groupFitsInView = groupHeight <= availableHeight;
 
-  if (groupFitsInView) {
-    // Center group vertically in the usable area
-    const extraSpace = availableHeight - groupRectAtZ.h;
-    targetScrollTop = groupTop - paddingTopPx - (extraSpace / 2);
-  } else {
-    // Group taller than viewport -> show from top, just under HUD
-    targetScrollTop = groupTop - paddingTopPx;
-  }
-} else {
-          // Quadrant-style mark-by-mark view
-          const containerHeight = containerRect.height;
-          let visibleHeight =
-            containerHeight - (isMobileLayout ? 0 : HUD_TOP_SAFE_PX);
-
-          if (visibleHeight < containerHeight * 0.4) {
-            visibleHeight = containerHeight * 0.4;
+          if (groupFitsInView) {
+            // Center group vertically in the usable area
+            const groupCenterY = groupTop + groupHeight / 2;
+            targetScrollTop = groupCenterY - (paddingTopPx + availableHeight / 2);
+          } else {
+            // Group taller than viewport -> show from top, just under HUD
+            targetScrollTop = groupTop - paddingTopPx;
           }
 
-          const groupTop = pageOffsetTop + groupRectAtZ.y;
-          const groupBottom = groupTop + groupRectAtZ.h;
+          if (groupWidth <= effectiveViewWidth) {
+            // Center horizontally when group is narrower than view
+            const groupCenterX = groupLeft + groupWidth / 2;
+            targetScrollLeft = groupCenterX - effectiveViewWidth / 2;
+          } else {
+            // Otherwise, center group within the safe area
+            targetScrollLeft = groupLeft + (groupWidth - effectiveViewWidth) / 2;
+          }
+        } else {
+          // ▶ MARK-BY-MARK: place the mark into one of 4 screen quadrants
+          //    within the group window, while keeping the group in view.
 
-          const markCenterY = pageOffsetTop + rectAtZ.y + rectAtZ.h / 2;
-          const windowHeight = Math.min(groupRectAtZ.h, visibleHeight);
+          // --- Horizontal (left/right) ---
+          if (groupWidth <= effectiveViewWidth) {
+            // Group narrower than viewport → keep it centered horizontally
+            const groupCenterX = groupLeft + groupWidth / 2;
+            targetScrollLeft = groupCenterX - effectiveViewWidth / 2;
+          } else {
+            // Decide left/right half based on mark position inside the group
+            const relX =
+              groupWidth > 0 ? (markCenterX - groupLeft) / groupWidth : 0.5;
+            const quadX = relX < 0.5 ? 0 : 1; // 0 = left, 1 = right
 
-          let desiredTop = markCenterY - windowHeight / 2;
+            const anchorXWithinView =
+              quadX === 0 ? effectiveViewWidth * 0.25 : effectiveViewWidth * 0.75;
 
-          const minTop = groupTop;
-          const maxTop = groupBottom - windowHeight;
-          desiredTop = Math.max(minTop, Math.min(desiredTop, maxTop));
+            // screenX = markCenterX - scrollLeft ≈ anchorXWithinView
+            let desiredLeft = markCenterX - anchorXWithinView;
 
-          targetScrollTop = desiredTop;
+            const minLeft = groupLeft;
+            const maxLeft = groupRight - effectiveViewWidth;
+            if (maxLeft <= minLeft) {
+              targetScrollLeft = desiredLeft;
+            } else {
+              targetScrollLeft = Math.max(minLeft, Math.min(desiredLeft, maxLeft));
+            }
+          }
+
+          // --- Vertical (top/bottom) ---
+          if (groupHeight <= visibleHeight) {
+            // Group shorter than viewport → keep it centered vertically
+            const groupCenterY = groupTop + groupHeight / 2;
+            targetScrollTop =
+              groupCenterY - (HUD_TOP_SAFE_PX + visibleHeight / 2);
+          } else {
+            // Decide top/bottom half based on mark position inside the group
+            const relY =
+              groupHeight > 0 ? (markCenterY - groupTop) / groupHeight : 0.5;
+            const quadY = relY < 0.5 ? 0 : 1; // 0 = top, 1 = bottom
+
+            const anchorY =
+              HUD_TOP_SAFE_PX +
+              (quadY === 0 ? visibleHeight * 0.25 : visibleHeight * 0.75);
+
+            // screenY = markCenterY - scrollTop ≈ anchorY
+            let desiredTop = markCenterY - anchorY;
+
+            const minTop = groupTop - HUD_TOP_SAFE_PX;
+            const maxTop = groupBottom - visibleHeight - HUD_TOP_SAFE_PX;
+
+            if (maxTop <= minTop) {
+              targetScrollTop = desiredTop;
+            } else {
+              targetScrollTop = Math.max(minTop, Math.min(desiredTop, maxTop));
+            }
+          }
         }
 
         const { left: clampedL, top: clampedT } = clampScroll(
