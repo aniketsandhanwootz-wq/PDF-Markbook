@@ -736,6 +736,9 @@ function ViewerContent() {
   const hasBootstrappedViewerRef = useRef(false);
   // NEW: last committed mark index, for stable group-change detection
   const lastMarkIndexRef = useRef<number | null>(null);
+    // When we jump to a group, force first mark navigation to behave as "group overview"
+  const pendingGroupOverviewRef = useRef<number | null>(null);
+
   const [zoom, setZoom] = useState(1.0);
   // Quantized zoom setter (must live at component top-level)
   // Single atomic zoom setter - updates zoom + mark box in one tick
@@ -1499,13 +1502,10 @@ function ViewerContent() {
         return;
       }
 
-      // ✅ Move currentMarkIndex immediately so InputPanel / HUD update
+      // Move currentMarkIndex immediately so InputPanel / HUD update
       setCurrentMarkIndex(index);
 
-      // Use last committed index (ref) to detect group changes reliably
       const prevIdx = lastMarkIndexRef.current ?? currentMarkIndex;
-      const isGroupOverviewMode = panelMode === 'group';
-
       const mark = marks[index];
       if (!mark) {
         console.warn('[navigateToMark] mark at index is undefined', index);
@@ -1515,9 +1515,9 @@ function ViewerContent() {
       const container = containerRef.current;
       if (!container) return;
 
-      // ---- Figure out if this mark belongs to a QC group & which page to anchor on ----
       const isMaster = isMasterMarkSet === true;
 
+      // Resolve group index (QC only)
       let groupIdx: number | null = null;
       if (!isMaster && groupWindows && markToGroupIndex[index] != null) {
         const gi = markToGroupIndex[index];
@@ -1529,38 +1529,34 @@ function ViewerContent() {
       const hasGroup = groupIdx !== null;
       const gMeta = hasGroup ? groupWindows![groupIdx!] : null;
 
-      // ✅ For QC groups, always anchor to the group's page (page_index from backend).
-      //    For master/legacy, use the mark's own page_index.
+      // Page index: group page for QC, mark page for master/legacy
       const pageIndex =
         hasGroup && gMeta
           ? (gMeta.page_index ?? mark.page_index ?? 0)
           : (mark.page_index ?? 0);
-
       const pageNumber = pageIndex + 1;
 
-      // ---- Ensure the DOM element for this target page exists (windowed rendering) ----
+      // Ensure DOM element for that page exists (windowing)
       let pageEl = pageElsRef.current[pageIndex];
 
       if (!pageEl) {
         const pref = prefixHeightsRef.current;
 
-        // Scroll so that this page's top is brought into view → windowing
         if (pref.length > pageIndex) {
           const targetTop = pref[pageIndex];
           container.scrollTo({ top: targetTop, behavior: 'auto' });
         }
 
-        // 🔹 NEW: Wait longer + force updateVisibleRange to ensure windowing renders the page
+        // Let windowing catch up
         await new Promise<void>((resolve) => {
           requestAnimationFrame(() => {
-            updateVisibleRange(); // force windowing recalc
-            requestAnimationFrame(() => resolve()); // wait one more frame
+            updateVisibleRange();
+            requestAnimationFrame(() => resolve());
           });
         });
 
         pageEl = pageElsRef.current[pageIndex];
 
-        // 🔹 NEW: Retry logic if still missing (up to 5 frames)
         let retries = 0;
         while (!pageEl && retries < 5) {
           await new Promise<void>((r) => requestAnimationFrame(() => r()));
@@ -1577,6 +1573,7 @@ function ViewerContent() {
           return;
         }
       }
+
       let base = basePageSizeRef.current[pageIndex];
       if (!base) {
         const ensuredBase = await ensureBasePageSize(pageIndex);
@@ -1593,8 +1590,7 @@ function ViewerContent() {
       const containerW = container.clientWidth;
       const containerH = container.clientHeight;
 
-
-      // ---------- MASTER / LEGACY (no group info) → old mark-wise auto zoom ----------
+      // ---------- MASTER / LEGACY (no group info) ----------
       if (isMaster || !hasGroup || !gMeta) {
         const rectAt1 = {
           x: mark.nx * base.w,
@@ -1658,12 +1654,11 @@ function ViewerContent() {
           });
         });
 
-        // also update lastMarkIndex for master sets (harmless, more consistent)
         lastMarkIndexRef.current = index;
         return;
       }
 
-      // ---------- QC FLOW: group-wise handling, including cross-page groups ----------
+      // ---------- QC FLOW: group-wise handling ----------
       const gi = groupIdx!;
       const group = gMeta!;
 
@@ -1676,60 +1671,66 @@ function ViewerContent() {
 
       const prevGroupIdx =
         prevIdx >= 0 &&
-          prevIdx < marks.length &&
-          markToGroupIndex[prevIdx] != null
+        prevIdx < marks.length &&
+        markToGroupIndex[prevIdx] != null
           ? markToGroupIndex[prevIdx]
           : gi;
 
       let groupChanged = gi !== prevGroupIdx;
-      if (isGroupOverviewMode) {
+
+      // If navigateToGroup just told us "show overview for this group", force groupChanged
+      if (
+        pendingGroupOverviewRef.current != null &&
+        pendingGroupOverviewRef.current === gi
+      ) {
         groupChanged = true;
+        pendingGroupOverviewRef.current = null;
       }
-      // ===== ZOOM LOGIC (with per-group cache) =====
+
       let targetZoom = zoomRef.current || 1.0;
 
- if (groupChanged) {
-  const cached = groupZoomCache.current.get(gi);
-  // Only use cache if we're NOT in group overview mode
-  const useCache = cached && panelMode !== 'group';
+      if (groupChanged) {
+        const cached = groupZoomCache.current.get(gi);
+        const useCache = cached && panelMode !== 'group';
 
-  if (useCache) {
-    targetZoom = cached;
-  } else {
-    const containerRect = container.getBoundingClientRect();
+        if (useCache) {
+          targetZoom = cached;
+        } else {
+          const containerRect = container.getBoundingClientRect();
 
-    // Small, symmetric padding around the group
-    const padding = 16;
-    const usableWidth = Math.max(
-      50,
-      containerRect.width - padding * 2
-    );
-    const usableHeight = Math.max(
-      50,
-      containerRect.height - padding * 2
-    );
+          // 🔹 Reserve HUD + input panel areas so group truly fills what's left
+          const isMobileLayout = isMobileInputMode;
 
-    // Let helper choose zoom so the group rect fills the usable area
-    const rawZoom = computeZoomForRect(
-      { w: usableWidth, h: usableHeight },
-      { w: base.w, h: base.h },
-      groupRectAt1,
-      0.04          // ~4% padding around the group
-    );
+          const safeRight = HUD_SIDE_SAFE_PX;
+          const safeTop = isMobileLayout ? 0 : HUD_TOP_SAFE_PX;
+          const safeBottom = isMobileLayout ? INPUT_PANEL_SAFE_PX_MOBILE * 0.7 : 0;
 
-    targetZoom = quantize(rawZoom);
+          const margin = 16; // small visual margin around the group
 
-    // remember per-group zoom for subsequent mark-level navigation
-    groupZoomCache.current.set(gi, targetZoom);
-  }
+          const usableWidth = Math.max(
+            40,
+            containerRect.width - safeRight - margin * 2
+          );
+          const usableHeight = Math.max(
+            40,
+            containerRect.height - safeTop - safeBottom - margin * 2
+          );
 
-  // actually apply zoom
-  setZoomQ(targetZoom, zoomRef);
+          const rawZoom = computeZoomForRect(
+            { w: usableWidth, h: usableHeight },
+            { w: base.w, h: base.h },
+            groupRectAt1,
+            0.02 // small 2% padding inside usable rect
+          );
 
-  // Force immediate recompute of prefix heights after zoom change
-  recomputePrefix();
-}
+          targetZoom = quantize(rawZoom);
 
+          groupZoomCache.current.set(gi, targetZoom);
+        }
+
+        setZoomQ(targetZoom, zoomRef);
+        recomputePrefix();
+      }
 
       requestAnimationFrame(async () => {
         const expectedW = base.w * targetZoom;
@@ -1737,8 +1738,6 @@ function ViewerContent() {
 
         if (groupChanged) {
           await waitForCanvasLayout(pageEl!, expectedW, expectedH, 1500);
-
-          // 🔹 NEW: After canvas layout, recompute prefix again to be safe
           recomputePrefix();
         }
 
@@ -1770,26 +1769,21 @@ function ViewerContent() {
         setSelectedRect({ pageNumber, ...rectAtZ });
         setTimeout(() => setFlashRect(null), 1200);
 
-                // ===== SCROLL LOGIC =====
-
-        // Group bounds (in scroll coordinates) at current zoom
+        // ===== SCROLL LOGIC =====
         const groupLeft = pageOffsetLeft + groupRectAtZ.x;
         const groupTopAbs = pageOffsetTop + groupRectAtZ.y;
         const groupRight = groupLeft + groupRectAtZ.w;
         const groupBottomAbs = groupTopAbs + groupRectAtZ.h;
 
-        // Effective “usable” viewport width (right HUD eats a bit)
         const effectiveViewWidth = containerW - HUD_SIDE_SAFE_PX;
         const windowWidth = Math.min(groupRectAtZ.w, effectiveViewWidth);
 
-        // Y window height (used for quadrant-style sliding inside the group)
-        const containerHeight = containerRect.height;
         const isMobileLayout = isMobileInputMode;
         let visibleHeight =
-          containerHeight - (isMobileLayout ? 0 : HUD_TOP_SAFE_PX);
+          containerRect.height - (isMobileLayout ? 0 : HUD_TOP_SAFE_PX);
 
-        if (visibleHeight < containerHeight * 0.4) {
-          visibleHeight = containerHeight * 0.4;
+        if (visibleHeight < containerRect.height * 0.4) {
+          visibleHeight = containerRect.height * 0.4;
         }
         const windowHeight = Math.min(groupRectAtZ.h, visibleHeight);
 
@@ -1797,16 +1791,14 @@ function ViewerContent() {
         let targetScrollTop: number;
 
         if (groupChanged) {
-          // 🔹 Group overview: center the ENTIRE group in both X and Y.
+          // Group overview: center entire group
           const groupCenterX = groupLeft + groupRectAtZ.w / 2;
           const groupCenterY = groupTopAbs + groupRectAtZ.h / 2;
 
           targetScrollLeft = groupCenterX - windowWidth / 2;
           targetScrollTop = groupCenterY - containerH / 2;
         } else {
-          // 🔹 Mark-by-mark mode: slide a window INSIDE the group (quadrant-style).
-
-          // Horizontal: keep the mark near center but clamped to group [left, right-windowWidth]
+          // Mark-by-mark inside group (quadrant-style window)
           const markCenterX = pageOffsetLeft + rectAtZ.x + rectAtZ.w / 2;
           let desiredLeft = markCenterX - windowWidth / 2;
           const minLeft = groupLeft;
@@ -1814,7 +1806,6 @@ function ViewerContent() {
           desiredLeft = Math.max(minLeft, Math.min(desiredLeft, maxLeft));
           targetScrollLeft = desiredLeft;
 
-          // Vertical: same idea, but within [top, bottom-windowHeight]
           const markCenterY = pageOffsetTop + rectAtZ.y + rectAtZ.h / 2;
           let desiredTop = markCenterY - windowHeight / 2;
           const minTop = groupTopAbs;
@@ -1834,10 +1825,8 @@ function ViewerContent() {
           top: clampedT,
           behavior: 'smooth',
         });
-
       });
 
-      // Remember last index so next call can detect group changes reliably.
       lastMarkIndexRef.current = index;
     },
     [
@@ -1852,32 +1841,38 @@ function ViewerContent() {
       isMobileInputMode,
       setZoomQ,
       groupZoomCache,
-      ensureBasePageSize,  // ⬅️ NEW
-      updateVisibleRange,  // 🔹 NEW: needed for windowing sync
+      ensureBasePageSize,
+      updateVisibleRange,
+      recomputePrefix,
     ]
   );
 
 
-  // --- Group-aware navigation helpers ---
 
+  // --- Group-aware navigation helpers ---
   const navigateToGroup = useCallback(
-    async (groupIdx: number) => {  // 🔹 CHANGED: make async
+    async (groupIdx: number) => {
       if (!groupWindows || groupIdx < 0 || groupIdx >= groupWindows.length) return;
       const meta = groupWindows[groupIdx];
 
+      // Update state for "current group"
       setCurrentGroupIndex(groupIdx);
       setCurrentMarkIndex(meta.startIndex);
       setPanelMode('group');
 
-      // 🔹 NEW: Clear stale zoom cache for this group so it recalculates fresh
+      // Clear stale per-group zoom so we recompute using latest viewport
       groupZoomCache.current.delete(groupIdx);
 
-      // 🔹 NEW: Small delay to let React render state changes before navigating
+      // 🔹 Tell navigateToMark: the NEXT call for this group should behave
+      //     as GROUP OVERVIEW (fit whole group, not individual mark).
+      pendingGroupOverviewRef.current = groupIdx;
+
+      // Small delay so React can commit state
       await new Promise((r) => setTimeout(r, 50));
 
-      await navigateToMark(meta.startIndex);  // 🔹 CHANGED: await the navigation
+      await navigateToMark(meta.startIndex);
     },
-    [groupWindows, navigateToMark, groupZoomCache]  // 🔹 ADD groupZoomCache to deps
+    [groupWindows, navigateToMark, groupZoomCache]
   );
 
   // When marks + PDF are ready *and* title is confirmed,

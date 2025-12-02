@@ -26,9 +26,8 @@ export default function usePinchZoom({
     if (!el) return;
 
     // ✅ Allow vertical scroll, but still let us handle custom pinch zoom.
-    // `pan-y` keeps normal vertical scrolling working.
     const prevTouchAction = el.style.touchAction;
-el.style.touchAction = 'pan-x pan-y';
+    el.style.touchAction = 'pan-x pan-y';
 
     const pointers = new Map<number, { x: number; y: number; t: number }>();
 
@@ -41,8 +40,11 @@ el.style.touchAction = 'pan-x pan-y';
     // Last known center (for anchoring)
     let pinchCenter = { x: 0, y: 0 };
 
-    const PINCH_START_THRESHOLD = 8; // px change before we consider it a real pinch
-    const MIN_ZOOM_CHANGE = 0.003;   // ~0.3% step – smoother than 1%
+    // Local zoom “emitter” to smooth jitter
+    let lastEmittedZoom = zoomRef.current || 1;
+
+    const PINCH_START_THRESHOLD = 8;  // px change before we consider it a real pinch
+    const MIN_ZOOM_CHANGE = 0.01;     // ~1% step → less jittery than before
 
     const distance = (p1: { x: number; y: number }, p2: { x: number; y: number }) =>
       Math.hypot(p2.x - p1.x, p2.y - p1.y);
@@ -52,8 +54,6 @@ el.style.touchAction = 'pan-x pan-y';
       y: (p1.y + p2.y) / 2,
     });
 
-    // We will NOT use pointer capture for touch – we want the browser scroll
-    // to still work for single-finger drags.
     const onPointerDown = (e: PointerEvent) => {
       if (e.pointerType === 'mouse') return;
       if (!el.contains(e.target as Node)) return;
@@ -68,6 +68,7 @@ el.style.touchAction = 'pan-x pan-y';
         const [p1, p2] = Array.from(pointers.values());
         baseDistance = distance(p1, p2) || 1;
         baseZoom = zoomRef.current || 1;
+        lastEmittedZoom = baseZoom;
         pinchCenter = center(p1, p2);
         isPinching = false; // will flip true once threshold is crossed
       }
@@ -109,10 +110,15 @@ el.style.touchAction = 'pan-x pan-y';
       const targetZoom = clampZoom(rawZoom);
 
       // Ignore microscopic zoom changes
-      if (Math.abs(targetZoom - zoomRef.current) < MIN_ZOOM_CHANGE) return;
+      if (Math.abs(targetZoom - lastEmittedZoom) < MIN_ZOOM_CHANGE) return;
 
-      // Zoom anchored at the pinch center
-      zoomAt(targetZoom, pinchCenter.x, pinchCenter.y);
+      // 🔥 Smoothing: move 35% towards target each frame (low-pass filter)
+      const SMOOTHING = 0.35;
+      const smoothedZoom =
+        lastEmittedZoom + (targetZoom - lastEmittedZoom) * SMOOTHING;
+      lastEmittedZoom = smoothedZoom;
+
+      zoomAt(smoothedZoom, pinchCenter.x, pinchCenter.y);
 
       // During the pinch we "own" the gesture to prevent weirdness,
       // but this only applies while two fingers are down.
@@ -141,11 +147,7 @@ el.style.touchAction = 'pan-x pan-y';
     el.addEventListener('pointercancel', onPointerEnd, { passive: true });
 
     return () => {
-      // ✅ restore original touch-action so scroll/zoom behaviour outside
-      // viewer doesn't get permanently changed
       el.style.touchAction = prevTouchAction;
-
-      // also restore overflow in case we unmount mid-gesture
       el.style.overflowY = '';
 
       el.removeEventListener('pointerdown', onPointerDown as any);
