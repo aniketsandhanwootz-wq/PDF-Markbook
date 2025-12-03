@@ -34,6 +34,7 @@ body {
   height: 100vh;
   background: #171717;
 }
+
 .loading,
 .error {
   display: flex;
@@ -62,15 +63,18 @@ body {
     opacity: 0.3;
     transform: translateY(0);
   }
+
   50% {
     opacity: 1;
     transform: translateY(-2px);
   }
+
   100% {
     opacity: 0.3;
     transform: translateY(0);
   }
 }
+
 /* Sidebar */
 
 .sidebar-header {
@@ -554,15 +558,17 @@ body {
   flex-direction: column;
   gap: 8px;
 }
-/* Bottom zoom buttons – just above input panel */
+
+/* Bottom-right zoom buttons – stacked + / − just above input panel */
 .hud-bottom-zoom {
   position: fixed;
-  left: max(8px, env(safe-area-inset-left));
-  right: max(8px, env(safe-area-inset-right));
-  bottom: calc(160px + 40px);  /* ⬅️ 160 se 40px upar = gap mil jayega */
+  right: max(16px, env(safe-area-inset-right));
+  /* keep some gap above the InputPanel card */
+  bottom: calc(200px + 16px);
   z-index: 500;
   display: flex;
-  justify-content: space-between; /* − left, + right */
+  flex-direction: column;
+  gap: 8px;
   pointer-events: none;
 }
 
@@ -572,9 +578,21 @@ body {
 
 @media (max-width: 768px) {
   .hud-bottom-zoom {
-    bottom: calc(150px + 32px); /* mobile ke liye thoda tweak, feel ke hisaab se adjust kar sakta hai */
+    bottom: calc(170px + 12px);
   }
 }
+
+/* make zoom buttons look secondary (dark pill) */
+.hud-btn-zoom {
+  min-width: 48px;
+  height: 48px;
+  padding: 0;
+  background: rgba(0, 0, 0, 0.85);
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
+}
+
 
 /* Sidebar should always be above canvases when open */
 .sidebar {
@@ -714,9 +732,11 @@ body {
 }
 
 .pdf-surface-wrap {
-  contain: layout style;  /* 🔹 CHANGED: lighter containment, allows scroll to work */
+  contain: layout style;
+  /* 🔹 CHANGED: lighter containment, allows scroll to work */
   backface-visibility: hidden;
-  overflow: auto !important;  /* 🔹 ENSURE scroll is always enabled */
+  overflow: auto !important;
+  /* 🔹 ENSURE scroll is always enabled */
   -webkit-overflow-scrolling: touch;
 }
 
@@ -742,4 +762,3 @@ html,
 body {
   overscroll-behavior: none;
 }
-

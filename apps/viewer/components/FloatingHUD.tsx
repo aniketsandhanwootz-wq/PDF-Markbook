@@ -79,37 +79,40 @@ return (
       )}
     </div>
 
-    {/* BOTTOM: zoom buttons – + left, − right, just above input panel */}
+{/* BOTTOM RIGHT: zoom buttons – + on top, − below, just above input panel */}
     <div className="hud-bottom-zoom">
       <button
-        className="hud-btn"
-        onClick={onZoomOut}
-        aria-label="Zoom out"
-        title="Zoom out"
-        style={{
-          background: '#D99E02',
-          border: '1px solid #D99E02',
-          color: '#FFFFFF',
-          borderRadius: 10,
-          boxShadow: '0 4px 10px rgba(0,0,0,0.25)',
-        }}
-      >
-        🔍−
-      </button>
-            <button
-        className="hud-btn"
+        className="hud-btn hud-btn-zoom"
         onClick={onZoomIn}
         aria-label="Zoom in"
         title="Zoom in"
-        style={{
-          background: '#D99E02',
-          border: '1px solid #D99E02',
-          color: '#FFFFFF',
-          borderRadius: 10,
-          boxShadow: '0 4px 10px rgba(0,0,0,0.25)',
-        }}
       >
-        🔍+
+        <img
+          src="/icons/icons8-zoom-in-50.png"
+          alt="Zoom in"
+          style={{
+            width: 26,
+            height: 26,
+            display: 'block',
+          }}
+        />
+      </button>
+
+      <button
+        className="hud-btn hud-btn-zoom"
+        onClick={onZoomOut}
+        aria-label="Zoom out"
+        title="Zoom out"
+      >
+        <img
+          src="/icons/icons8-zoom-out-50.png"
+          alt="Zoom out"
+          style={{
+            width: 26,
+            height: 26,
+            display: 'block',
+          }}
+        />
       </button>
     </div>
   </>
