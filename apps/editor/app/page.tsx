@@ -815,7 +815,16 @@ function EditorContent() {
   const [error, setError] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [flashRect, setFlashRect] = useState<FlashRect>(null);
-  const [toasts, setToasts] = useState<ToastMessage[]>([]);
+const [toasts, setToasts] = useState<ToastMessage[]>([]);
+const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+useEffect(() => {
+  return () => {
+    if (toastTimeoutRef.current) {
+      clearTimeout(toastTimeoutRef.current);
+    }
+  };
+}, []);
+
   const [markOverlays, setMarkOverlays] = useState<MarkOverlay[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
   const [showSearch, setShowSearch] = useState(false);
@@ -906,13 +915,27 @@ function EditorContent() {
     },
   ];
 
-  const addToast = useCallback((message: string, type: ToastMessage['type'] = 'info') => {
+const addToast = useCallback(
+  (message: string, type: ToastMessage['type'] = 'info') => {
     const id = Date.now();
-    setToasts((prev) => [...prev.slice(-2), { id, message, type }]);
-    setTimeout(() => {
+
+    // Always show ONLY the latest toast
+    setToasts([{ id, message, type }]);
+
+    // Clear any previous auto-dismiss timer
+    if (toastTimeoutRef.current) {
+      clearTimeout(toastTimeoutRef.current);
+    }
+
+    // Auto-dismiss after 2.5s (tweak if you want)
+    toastTimeoutRef.current = setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 3000);
-  }, []);
+      toastTimeoutRef.current = null;
+    }, 2500);
+  },
+  []
+);
+
 
   const fetchGroups = useCallback(async () => {
     // Groups always belong to the *owner* mark-set (master in QC mode)
@@ -1449,13 +1472,20 @@ function EditorContent() {
     // If you want it to just highlight (no scroll), uncomment:
     setSelectedMarkId(newMark.mark_id!);
   }, [pendingMark, marks.length, addToast, pdf, checkDuplicates]);
-  // Update an existing mark by ID
-  const updateMark = useCallback((markId: string, updates: Partial<Mark>) => {
+// `silent = true` means: no toast (used for internal updates like GroupEditor)
+const updateMark = useCallback(
+  (markId: string, updates: Partial<Mark>, silent = false) => {
     setMarks((prev) =>
       prev.map((m) => (m.mark_id === markId ? { ...m, ...updates } : m))
     );
-    addToast('Mark updated', 'success');
-  }, [addToast]);
+
+    if (!silent) {
+      addToast('Mark updated', 'success');
+    }
+  },
+  [addToast]
+);
+
   // Delete a mark by ID
   const deleteMark = useCallback(
     (markId: string) => {
@@ -2232,7 +2262,7 @@ function EditorContent() {
             nextGroupNumber={groups.length + 1}
             originalMarkIds={originalMarksRef.current.map((m) => m.mark_id)}
 
-            onUpdateMark={updateMark}
+  onUpdateMark={(markId, updates) => updateMark(markId, updates, true)}
             // ❌ only these marks (created in this GroupEditor session) can be deleted via "×"
             deletableMarkIds={pendingGroupMarkIds}
             onDeleteMark={(markId) => {

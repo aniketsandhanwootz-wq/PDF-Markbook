@@ -812,7 +812,7 @@ function ViewerContent() {
   const hasBootstrappedViewerRef = useRef(false);
   // NEW: last committed mark index, for stable group-change detection
   const lastMarkIndexRef = useRef<number | null>(null);
-    // When we jump to a group, force first mark navigation to behave as "group overview"
+  // When we jump to a group, force first mark navigation to behave as "group overview"
   const pendingGroupOverviewRef = useRef<number | null>(null);
   // When we come from group view / sidebar / review directly to a mark,
   // request a smart quadrant-style frame instead of full-group overview.
@@ -1411,59 +1411,59 @@ function ViewerContent() {
           const groupMeta: GroupWindowMeta[] = [];
           const groupIndexForMark: number[] = [];
 
-   groups.forEach((g, gi) => {
-    const gm = ((g.marks || []) as any[]).slice();
-    if (!gm.length) return;
+          groups.forEach((g, gi) => {
+            const gm = ((g.marks || []) as any[]).slice();
+            if (!gm.length) return;
 
-    // Sort marks inside the group
-    gm.sort((a: any, b: any) => {
-      const ai = (a.instrument || '').toLowerCase();
-      const bi = (b.instrument || '').toLowerCase();
-      if (ai && bi && ai !== bi) return ai.localeCompare(bi);
-      return (a.order_index ?? 0) - (b.order_index ?? 0);
-    });
+            // Sort marks inside the group
+            gm.sort((a: any, b: any) => {
+              const ai = (a.instrument || '').toLowerCase();
+              const bi = (b.instrument || '').toLowerCase();
+              if (ai && bi && ai !== bi) return ai.localeCompare(bi);
+              return (a.order_index ?? 0) - (b.order_index ?? 0);
+            });
 
-    const startIndex = orderedMarks.length;
+            const startIndex = orderedMarks.length;
 
-    // 🔑 Index inside *groupMeta*, not original gi
-    const groupMetaIndex = groupMeta.length;
+            // 🔑 Index inside *groupMeta*, not original gi
+            const groupMetaIndex = groupMeta.length;
 
-    gm.forEach((m: any) => {
-      const cloned: Mark = { ...m };
-      cloned.order_index = orderedMarks.length; // global order index
+            gm.forEach((m: any) => {
+              const cloned: Mark = { ...m };
+              cloned.order_index = orderedMarks.length; // global order index
 
-      orderedMarks.push(cloned);
-      // ✅ map marks → "dense" group index (0..groupMeta.length-1)
-      groupIndexForMark.push(groupMetaIndex);
-    });
+              orderedMarks.push(cloned);
+              // ✅ map marks → "dense" group index (0..groupMeta.length-1)
+              groupIndexForMark.push(groupMetaIndex);
+            });
 
-    const endIndex = orderedMarks.length - 1;
-    if (startIndex > endIndex) return;
+            const endIndex = orderedMarks.length - 1;
+            if (startIndex > endIndex) return;
 
-    const pageIndex = g.page_index ?? (gm[0]?.page_index ?? 0);
+            const pageIndex = g.page_index ?? (gm[0]?.page_index ?? 0);
 
-    const nxVals = gm.map((m: any) => m.nx ?? 0);
-    const nyVals = gm.map((m: any) => m.ny ?? 0);
-    const x2Vals = gm.map((m: any) => (m.nx ?? 0) + (m.nw ?? 0));
-    const y2Vals = gm.map((m: any) => (m.ny ?? 0) + (m.nh ?? 0));
+            const nxVals = gm.map((m: any) => m.nx ?? 0);
+            const nyVals = gm.map((m: any) => m.ny ?? 0);
+            const x2Vals = gm.map((m: any) => (m.nx ?? 0) + (m.nw ?? 0));
+            const y2Vals = gm.map((m: any) => (m.ny ?? 0) + (m.nh ?? 0));
 
-    const minNx = g.nx ?? Math.min(...nxVals);
-    const minNy = g.ny ?? Math.min(...nyVals);
-    const maxNx = g.nw ? minNx + g.nw : Math.max(...x2Vals);
-    const maxNy = g.nh ? minNy + g.nh : Math.max(...y2Vals);
+            const minNx = g.nx ?? Math.min(...nxVals);
+            const minNy = g.ny ?? Math.min(...nyVals);
+            const maxNx = g.nw ? minNx + g.nw : Math.max(...x2Vals);
+            const maxNy = g.nh ? minNy + g.nh : Math.max(...y2Vals);
 
-    groupMeta.push({
-      group_id: String(g.group_id ?? groupMetaIndex),
-      name: g.name || `Group ${groupMetaIndex + 1}`,
-      startIndex,
-      endIndex,
-      page_index: pageIndex,
-      nx: minNx,
-      ny: minNy,
-      nw: Math.max(0.01, maxNx - minNx),
-      nh: Math.max(0.01, maxNy - minNy),
-    });
-  });
+            groupMeta.push({
+              group_id: String(g.group_id ?? groupMetaIndex),
+              name: g.name || `Group ${groupMetaIndex + 1}`,
+              startIndex,
+              endIndex,
+              page_index: pageIndex,
+              nx: minNx,
+              ny: minNy,
+              nw: Math.max(0.01, maxNx - minNx),
+              nh: Math.max(0.01, maxNy - minNy),
+            });
+          });
 
           setMarks(orderedMarks);
           setGroupWindows(groupMeta);
@@ -1769,7 +1769,7 @@ function ViewerContent() {
       };
 
       // Smart quadrant-style framing only in MARK mode
-const smartFrame = wantsSmartFrame;
+      const smartFrame = wantsSmartFrame;
       let smartRegionRectAt1: Rect | null = null;
       if (smartFrame) {
         smartRegionRectAt1 = computeSmartRegionWithinGroup(groupRectAt1, markRectAt1);
@@ -1778,8 +1778,8 @@ const smartFrame = wantsSmartFrame;
       // Previous group index (based on last focused mark)
       const prevGroupIdx =
         prevIdx >= 0 &&
-        prevIdx < marks.length &&
-        markToGroupIndex[prevIdx] != null
+          prevIdx < marks.length &&
+          markToGroupIndex[prevIdx] != null
           ? markToGroupIndex[prevIdx]
           : gi;
 
@@ -1903,11 +1903,11 @@ const smartFrame = wantsSmartFrame;
 
         const smartRegionRectAtZ = smartRegionRectAt1
           ? {
-              x: smartRegionRectAt1.x * z,
-              y: smartRegionRectAt1.y * z,
-              w: smartRegionRectAt1.w * z,
-              h: smartRegionRectAt1.h * z,
-            }
+            x: smartRegionRectAt1.x * z,
+            y: smartRegionRectAt1.y * z,
+            w: smartRegionRectAt1.w * z,
+            h: smartRegionRectAt1.h * z,
+          }
           : null;
 
         // Highlight current mark box (yellow) + flash
@@ -2082,7 +2082,7 @@ const smartFrame = wantsSmartFrame;
   }, [currentMarkIndex, marks.length, navigateToMark]);
 
 
-   const jumpDirectToMark = useCallback(
+  const jumpDirectToMark = useCallback(
     (index: number) => {
       if (index < 0 || index >= marks.length) return;
 
@@ -2144,58 +2144,58 @@ const smartFrame = wantsSmartFrame;
     navigateToMark,
   ]);
 
-const nextMark = useCallback(() => {
-  if (!marks.length) return;
+  const nextMark = useCallback(() => {
+    if (!marks.length) return;
 
-  // In group overview, the "Next" button should behave similar to sliding
-  if (panelMode === 'group') {
-    proceedFromGroupToMarks();
-    return;
-  }
-
-  const safeCurrentGroup = (() => {
-    if (!groupWindows || !groupWindows.length || !markToGroupIndex.length) return null;
-    const gi = markToGroupIndex[currentMarkIndex];
-    if (gi == null || gi < 0 || gi >= groupWindows.length) return null;
-    return groupWindows[gi];
-  })();
-
-  const lastIndexInGroup =
-    safeCurrentGroup != null ? safeCurrentGroup.endIndex : marks.length - 1;
-
-  // Still marks left in this group → go to next mark
-  if (currentMarkIndex < lastIndexInGroup) {
-    const nextIndex = currentMarkIndex + 1;
-    setCurrentMarkIndex(nextIndex);
-    navigateToMark(nextIndex);
-    return;
-  }
-
-  // Last mark of this group → go to next group's overview
-  if (groupWindows && groupWindows.length && markToGroupIndex.length) {
-    const rawGi = markToGroupIndex[currentMarkIndex];
-    const currentGroupIdx =
-      rawGi == null || rawGi < 0 || rawGi >= groupWindows.length ? 0 : rawGi;
-
-    const nextGroupIdx = currentGroupIdx + 1;
-    if (nextGroupIdx < groupWindows.length) {
-      navigateToGroup(nextGroupIdx);
+    // In group overview, the "Next" button should behave similar to sliding
+    if (panelMode === 'group') {
+      proceedFromGroupToMarks();
       return;
     }
-  }
 
-  // Last mark of last group → show review
-  setShowReview(true);
-}, [
-  panelMode,
-  marks.length,
-  currentMarkIndex,
-  groupWindows,
-  markToGroupIndex,
-  navigateToGroup,
-  navigateToMark,
-  proceedFromGroupToMarks,
-]);
+    const safeCurrentGroup = (() => {
+      if (!groupWindows || !groupWindows.length || !markToGroupIndex.length) return null;
+      const gi = markToGroupIndex[currentMarkIndex];
+      if (gi == null || gi < 0 || gi >= groupWindows.length) return null;
+      return groupWindows[gi];
+    })();
+
+    const lastIndexInGroup =
+      safeCurrentGroup != null ? safeCurrentGroup.endIndex : marks.length - 1;
+
+    // Still marks left in this group → go to next mark
+    if (currentMarkIndex < lastIndexInGroup) {
+      const nextIndex = currentMarkIndex + 1;
+      setCurrentMarkIndex(nextIndex);
+      navigateToMark(nextIndex);
+      return;
+    }
+
+    // Last mark of this group → go to next group's overview
+    if (groupWindows && groupWindows.length && markToGroupIndex.length) {
+      const rawGi = markToGroupIndex[currentMarkIndex];
+      const currentGroupIdx =
+        rawGi == null || rawGi < 0 || rawGi >= groupWindows.length ? 0 : rawGi;
+
+      const nextGroupIdx = currentGroupIdx + 1;
+      if (nextGroupIdx < groupWindows.length) {
+        navigateToGroup(nextGroupIdx);
+        return;
+      }
+    }
+
+    // Last mark of last group → show review
+    setShowReview(true);
+  }, [
+    panelMode,
+    marks.length,
+    currentMarkIndex,
+    groupWindows,
+    markToGroupIndex,
+    navigateToGroup,
+    navigateToMark,
+    proceedFromGroupToMarks,
+  ]);
 
   const handleJumpFromReview = useCallback(
     (index: number) => {
@@ -2743,7 +2743,7 @@ const nextMark = useCallback(() => {
                   return (
                     <div
                       key={pageNum}
-      style={{ position: 'absolute', top, left: 0 }}
+                      style={{ position: 'absolute', top, left: 0 }}
                       ref={(el) => {
                         pageElsRef.current[pageNum - 1] = el;
                       }}
@@ -2947,7 +2947,7 @@ const nextMark = useCallback(() => {
               return (
                 <div
                   key={pageNum}
-      style={{ position: 'absolute', top, left: 0 }}
+                  style={{ position: 'absolute', top, left: 0 }}
                   ref={(el) => {
                     pageElsRef.current[pageNum - 1] = el;
                   }}
