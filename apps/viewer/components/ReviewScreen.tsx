@@ -138,8 +138,8 @@ export default function ReviewScreen({
                 gap: '10px',
                 marginBottom: '12px',
                 padding: '12px',
-                background: '#343434',
-                border: '1px solid #D99E02',        // <<< neutral, no red/green border
+                background: '#171717',
+                border: '1px solid #3B3B3B',        // <<< neutral, no red/green border
                 borderRadius: '8px',
                 cursor: isSubmitting ? 'not-allowed' : 'pointer',
                 userSelect: 'none',
@@ -163,7 +163,7 @@ export default function ReviewScreen({
                   height: '24px',
                   borderRadius: '50%',
                   border: `2px solid ${isFilled ? '#4caf50' : '#EF4345'}`,
-                  background: isFilled ? '#4caf50' : 'white',
+                  background: isFilled ? '#4caf50' : 'transparent',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
@@ -261,9 +261,10 @@ export default function ReviewScreen({
             fontWeight: 500,
           }}
         >
-          ⚠️ Please fill all {Math.max(0, marks.length - completedCount)} missing balloon(s) before
-          submitting
+          ⚠️ {Math.max(0, marks.length - completedCount)} balloon(s) are still empty.
+          You can submit now or go back to fill them.
         </div>
+
       )}
 
       {/* Action Buttons */}
