@@ -117,7 +117,7 @@ export default function ReportTitlePanel({
       {/* Input */}
       <div
         style={{
-          padding: '8px 10px 4px',
+          padding: '10px 10px 10px',
           display: 'flex',
           flexDirection: 'column',
           gap: 6,
@@ -159,26 +159,26 @@ export default function ReportTitlePanel({
             }
           }}
         />
-        <div
+       {/*} <div
           style={{
             fontSize: 11,
             color: '#9D9D9D',
           }}
         >
           This title will be stored with the inspection and used in reports / Excel.
-        </div>
-      </div>
+        </div> */}
+      </div> 
 
       {/* Action */}
       <div
         style={{
-          padding: '4px 10px',
+          padding: '8px 10px',
           background: '#1F1F1F',
           borderTop: '1px solid #3B3B3B',
           display: 'flex',
           gap: 6,
           flexShrink: 0,
-          paddingBottom: floating ? 6 : 'env(safe-area-inset-bottom, 6px)',
+                    paddingBottom: floating ? 14 : 'env(safe-area-inset-bottom, 14px)',
           pointerEvents: 'auto',  // 🔹 NEW
         }}
       >
@@ -199,7 +199,7 @@ export default function ReportTitlePanel({
             transition: 'all 0.2s',
           }}
         >
-          Start Marking
+          Start Inspection
         </button>
       </div>
     </div>

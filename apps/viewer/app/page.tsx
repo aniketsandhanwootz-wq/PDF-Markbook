@@ -659,7 +659,7 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
 
             {/* Other Mark Sets */}
             {otherMarksets.length > 0 && (
-              <div style={{ marginTop: 16 }}>
+              <div style={{ marginTop: 32 }}>
                 <div
                   style={{
                     fontWeight: 400,
@@ -672,27 +672,38 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
                     gap: 12,
                   }}
                 >
-                  <div style={{ fontWeight: 600 }}>Available Inspection Maps</div>
+                  <div style={{ fontWeight: 500 }}>Available Inspection Maps</div>
 
                   {/* 🔥 NEW: Master Report button */}
-                  <button
-                    onClick={handleDownloadMasterReport}
-                    disabled={loading}
-                    style={{
-                      padding: '6px 12px',
-                      border: '1px solid #3B3B3B',
-                      borderRadius: 6,
-                      background: loading ? '#3B3B3B' : '#D99E02',
-                      color: '#fff',
-                      cursor: loading ? 'not-allowed' : 'pointer',
-                      fontSize: 12,
-                      fontWeight: 600,
-                      whiteSpace: 'nowrap',
-                    }}
-                    title="Download master inspection report (all marks × all runs)"
-                  >
-                    {loading ? 'Generating...' : 'Master Report'}
-                  </button>
+  <button
+  onClick={handleDownloadMasterReport}
+  disabled={loading}
+  style={{
+    padding: 0,
+    width: 34,
+    height: 34,
+    borderRadius: 8,
+    border: '1px solid #3B3B3B',
+    background: '#171717',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: loading ? 'not-allowed' : 'pointer',
+    opacity: loading ? 0.6 : 1,
+  }}
+  title="Download master inspection report (all marks × all runs)"
+>
+  <img
+    src="/icons/spreadsheet.png"   // 👈 yahi file ab dono apps me reuse hogi
+    alt="Download master report"
+    style={{
+      width: 22,
+      height: 22,
+      display: 'block',
+    }}
+  />
+</button>
+
                 </div>
                 <div
                   style={{
@@ -719,7 +730,7 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
                       >
                         <div>
                           <div
-                            style={{ fontWeight: 600, color: '#FFFFFF', fontSize: 10 }}
+                            style={{ fontWeight: 600, color: '#FFFFFF', fontSize: 12 }}
                           >
                             {ms.label}
                           </div>
@@ -744,7 +755,7 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
                             style={{
                               marginTop: 6,
                               fontWeight: 400,
-                              fontSize: 8,
+                              fontSize: 10,
                               color: '#FFFFFF',
                               display: 'flex',
                               gap: 8,
@@ -758,7 +769,7 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
 
                         <button
                           onClick={() => handleOpenMarkset(ms.mark_set_id)}
-                          style={btn}
+                          style={btnSecondary}
                         >
                           Start
                         </button>
@@ -792,7 +803,16 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
 const inp: CSSProperties = { padding: '10px 12px', border: '1px solid #ddd', borderRadius: 4, fontSize: 14, outline: 'none' };
 const btn: CSSProperties = { padding: '8px 14px', border: '1px solid #D99E02', borderRadius: 6, background: '#D99E02', color: '#FFFFFF', cursor: 'pointer' };
 const btnPrimary: CSSProperties = { ...btn, borderColor: '#1976d2', color: '#1976d2', fontWeight: 700 };
-
+const btnSecondary: CSSProperties = {
+  padding: '8px 18px',
+  borderRadius: 9999,              // pill shape
+  border: '1px solid rgba(255,255,255,0.6)',
+  background: 'transparent',
+  color: '#FFFFFF',
+  cursor: 'pointer',
+  fontWeight: 600,
+  fontSize: 12,
+};
 // Main Viewer Component
 function ViewerContent() {
   const searchParams = useSearchParams();
