@@ -172,14 +172,14 @@ export default function ReportTitlePanel({
       {/* Action */}
       <div
         style={{
-          padding: '8px 10px',
+          // top 8px, left/right 10px, bottom 16px (nice extra gap)
+          padding: floating ? '8px 10px 10px' : '8px 10px 10px',
           background: '#1F1F1F',
           borderTop: '1px solid #3B3B3B',
           display: 'flex',
           gap: 6,
           flexShrink: 0,
-                    paddingBottom: floating ? 14 : 'env(safe-area-inset-bottom, 14px)',
-          pointerEvents: 'auto',  // 🔹 NEW
+          pointerEvents: 'auto',
         }}
       >
         <button

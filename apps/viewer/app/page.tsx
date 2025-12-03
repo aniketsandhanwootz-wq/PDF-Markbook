@@ -730,7 +730,7 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
                       >
                         <div>
                           <div
-                            style={{ fontWeight: 600, color: '#FFFFFF', fontSize: 12 }}
+                            style={{ fontWeight: 600, color: '#FFFFFF', fontSize: 14 }}
                           >
                             {ms.label}
                           </div>
@@ -755,8 +755,8 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
                             style={{
                               marginTop: 6,
                               fontWeight: 400,
-                              fontSize: 10,
-                              color: '#FFFFFF',
+                              fontSize: 12,
+                              color: '#C9C9C9',
                               display: 'flex',
                               gap: 8,
                               flexWrap: 'wrap',
@@ -805,13 +805,13 @@ const btn: CSSProperties = { padding: '8px 14px', border: '1px solid #D99E02', b
 const btnPrimary: CSSProperties = { ...btn, borderColor: '#1976d2', color: '#1976d2', fontWeight: 700 };
 const btnSecondary: CSSProperties = {
   padding: '8px 18px',
-  borderRadius: 9999,              // pill shape
-  border: '1px solid rgba(255,255,255,0.6)',
+  borderRadius: 7,              // pill shape
+  border: '1px solid #3B3B3B',
   background: 'transparent',
   color: '#FFFFFF',
   cursor: 'pointer',
   fontWeight: 600,
-  fontSize: 12,
+  fontSize: 14,
 };
 // Main Viewer Component
 function ViewerContent() {

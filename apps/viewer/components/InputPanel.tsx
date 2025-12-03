@@ -71,7 +71,9 @@ function SlideToAct({ label, onComplete }: SlideToActProps) {
     }
   };
 
-  const filledWidth = dragX + KNOB_SIZE + PADDING;
+// width of the filled area = knob + left+right padding
+const filledWidth = dragX + KNOB_SIZE + PADDING * 2;
+
 
   return (
     <div
@@ -386,35 +388,36 @@ export default function InputPanel({
             </div>
           )}
         </div>
-      ) : (
-        <div
-          style={{
-            padding: '4px 10px',
-            display: 'flex',
-            alignItems: 'center',
-            flexShrink: 0,
-          }}
-        >
-          <input
-            type="text"
-            inputMode="decimal"
-            enterKeyHint="next"
-            pattern="[0-9]*[.,]?[0-9]*"
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            placeholder="Type value here..."
-            style={{
-              width: '100%',
-              padding: '10px 12px',
-              fontSize: 16,
-              border: '2px solid #3B3B3B',
-              borderRadius: 8,
-              outline: 'none',
-              transition: 'border-color 0.2s',
-              height: 44,
-              background: '#1F1F1F',
-              color: '#FFFFFF',
-            }}
+) : (
+  <div
+    style={{
+      // ↑ yahan se actual gap control hoga
+      padding: '12px 10px 14px', // top, left/right, bottom
+      display: 'flex',
+      alignItems: 'center',
+      flexShrink: 0,
+    }}
+  >
+    <input
+      type="text"
+      inputMode="decimal"
+      enterKeyHint="next"
+      pattern="[0-9]*[.,]?[0-9]*"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder="Type value here..."
+      style={{
+        width: '100%',
+        padding: '10px 12px', // normal internal padding
+        fontSize: 16,
+        border: '2px solid #3B3B3B',
+        borderRadius: 8,
+        outline: 'none',
+        transition: 'border-color 0.2s',
+        minHeight: 44,        // ✅ use minHeight instead of fixed height
+        background: '#1F1F1F',
+        color: '#FFFFFF',
+      }}
             onFocus={(e) => {
               setSelfFocused(true);
               e.target.style.borderColor = '#D99E02';
@@ -436,33 +439,35 @@ export default function InputPanel({
       )}
 
       {/* Nav / Slide action */}
-      {isGroupMode && showGroupSlide && onGroupSlideComplete ? (
-        <div
-          style={{
-            padding: '8px 10px',
-            background: '#1F1F1F',
-            borderTop: '1px solid #3B3B3B',
-            flexShrink: 0,
-            paddingBottom: floating ? 6 : 'env(safe-area-inset-bottom, 6px)',
-          }}
-        >
-          <SlideToAct
-            label={groupSlideLabel || 'Slide to start this group'}
-            onComplete={onGroupSlideComplete}
-          />
-        </div>
-      ) : (
-        <div
-          style={{
-            padding: '4px 10px',
-            background: '#1F1F1F',
-            borderTop: '1px solid #3B3B3B',
-            display: 'flex',
-            gap: 6,
-            flexShrink: 0,
-            paddingBottom: floating ? 6 : 'env(safe-area-inset-bottom, 6px)',
-          }}
-        >
+{isGroupMode && showGroupSlide && onGroupSlideComplete ? (
+  <div
+    style={{
+      // top 8, left/right 10, bottom extra gap
+      padding: floating ? '8px 10px 10px' : '8px 10px 10px',
+      background: '#1F1F1F',
+      borderTop: '1px solid #3B3B3B',
+      flexShrink: 0,
+    }}
+  >
+    <SlideToAct
+      label={groupSlideLabel || 'Slide to start "this group"'}
+      onComplete={onGroupSlideComplete}
+    />
+  </div>
+) : (
+
+<div
+  style={{
+    // ↑ top/bottom dono taraf thoda zyada
+    padding: floating ? '8px 10px 10px' : '8px 10px 10px',
+    background: '#1F1F1F',
+    borderTop: '1px solid #3B3B3B',
+    display: 'flex',
+    gap: 6,
+    flexShrink: 0,
+  }}
+>
+
           <button
             onClick={onPrev}
             disabled={!canPrev}
@@ -471,7 +476,7 @@ export default function InputPanel({
               padding: '8px 12px',
               fontSize: 16,
               fontWeight: 700,
-              border: '2px solid #C9C9C9',
+              border: '2px solid #3B3B3B',
               background: canPrev ? '#1F1F1F' : '#1F1F1F',
               color: canPrev ? '#FFFFFF' : '#9D9D9D',
               borderRadius: 10,
