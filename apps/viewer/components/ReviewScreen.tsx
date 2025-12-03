@@ -225,7 +225,7 @@ export default function ReviewScreen({
                       fontSize: '14px',
                       color: '#C9C9C9',
                       padding: '8px',
-                      background: '#352E1F',
+                      background: '#1F1F1F',
                       borderRadius: '4px',
                       wordBreak: 'break-word',
                     }}
