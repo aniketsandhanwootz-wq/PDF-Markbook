@@ -285,7 +285,7 @@ export default function ReviewScreen({
             padding: '14px',
             fontSize: '16px',
             fontWeight: 600,
-            border: '2px solid #C9C9C9',
+            border: '2px solid #3B3B3B',
             background: '#1F1F1F',
             color: '#FFFFFF',
             borderRadius: '8px',
