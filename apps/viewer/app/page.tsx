@@ -1912,8 +1912,7 @@ function ViewerContent() {
         const pageRect = pageEl!.getBoundingClientRect();
         const pageOffsetLeft =
           container.scrollLeft + (pageRect.left - containerRect.left);
-        const pageOffsetTop =
-          container.scrollTop + (pageRect.top - containerRect.top);
+        // NOTE: vertical offset hum ab DOM se nahi, apne virtual layout se lenge
 
         const z = zoomRef.current || targetZoom;
 
@@ -1933,11 +1932,11 @@ function ViewerContent() {
 
         const smartRegionRectAtZ = smartRegionRectAt1
           ? {
-            x: smartRegionRectAt1.x * z,
-            y: smartRegionRectAt1.y * z,
-            w: smartRegionRectAt1.w * z,
-            h: smartRegionRectAt1.h * z,
-          }
+              x: smartRegionRectAt1.x * z,
+              y: smartRegionRectAt1.y * z,
+              w: smartRegionRectAt1.w * z,
+              h: smartRegionRectAt1.h * z,
+            }
           : null;
 
         // Highlight current mark box (yellow) + flash
@@ -1946,54 +1945,64 @@ function ViewerContent() {
         setTimeout(() => setFlashRect(null), 1200);
 
         // ===== SCROLL LOGIC =====
-        // These are absolute positions of the group rect in scroll coordinates.
-        const groupLeft = pageOffsetLeft + groupRectAtZ.x;
-        const groupTopAbs = pageOffsetTop + groupRectAtZ.y;
+
+        // 🔴 Canonical page top using prefixHeightsRef (vertical layout)
+        const pref = prefixHeightsRef.current;
+        const canonicalPageTop =
+          pref && pref.length > pageIndex ? pref[pageIndex] : 0;
+
+        // 🔴 Canonical page left – matches how PageCanvas centers the page
+        const pageWidthZ = base.w * z;
+        const canonicalPageLeft =
+          containerW > 0 ? Math.max(0, (containerW - pageWidthZ) / 2) : 0;
+
+        // Absolute group bounds in scroll coordinates
+        const groupLeft = canonicalPageLeft + groupRectAtZ.x;
+        const groupTopAbs = canonicalPageTop + groupRectAtZ.y;
         const groupRight = groupLeft + groupRectAtZ.w;
         const groupBottomAbs = groupTopAbs + groupRectAtZ.h;
 
-        // The *actual* viewport size is just the container dimensions.
-        // We don't subtract HUD/InputPanel here – the layout already keeps
-        // the InputPanel outside the scroll area.
         const effectiveViewWidth = containerW;
         const windowWidth = Math.min(groupRectAtZ.w, effectiveViewWidth);
 
-        const visibleHeight = containerRect.height;
+        const visibleHeight = container.clientHeight;
         const windowHeight = Math.min(groupRectAtZ.h, visibleHeight);
 
         let targetScrollLeft: number;
         let targetScrollTop: number;
 
         if (effectiveGroupChanged) {
-          // Group overview: center the entire group within the viewport.
+          // Group overview: center entire group
           const groupCenterX = groupLeft + groupRectAtZ.w / 2;
           const groupCenterY = groupTopAbs + groupRectAtZ.h / 2;
 
           targetScrollLeft = groupCenterX - effectiveViewWidth / 2;
           targetScrollTop = groupCenterY - visibleHeight / 2;
         } else if (smartFrame && smartRegionRectAtZ) {
-          // Smart-frame view: center the chosen quadrant / sub-region
+          // Smart-frame: center chosen quadrant / sub-region
           const regionCenterX =
-            pageOffsetLeft + smartRegionRectAtZ.x + smartRegionRectAtZ.w / 2;
+            canonicalPageLeft +
+            smartRegionRectAtZ.x +
+            smartRegionRectAtZ.w / 2;
           const regionCenterY =
-            pageOffsetTop + smartRegionRectAtZ.y + smartRegionRectAtZ.h / 2;
+            canonicalPageTop +
+            smartRegionRectAtZ.y +
+            smartRegionRectAtZ.h / 2;
 
           targetScrollLeft = regionCenterX - effectiveViewWidth / 2;
           targetScrollTop = regionCenterY - visibleHeight / 2;
         } else {
-          // Mark-by-mark: treat the viewport as a "window" sliding inside the group.
-          // Keep this window wholly inside the group's bounding box.
-
-          // Horizontal window inside [groupLeft, groupRight]
-          const markCenterX = pageOffsetLeft + rectAtZ.x + rectAtZ.w / 2;
+          // Mark-by-mark window sliding *inside* group
+          const markCenterX =
+            canonicalPageLeft + rectAtZ.x + rectAtZ.w / 2;
           let desiredLeft = markCenterX - windowWidth / 2;
           const minLeft = groupLeft;
           const maxLeft = groupRight - windowWidth;
           desiredLeft = Math.max(minLeft, Math.min(desiredLeft, maxLeft));
           targetScrollLeft = desiredLeft;
 
-          // Vertical window inside [groupTopAbs, groupBottomAbs]
-          const markCenterY = pageOffsetTop + rectAtZ.y + rectAtZ.h / 2;
+          const markCenterY =
+            canonicalPageTop + rectAtZ.y + rectAtZ.h / 2;
           let desiredTop = markCenterY - windowHeight / 2;
           const minTop = groupTopAbs;
           const maxTop = groupBottomAbs - windowHeight;
@@ -2013,6 +2022,7 @@ function ViewerContent() {
           behavior: 'smooth',
         });
       });
+
 
       lastMarkIndexRef.current = index;
     },
