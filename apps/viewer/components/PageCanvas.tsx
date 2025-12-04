@@ -17,6 +17,8 @@ type PageCanvasProps = {
   groupRects?: { x: number; y: number; w: number; h: number }[] | null;
   // 👇 NEW: outline for current group in slide view
   groupOutlineRect?: Rect | null;
+  // When false, suppress all mark overlays (used on report-title screen)
+  showMarks?: boolean;
 };
 
 
@@ -34,6 +36,7 @@ function PageCanvas({
   selectedRect,
   groupRects,
   groupOutlineRect,
+  showMarks = true,
 }: PageCanvasProps) {
   const frontCanvasRef = useRef<HTMLCanvasElement>(null);
   const backCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -255,6 +258,13 @@ function PageCanvas({
     const ctx = overlay.getContext('2d');
     if (!ctx) return;
 
+    // If overlays are disabled (e.g. report-title screen), just clear and bail out
+    if (!showMarks) {
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, overlay.width, overlay.height);
+      return;
+    }
+
     // Map CSS coords → buffer pixels exactly
     const sx = bufW / cssW;
     const sy = bufH / cssH;
@@ -332,11 +342,13 @@ function PageCanvas({
     selectedRect,
     groupRects,
     groupOutlineRect,    // NEW: redraw when groupRects change
-    currentCanvas,  // toggles when we swap front/back
-    isLoading,      // re-run once the page finished rendering
+    currentCanvas,       // toggles when we swap front/back
+    isLoading,           // re-run once the page finished rendering
     zoom,
-    pageNumber
+    pageNumber,
+    showMarks,
   ]);
+
 
 
   return (
@@ -398,6 +410,7 @@ export default memo(PageCanvas, (prevProps, nextProps) => {
     prevProps.flashRect === nextProps.flashRect &&
     prevProps.selectedRect === nextProps.selectedRect &&
     prevProps.groupRects === nextProps.groupRects && // reference equality is enough
-    prevProps.groupOutlineRect === nextProps.groupOutlineRect
+    prevProps.groupOutlineRect === nextProps.groupOutlineRect &&
+    prevProps.showMarks === nextProps.showMarks
   );
 });

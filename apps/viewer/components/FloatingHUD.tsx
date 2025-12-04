@@ -4,6 +4,8 @@ type FloatingHUDProps = {
   // sidebar
   sidebarOpen: boolean;
   onSidebarToggle: () => void;
+  sidebarDisabled?: boolean;
+
 
   // progress (marks)
   currentMarkIndex: number;  // 0-based
@@ -17,6 +19,7 @@ type FloatingHUDProps = {
 export default function FloatingHUD({
   sidebarOpen,
   onSidebarToggle,
+  sidebarDisabled = false,
   currentMarkIndex,
   totalMarks,
   onZoomIn,
@@ -35,7 +38,8 @@ return (
         aria-label={sidebarOpen ? 'Close sidebar' : 'Open sidebar'}
         title={sidebarOpen ? 'Close sidebar' : 'Open sidebar'}
         className="hud-btn hud-sidebar-btn"
-        onClick={onSidebarToggle}
+        onClick={sidebarDisabled ? undefined : onSidebarToggle}
+        disabled={sidebarDisabled}
         style={{
           background: '#D99E02',
           border: '1px solid #D99E02',
@@ -46,8 +50,11 @@ return (
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
+          opacity: sidebarDisabled ? 0.6 : 1,
+          cursor: sidebarDisabled ? 'default' : 'pointer',
         }}
       >
+
         <span
           style={{
             display: 'inline-block',

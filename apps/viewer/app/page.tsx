@@ -853,7 +853,10 @@ function ViewerContent() {
   // Cache zoom level per group so we don’t recompute on every mark navigation
   const groupZoomCache = useRef<Map<number, number>>(new Map());
 
-
+  // Report metadata
+  const [reportTitle, setReportTitle] = useState('');
+  const [showReportTitle, setShowReportTitle] = useState(true);
+  
   const setZoomQ = useCallback(
     (z: number, ref?: MutableRefObject<number>) => {
       const q = quantize(z);
@@ -908,6 +911,13 @@ function ViewerContent() {
     return !isTouch && w >= 1024;
   });
 
+    // Always keep sidebar closed while the report-title panel is active
+  useEffect(() => {
+    if (showReportTitle) {
+      setSidebarOpen(false);
+    }
+  }, [showReportTitle]);
+
   const [flashRect, setFlashRect] = useState<FlashRect>(null);
   const [selectedRect, setSelectedRect] = useState<FlashRect>(null);
   const [currentPage, setCurrentPage] = useState(1);
@@ -933,9 +943,7 @@ function ViewerContent() {
 
   const layoutRafRef = useRef<number | null>(null);
 
-  // Report metadata
-  const [reportTitle, setReportTitle] = useState('');
-  const [showReportTitle, setShowReportTitle] = useState(true);
+
 
   // Generate a unique report ID once per viewer session
   const [reportId] = useState(() => {
@@ -2483,14 +2491,17 @@ function ViewerContent() {
     });
   }, [pdf]);
 
-  // 🔴 REMOVED: This causes wrong scroll position because it zooms before navigation
-  // useEffect(() => {
-  //   if (!pdf || !numPages) return;
-  //   if (showSetup) return;
-  //   if (!showReportTitle) return;
-  //   if (hasBootstrappedViewerRef.current) return;
-  //   fitToWidthZoom();
-  // }, [pdf, numPages, showSetup, showReportTitle, fitToWidthZoom]);
+  // While the report-title screen is visible, keep the first page nicely fit.
+  // Once we start navigation (hasBootstrappedViewerRef = true), group/mark logic
+  // takes over zoom control.
+  useEffect(() => {
+    if (!pdf || !numPages) return;
+    if (showSetup) return;
+    if (!showReportTitle) return;
+    if (hasBootstrappedViewerRef.current) return;
+    fitToWidthZoom();
+  }, [pdf, numPages, showSetup, showReportTitle, fitToWidthZoom]);
+
 
   // PATCH: desktop wheel/trackpad zoom anchored at cursor, scoped to container
   useEffect(() => {
@@ -2745,11 +2756,13 @@ function ViewerContent() {
             <FloatingHUD
               sidebarOpen={sidebarOpen}
               onSidebarToggle={() => setSidebarOpen(!sidebarOpen)}
+              sidebarDisabled={showReportTitle}
               currentMarkIndex={currentMarkIndex}
               totalMarks={marks.length}
               onZoomIn={zoomIn}
               onZoomOut={zoomOut}
             />
+
 
             <div
               style={{
@@ -2794,6 +2807,8 @@ function ViewerContent() {
                         groupRects={getCurrentGroupRectsForPage(pageNum)}
                         // blue group border in slide mode
                         groupOutlineRect={getCurrentGroupOutlineForPage(pageNum)}
+                        showMarks={!showReportTitle}
+
                       />
 
                       {/* Scaled single-layer search overlay */}
@@ -2955,11 +2970,13 @@ function ViewerContent() {
         <FloatingHUD
           sidebarOpen={sidebarOpen}
           onSidebarToggle={() => setSidebarOpen(!sidebarOpen)}
+          sidebarDisabled={showReportTitle}
           currentMarkIndex={currentMarkIndex}
           totalMarks={marks.length}
           onZoomIn={zoomIn}
           onZoomOut={zoomOut}
         />
+
 
         {/* 👇 NEW: proper scroll container for desktop, same as mobile */}
         <div
@@ -2996,7 +3013,9 @@ function ViewerContent() {
                     }
                     groupRects={getCurrentGroupRectsForPage(pageNum)}
                     groupOutlineRect={getCurrentGroupOutlineForPage(pageNum)}
+                    showMarks={!showReportTitle}
                   />
+
 
                   {/* Scaled single-layer search overlay */}
                   {highlightPageNumber === pageNum && (
