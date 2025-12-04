@@ -21,7 +21,9 @@ async def send_email_with_attachments(
     smtp_password: str,
     from_email: str,
     from_name: str,
+    cc_emails: Optional[List[str]] = None,   # NEW optional CC list
 ) -> bool:
+
     """
     Send email with multiple attachments via Gmail SMTP.
     Returns True on success, False on failure.
@@ -32,7 +34,19 @@ async def send_email_with_attachments(
         msg['From'] = f"{from_name} <{from_email}>"
         msg['To'] = to_email
         msg['Subject'] = subject
-        
+        # Optional CC header
+        if cc_emails:
+            # normalize + deduplicate against primary TO
+            clean_cc = sorted(
+                {
+                    addr.strip()
+                    for addr in cc_emails
+                    if addr and addr.strip() and addr.strip().lower() != to_email.lower()
+                }
+            )
+            if clean_cc:
+                msg['Cc'] = ", ".join(clean_cc)
+       
         # Attach HTML body
         msg.attach(MIMEText(body_html, 'html'))
         

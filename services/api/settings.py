@@ -1,9 +1,10 @@
 # services/api/settings.py
 from pydantic_settings import BaseSettings
-from pydantic import ConfigDict
+from pydantic import ConfigDict, Field
 import os
 import base64
-from typing import List
+from typing import List, Optional
+
 
 class Settings(BaseSettings):
     # Storage settings
@@ -24,6 +25,14 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_from_email: str = "aniket.sandhan@wootz.work"
     smtp_from_name: str = "Wootz Markbook System"
+
+    # 🔴 NEW: comma-separated list of emails that should be CC'd on every inspection mail
+    # Example in .env:
+    # SMTP_ALWAYS_CC=person1@wootz.work,person2@wootz.work
+    smtp_always_cc: Optional[str] = Field(
+        default=None,
+        description="Comma-separated emails that will be CC'ed on every inspection report",
+    )
     
     # Report / generation limits
     # Max number of marks that will be included in a single report (Excel/PDF).

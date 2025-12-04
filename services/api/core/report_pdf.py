@@ -16,6 +16,7 @@ def _require_pdfium():
         import pypdfium2 as pdfium     # <-- FIX: correct module name
         return pdfium
     except Exception as e:
+        
         raise RuntimeError(
             "pypdfium2 is not available in this environment. "
             "Run on Render (Linux/Python 3.12) or install pypdfium2 there. "

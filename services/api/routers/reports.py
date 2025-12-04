@@ -38,6 +38,10 @@ class ReportBundleLegacyBody(BaseModel):
     report_title: Optional[str] = None     # human-readable title from ReportTitlePanel
     report_id: Optional[str] = None        # unique QC submission ID from viewer
 
+    # 🔴 NEW: optional POC CC list (comma-separated emails, from Glide → Viewer)
+    poc_cc: Optional[str] = None
+
+
 
 
 @router.post("/generate-bundle")
@@ -125,7 +129,10 @@ async def generate_bundle_legacy(
             # 🔴 NEW: use viewer's title/id in the new bundle endpoint
             "report_name": body.report_title,
             "report_id": body.report_id,
+            # 🔴 NEW: pass dynamic POC CC string through (can be None)
+            "poc_cc": body.poc_cc,
         }
+
 
 
         try:

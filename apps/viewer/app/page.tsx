@@ -1213,6 +1213,8 @@ function ViewerContent() {
   const qPartNumber = searchParams?.get('part_number') || '';
   const qUser = searchParams?.get('user_mail') || '';
   const qAssembly = searchParams?.get('assembly_drawing') || '';
+    // NEW: optional POC CC list from Glide (comma-separated emails)
+  const qPocCc = searchParams?.get('poc_cc') || '';
   const hasBootstrapKeys = !!(qProject && qExtId && qPartNumber && qAssembly);
   const pdfUrlParam = searchParams?.get('pdf_url') || '';
   const markSetIdParam = searchParams?.get('mark_set_id') || '';
@@ -2369,7 +2371,11 @@ function ViewerContent() {
           // 🔴 NEW: pass viewer metadata through
           report_title: reportTitle.trim(),
           report_id: reportId,
+
+          // 🔴 NEW: pass POC CC list through as-is (comma-separated)
+          poc_cc: qPocCc || undefined,
         }),
+
       });
 
       if (!response.ok) {
@@ -2417,10 +2423,12 @@ function ViewerContent() {
     rawPdfUrl,
     searchParams,
     qUser,
+    qPocCc,        // 🔴 NEW dep
     marks,
-    reportTitle,   // 🔴 NEW dep
-    reportId,      // 🔴 NEW dep
+    reportTitle,
+    reportId,
   ]);
+
 
 
   const swipeHandlers = useSwipeable({

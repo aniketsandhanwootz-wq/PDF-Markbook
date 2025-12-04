@@ -45,6 +45,7 @@ class ReportBundleRequest(BaseModel):
     - submitted_by: (optional) who filled the QC; used to filter inputs
     - report_name:  (optional) human-friendly title shown in email/Excel
     - report_id:    (optional) unique ID for this submission, used to isolate inputs
+    - poc_cc:       (optional) comma-separated list of POC emails to CC for this run
     """
     doc_id: str
     mark_set_id: str
@@ -52,6 +53,8 @@ class ReportBundleRequest(BaseModel):
     submitted_by: Optional[str] = None
     report_name: Optional[str] = None
     report_id: Optional[str] = None
+    poc_cc: Optional[str] = None
+
 
 
 class ReportBundleQueuedResponse(BaseModel):
@@ -299,6 +302,7 @@ async def _send_excel_email(
     total_marks: int,
     completed_marks: int,
     excel_bytes: bytes,
+    poc_cc_raw: Optional[str] = None,   # NEW: dynamic POC CC string
 ) -> None:
     """
     Send an email with a *single* Excel attachment,
@@ -318,6 +322,33 @@ async def _send_excel_email(
             or "Document"
         )
         qc_label = qc_ms.get("name", "QC Run")
+        # --- Build CC list ---
+        # 1) Fixed CC emails from settings (comma-separated, env: SMTP_ALWAYS_CC)
+        fixed_cc_raw = getattr(settings, "smtp_always_cc", None) or ""
+        fixed_cc = [
+            addr.strip()
+            for addr in fixed_cc_raw.split(",")
+            if addr and addr.strip()
+        ]
+
+        # 2) Dynamic POC list from Viewer / Glide (comma-separated)
+        poc_cc_list: List[str] = []
+        if poc_cc_raw:
+            poc_cc_list = [
+                addr.strip()
+                for addr in poc_cc_raw.split(",")
+                if addr and addr.strip()
+            ]
+
+        # 3) Merge + de-duplicate, never CC the main TO twice
+        all_cc: List[str] = []
+        seen = {to_email.lower()}
+        for addr in fixed_cc + poc_cc_list:
+            low = addr.lower()
+            if low in seen:
+                continue
+            seen.add(low)
+            all_cc.append(addr)
 
         # Subject: include report_name if provided
         if report_name:
@@ -368,6 +399,7 @@ async def _send_excel_email(
             smtp_password=smtp_password,
             from_email=from_email,
             from_name=from_name,
+            cc_emails=all_cc or None,   # NEW
         )
 
         if ok:
@@ -597,7 +629,9 @@ async def _do_generate_and_send_excel_bundle(
             total_marks=total_marks,
             completed_marks=completed_marks,
             excel_bytes=excel_bytes,
+            poc_cc_raw=req.poc_cc,   # NEW
         )
+
 
     except Exception as e:
         logger.exception(f"Unexpected error in background task: {e}")
