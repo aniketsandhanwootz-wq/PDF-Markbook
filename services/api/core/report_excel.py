@@ -100,16 +100,19 @@ async def generate_report_excel(
       - Header: Part Number, ID (external_id), MarkSet Name, Created By/At
       - One row per mark:
           A: Label
-          B: Thumbnail image of mark region
+          B: Thumbnail image of mark region (under "Required Value" header)
           C/D: Tolerance Min/Max (left empty)
           E: Observed Value (user input)
-          F/G: Status, Comment (left empty)
+          F: Instrument (from mark.instrument)
+          G: Status (dropdown: Pass/Fail/Doubt)
+          H: Comment (left empty)
 
     Optimised for:
       - Per-page PDF rendering (render each page once, crop many marks)
       - Using temp files for images so openpyxl never sees raw PIL Images
       - Basic mark cap from settings.max_marks_per_report (default 300)
     """
+
     # ---------- PDF + template ----------
     _require_pdfium()
     pdf_bytes = await _fetch_pdf_bytes(pdf_url)
@@ -127,7 +130,7 @@ async def generate_report_excel(
     template_row_index = 9
     template_row_cells = {
         col: ws.cell(row=template_row_index, column=col)
-        for col in range(1, 8)  # columns A..G
+        for col in range(1, 9)  # columns A..H
     }
 
     def _apply_row_style(target_row: int) -> None:
@@ -294,11 +297,14 @@ async def generate_report_excel(
                 nh = float(m["nh"])
                 label = (m.get("label") or f"Mark {r - start_row + 1}").strip()
                 observed = (entries.get(mark_id, "") or "").strip()
+                instrument = (m.get("instrument") or "").strip()
 
                 # Text cells (merge-safe)
-                _write_merged(ws, f"A{r}", label)      # A: Label
-                _write_merged(ws, f"E{r}", observed)   # E: Observed
-                ws.row_dimensions[r].height = 75       # row height for thumbnail
+                _write_merged(ws, f"A{r}", label)        # A: Label
+                _write_merged(ws, f"E{r}", observed)     # E: Observed Value
+                _write_merged(ws, f"F{r}", instrument)   # F: Instrument
+                ws.row_dimensions[r].height = 75         # row height for thumbnail
+
 
                 # Image thumbnail into column B
                 if page_img is None:
@@ -357,7 +363,8 @@ async def generate_report_excel(
                 allow_blank=True,
             )
             ws.add_data_validation(status_dv)
-            status_dv.add(f"F{first_mark_row}:F{last_mark_row}")
+            status_dv.add(f"G{first_mark_row}:G{last_mark_row}")
+
 
         # =====================================================
         # SAVE TO BYTES

@@ -85,6 +85,45 @@ def _load_markset_and_doc(storage: StorageAdapter, mark_set_id: str) -> tuple[Di
 
     return target, doc
 
+def _normalize_instrument(val: Any) -> Optional[str]:
+    """
+    Treat None, empty string and whitespace-only strings as the same (None).
+    Also trims normal strings.
+    """
+    if val is None:
+        return None
+    if not isinstance(val, str):
+        val = str(val)
+    trimmed = val.strip()
+    return trimmed or None
+
+
+def _normalize_bool(val: Any) -> Optional[bool]:
+    """
+    Normalize various truthy/falsey representations from Sheets / API.
+
+    Returns:
+      - True / False when it can clearly decide
+      - None when value is empty / unknown
+    """
+    if val is None:
+        return None
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, (int, float)):
+        return bool(val)
+
+    if isinstance(val, str):
+        cleaned = val.strip().lower()
+        if not cleaned:
+            return None
+        if cleaned in {"true", "yes", "y", "1"}:
+            return True
+        if cleaned in {"false", "no", "n", "0"}:
+            return False
+
+    # Fallback: Python truthiness
+    return bool(val)
 
 def clean_pdf_url(url: str) -> str:
     """Extract Google Storage URL from nested Cloudinary URLs"""
@@ -280,23 +319,59 @@ async def update_marks(
         if (m.get("mark_id") or "").strip()
     }
 
-    # Treat any mark that references an existing master mark_id as
-    # "just a copy" and ignore it. Only marks with no existing id are new.
+    # Direct map: mark_id -> existing master mark row (raw / as stored)
+    existing_by_id: dict[str, dict[str, Any]] = {
+        (m.get("mark_id") or "").strip(): m
+        for m in existing_marks
+        if (m.get("mark_id") or "").strip()
+    }
+
+    # For QC:
+    #   - existing marks: allow updating instrument / is_required ONLY
+    #   - new marks: append at the end
+    merged_existing: dict[str, dict[str, Any]] = {}
     new_marks: list[dict[str, Any]] = []
+
     for m in marks_data:
         mid = (m.get("mark_id") or "").strip()
+
         if mid and mid in existing_ids:
-            # QC is not allowed to change this; ignore their copy
-            continue
-        new_marks.append(m)
+            # Existing master mark -> merge instrument / is_required only
+            orig = existing_by_id[mid]
 
-    if not new_marks:
-        logger.info(
-            f"[QC APPEND] No new marks to append for set {mark_set_id} by {user_mail}"
-        )
-        return {"status": "ok", "message": "No new marks to append"}
+            # normalize original values
+            orig_instr = _normalize_instrument(orig.get("instrument"))
+            orig_req = _normalize_bool(orig.get("is_required"))
 
-    # Determine current max order_index in master
+            # start from original normalized values
+            new_instr = orig_instr
+            new_req = orig_req
+
+            # --- instrument update semantics ---
+            if "instrument" in m:
+                instr = m.get("instrument")
+                new_instr = _normalize_instrument(instr)
+
+            # --- is_required update semantics ---
+            if "is_required" in m:
+                req_val = m.get("is_required")
+                if req_val is not None:
+                    new_req = _normalize_bool(req_val)
+
+            # only consider it "updated" if something actually changed, after normalization
+            instrument_changed = new_instr != orig_instr
+            req_changed = new_req != orig_req
+
+            if instrument_changed or req_changed:
+                updated = dict(orig)
+                updated["instrument"] = new_instr
+                updated["is_required"] = new_req
+                merged_existing[mid] = updated
+        else:
+            # Mark without an existing master ID -> treat as NEW
+            new_marks.append(m)
+
+    # Determine current max order_index in master (for NEW marks only)
     if existing_marks:
         max_order = max(int(m.get("order_index", 0)) for m in existing_marks)
     else:
@@ -310,11 +385,21 @@ async def update_marks(
         # Force backend to generate new IDs; don't reuse any client-provided id
         nm["mark_id"] = (nm.get("mark_id") or "").strip() or None
 
-    combined = list(existing_marks) + new_marks
+    # Rebuild the existing part, applying merged instrument/is_required
+    combined_existing: list[dict[str, Any]] = []
+    for ex in existing_marks:
+        mid = (ex.get("mark_id") or "").strip()
+        if mid and mid in merged_existing:
+            combined_existing.append(merged_existing[mid])
+        else:
+            combined_existing.append(ex)
+
+    combined = combined_existing + new_marks
     ensure_unique_order_index(combined)
 
     logger.info(
-        f"[QC APPEND] Appending {len(new_marks)} new marks into master set {mark_set_id} by {user_mail}"
+        f"[QC APPEND] Appending {len(new_marks)} new marks and updating "
+        f"{len(merged_existing)} existing marks in master set {mark_set_id} by {user_mail}"
     )
 
     try:
@@ -324,7 +409,13 @@ async def update_marks(
             raise HTTPException(status_code=404, detail="MARK_SET_NOT_FOUND")
         raise HTTPException(status_code=400, detail=str(e))
 
-    return {"status": "ok", "message": f"Appended {len(new_marks)} new marks into master"}
+    return {
+        "status": "ok",
+        "message": (
+            f"Appended {len(new_marks)} new marks and "
+            f"updated {len(merged_existing)} existing marks in master"
+        ),
+    }
 
 # ---------- Master-only: patch a single mark (instrument / required) ----------
 

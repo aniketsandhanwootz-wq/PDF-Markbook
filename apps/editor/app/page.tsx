@@ -1475,15 +1475,73 @@ const addToast = useCallback(
 // `silent = true` means: no toast (used for internal updates like GroupEditor)
 const updateMark = useCallback(
   (markId: string, updates: Partial<Mark>, silent = false) => {
-    setMarks((prev) =>
-      prev.map((m) => (m.mark_id === markId ? { ...m, ...updates } : m))
+    // 1️⃣ Always update local UI state
+    setMarks(prev =>
+      prev.map(m => (m.mark_id === markId ? { ...m, ...updates } : m))
     );
 
-    if (!silent) {
-      addToast('Mark updated', 'success');
+    // 2️⃣ Build PATCH payload – ONLY instrument & is_required allowed to persist
+    const patch: Record<string, unknown> = {};
+
+    if (typeof updates.instrument === 'string') {
+      const trimmed = updates.instrument.trim();
+      if (trimmed.length > 0) {
+        patch.instrument = trimmed;
+      }
+      // empty string => don't send (backend doesn't allow empty instrument)
     }
+
+    if (typeof updates.is_required === 'boolean') {
+      patch.is_required = updates.is_required;
+    }
+
+    // If nothing relevant changed (e.g. only geometry), skip API call
+    if (Object.keys(patch).length === 0) {
+      if (!silent) {
+        // geometry-only / no server change
+        addToast('Mark updated', 'success');
+      }
+      return;
+    }
+
+    const apiBase =
+      process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
+
+    (async () => {
+      try {
+        const qs = new URLSearchParams();
+        if (userMail) {
+          qs.set('user_mail', userMail);
+        }
+
+        const url = `${apiBase}/marks/${encodeURIComponent(markId)}${
+          qs.toString() ? `?${qs.toString()}` : ''
+        }`;
+
+        const res = await fetch(url, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(patch),
+        });
+
+        if (!res.ok) {
+          const txt = await res.text();
+          console.error('Failed to PATCH mark', res.status, txt);
+          // Optional: surface error to user
+          // if (!silent) addToast('Failed to save changes on server', 'error');
+          return;
+        }
+
+        if (!silent) {
+          addToast('Mark updated', 'success');
+        }
+      } catch (err) {
+        console.error('Error while PATCHing mark', err);
+        // Optional: if (!silent) addToast('Failed to save changes on server', 'error');
+      }
+    })();
   },
-  [addToast]
+  [addToast, userMail]
 );
 
   // Delete a mark by ID
