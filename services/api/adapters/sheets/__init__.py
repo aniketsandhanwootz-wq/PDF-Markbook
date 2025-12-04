@@ -1160,8 +1160,17 @@ class SheetsAdapter(StorageAdapter):
         List all groups for a given QC mark_set_id.
 
         mark_ids is returned as a Python list[str].
+
+        IMPORTANT:
+        - We deliberately keep the sheet row order (append order),
+          so groups appear in the same sequence they were created in the editor.
         """
-        rows = [r for r in self._get_all_dicts("groups") if r.get("mark_set_id") == mark_set_id]
+        rows = [
+            r
+            for r in self._get_all_dicts("groups")
+            if r.get("mark_set_id") == mark_set_id
+        ]
+
         out: list[dict[str, Any]] = []
         for g in rows:
             try:
@@ -1195,8 +1204,7 @@ class SheetsAdapter(StorageAdapter):
                 # skip any corrupted row
                 continue
 
-        # Sort by page_index then name for stable UI
-        out.sort(key=lambda gr: (gr["page_index"], gr["name"]))
+        # ⚠️ Do NOT sort here – we preserve sheet row order (creation order)
         return out
 
 
