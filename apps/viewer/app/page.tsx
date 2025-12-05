@@ -933,7 +933,9 @@ function ViewerContent() {
   // Input mode states
   const [entries, setEntries] = useState<Record<string, string>>({});
   const [showReview, setShowReview] = useState(false);
+  const [hasVisitedReview, setHasVisitedReview] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
 
   // Refs used by the viewer and smooth zoom
   const containerRef = useRef<HTMLDivElement>(null);
@@ -1300,7 +1302,10 @@ function ViewerContent() {
     setCurrentGroupIndex(0);
     setPanelMode('group'); // QC will immediately jump to group 0; master will override to mark mode
     setCurrentMarkIndex(0);
+    setShowReview(false);
+    setHasVisitedReview(false);
   }, [markSetId]);
+
 
 
   const demoMarks: Mark[] = [
@@ -2189,6 +2194,12 @@ function ViewerContent() {
     navigateToMark,
   ]);
 
+    const openReview = useCallback(() => {
+    // Central place to enter review mode
+    setShowReview(true);
+    setHasVisitedReview(true);
+  }, []);
+
   const nextMark = useCallback(() => {
     if (!marks.length) return;
 
@@ -2230,7 +2241,7 @@ function ViewerContent() {
     }
 
     // Last mark of last group → show review
-    setShowReview(true);
+    openReview();
   }, [
     panelMode,
     marks.length,
@@ -2240,7 +2251,9 @@ function ViewerContent() {
     navigateToGroup,
     navigateToMark,
     proceedFromGroupToMarks,
+    openReview,
   ]);
+
 
   const handleJumpFromReview = useCallback(
     (index: number) => {
@@ -2776,7 +2789,16 @@ function ViewerContent() {
               totalMarks={marks.length}
               onZoomIn={zoomIn}
               onZoomOut={zoomOut}
+              // Show Review shortcut only after first visit, and not during title/review overlay
+              canOpenReview={
+                hasVisitedReview &&
+                !showReportTitle &&
+                !showReview &&
+                marks.length > 0
+              }
+              onOpenReview={openReview}
             />
+
 
 
             <div
@@ -2980,7 +3002,6 @@ function ViewerContent() {
       )}
 
 
-      <div className="main-content">
         {/* ✅ Floating HUD (desktop) */}
         <FloatingHUD
           sidebarOpen={sidebarOpen}
@@ -2990,7 +3011,16 @@ function ViewerContent() {
           totalMarks={marks.length}
           onZoomIn={zoomIn}
           onZoomOut={zoomOut}
+          // Show Review shortcut only after first visit, and not during title/review overlay
+          canOpenReview={
+            hasVisitedReview &&
+            !showReportTitle &&
+            !showReview &&
+            marks.length > 0
+          }
+          onOpenReview={openReview}
         />
+
 
 
         {/* 👇 NEW: proper scroll container for desktop, same as mobile */}
@@ -3065,8 +3095,6 @@ function ViewerContent() {
             })}
           </div>
         </div>
-      </div>
-
 
       {/* Keep Input Panel OUTSIDE the scroll area */}
       <div className="input-panel-section">
