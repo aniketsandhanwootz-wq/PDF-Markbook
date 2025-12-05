@@ -962,6 +962,8 @@ function ViewerContent() {
   const isZoomAnimatingRef = useRef(false);
   // ===== Windowing + prefix sums =====
   const GUTTER = 16; // vertical gap between pages
+    const SAFE_BOTTOM = 120; // px reserved at bottom so marks don't hide behind InputPanel/keyboard
+
   const prefixHeightsRef = useRef<number[]>([]);   // top offsets of each page at current zoom
   const totalHeightRef = useRef<number>(0);
   const [visibleRange, setVisibleRange] = useState<[number, number]>([1, 3]); // 1-based inclusive
@@ -1965,7 +1967,10 @@ function ViewerContent() {
         const effectiveViewWidth = containerW;
         const windowWidth = Math.min(groupRectAtZ.w, effectiveViewWidth);
 
-        const visibleHeight = container.clientHeight;
+        // Bottom-safe height: reserve some space so yellow box + mark
+        // InputPanel/keyboard ke peeche na chhup jaaye.
+        const rawVisibleHeight = container.clientHeight;
+        const visibleHeight = Math.max(40, rawVisibleHeight - SAFE_BOTTOM);
         const windowHeight = Math.min(groupRectAtZ.h, visibleHeight);
 
         let targetScrollLeft: number;
