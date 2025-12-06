@@ -52,6 +52,7 @@ async def generate_master_report_excel(
     runs: List[MasterReportRun],
     report_title: Optional[str] = None,
     max_runs: int = 100,
+    dwg_num: Optional[str] = None,  # 🔥 NEW: optional drawing number for header
 ) -> bytes:
     """
     Generate master inspection report Excel.
@@ -85,17 +86,20 @@ async def generate_master_report_excel(
     # Load template
     wb = load_workbook(TEMPLATE_PATH)
     ws = wb.active
-    
     # --- 1) Fill header info ---
     id_str = f"{external_id} - {part_number}"
+    # If dwg_num is provided, append it to the main header line
+    if dwg_num:
+        id_str = f"{id_str} (DWG: {dwg_num})"
     
     # ⚠️ IMPORTANT:
     # In the template, rows 3 and 4 are merged as:
     #   A3:G3  and  A4:G4
     # For merged ranges, ONLY the top-left cell (A3 / A4) is writable.
     # So we MUST write to A3 and A4, NOT E3/E4.
-    ws["A3"] = id_str          # Full-width merged header line: "<external_id> - <part_number>"
+    ws["A3"] = id_str          # Full-width merged header line: "<external_id> - <part_number> (DWG: ...)"
     ws["A4"] = part_number     # Full-width merged header line: "<part_number>"
+
 
     
     # --- 2) Prepare styles from template ---

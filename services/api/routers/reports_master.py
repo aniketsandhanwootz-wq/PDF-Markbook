@@ -34,8 +34,13 @@ class MasterReportRequest(BaseModel):
     project_name: str = Field(..., min_length=1)
     id: str = Field(..., min_length=1, description="Business ID (external_id)")
     part_number: str = Field(..., min_length=1)
+    dwg_num: Optional[str] = Field(
+        default=None,
+        description="Drawing number (dwg_num) for this PDF; if omitted, legacy 3-part key is used",
+    )
     report_title: Optional[str] = Field(None, description="Optional report title")
     max_runs: int = Field(100, ge=1, le=200, description="Max inspection runs to include")
+
 
 
 # ========== Helpers ==========
@@ -161,11 +166,12 @@ async def generate_master_report(
     - Columns: all inspection runs (latest report per markset)
     """
     try:
-        # 1) Resolve document
+        # 1) Resolve document (now aware of dwg_num when provided)
         doc = storage.get_document_by_business_key(
             project_name=req.project_name,
             external_id=req.id,
             part_number=req.part_number,
+            dwg_num=req.dwg_num or "",
         )
         
         if not doc:
@@ -226,10 +232,15 @@ async def generate_master_report(
             runs=runs,
             report_title=req.report_title,
             max_runs=req.max_runs,
+            dwg_num=req.dwg_num or None,
         )
         
         # 7) Return as download
-        filename = f"{req.part_number}_master_report.xlsx"
+        if req.dwg_num:
+            safe_dwg = req.dwg_num.replace("/", "-")
+            filename = f"{req.part_number}_{safe_dwg}_master_report.xlsx"
+        else:
+            filename = f"{req.part_number}_master_report.xlsx"
         
         return StreamingResponse(
             BytesIO(excel_bytes),

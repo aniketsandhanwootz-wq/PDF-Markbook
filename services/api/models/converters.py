@@ -17,23 +17,20 @@ def _bool_from_sheet(v: Any) -> bool:
     return s in ("TRUE", "1", "YES", "Y")
 
 
-def document_from_sheets(row: Dict[str, Any]) -> Document:
-    """
-    Convert a raw dict from the `documents` sheet into a Document model.
-    """
+def document_from_sheets(row: dict[str, Any]) -> Document:
     return Document(
         doc_id=row.get("doc_id", ""),
         pdf_url=row.get("pdf_url", ""),
         page_count=int(row.get("page_count") or 0),
-
         part_number=(row.get("part_number") or None),
-        external_id=(row.get("external_id") or None),
         project_name=(row.get("project_name") or None),
+        external_id=(row.get("external_id") or None),
+        dwg_num=(row.get("dwg_num") or None),                 # 🔥 NEW
+        drawing_type=row.get("drawing_type") or None,  # 👈 ADD THIS
         master_editors=(row.get("master_editors") or None),
-
         created_by=(row.get("created_by") or None),
-        created_at=(row.get("created_at") or None),
-        updated_at=(row.get("updated_at") or None),
+        created_at=row.get("created_at") or "",
+        updated_at=row.get("updated_at") or "",
     )
 
 

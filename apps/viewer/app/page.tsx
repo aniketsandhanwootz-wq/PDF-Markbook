@@ -17,6 +17,7 @@ import { clampZoom, downloadMasterReport, computeZoomForRect } from '../lib/pdf'
 import PDFSearch from '../components/PDFSearch';
 import SlideSidebar from '../components/SlideSidebar';
 import usePinchZoom from '../hooks/usePinchZoom';
+import DrawingSheetPanel from '../components/DrawingSheetPanel'; // ✅ NEW
 
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
@@ -240,8 +241,11 @@ type BootstrapDoc = {
     project_name: string;
     id: string;            // external_id
     part_number: string;
+    dwg_num?: string | null;
     pdf_url: string;
     page_count: number;
+    // 👇 NEW: document-level drawing type (optional)
+    drawing_type?: string | null;
   };
   mark_sets: Array<{
     mark_set_id: string;
@@ -252,11 +256,18 @@ type BootstrapDoc = {
     created_at: string;
     updated_by: string;
     marks_count?: number;
-    description?: string | null;   // 👈 NEW
+    description?: string | null;
+
+    // 👇 per-markset drawing & PDF (optional)
+    dwg_num?: string | null;
+    pdf_url?: string | null;
   }>;
   master_mark_set_id?: string | null;
-  mark_set_count: number;
-  status?: string;
+  included_mark_set_id?: string | null;
+  marks: any[];
+
+  // 👇 NEW: map DWG number → drawing_type (e.g. "Assembly", "Part", etc.)
+  dwgTypeMap?: Record<string, string | null>;
 };
 
 
@@ -268,7 +279,11 @@ type CreateDocMarkSetBody = {
   created_by?: string | null;
   is_master?: boolean;
 };
-function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string) => void }) {
+function ViewerSetupScreen({
+  onStart,
+}: {
+  onStart: (pdfUrl: string, markSetId: string, dwgNum?: string | null) => void;
+}) {
   const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
   const params = useSearchParams();
 
@@ -276,42 +291,116 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
   const [projectName, setProjectName] = useState<string>(params?.get('project_name') || '');
   const [extId, setExtId] = useState<string>(params?.get('id') || '');
   const [partNumber, setPartNumber] = useState<string>(params?.get('part_number') || '');
+  const [dwgNum, setDwgNum] = useState<string>(params?.get('dwg_num') || '');
   const [userMail, setUserMail] = useState<string>(params?.get('user_mail') || '');
   const [assemblyDrawing, setAssemblyDrawing] = useState<string>(params?.get('assembly_drawing') || '');
+
 
   // Bootstrap state
   const [boot, setBoot] = useState<BootstrapDoc | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string>('');
+  const [autoTriedBootstrap, setAutoTriedBootstrap] = useState(false);
 
+    // 👉 NEW: which DWG is currently opened in the bottom sheet (null = closed)
+  const [activeDwgKey, setActiveDwgKey] = useState<string | null>(null);
   // 👉 NOTE: we no longer show QC mark counts on the initial screen,
   // so we don't need to compute them here. Keeping this commented so
   // it's easy to restore in future if UI changes.
   // const [qcMarkCounts, setQcMarkCounts] = useState<Record<string, number>>({});
 
 
+  // For viewer we only need the business triple; dwg_num + assembly_drawing are optional.
   const hasBootstrapKeys =
-    projectName.trim() && extId.trim() && partNumber.trim() && assemblyDrawing.trim();
+    projectName.trim() && extId.trim() && partNumber.trim();
 
   const runBootstrap = async () => {
     setErr('');
     try {
       setLoading(true);
-      const res = await fetch(`${apiBase}/documents/init`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          project_name: projectName,
-          id: extId,
-          part_number: partNumber,
-          user_mail: userMail || undefined,
-          pdf_url: undefined,
-          assembly_drawing: assemblyDrawing,
-        }),
+
+const qs = new URLSearchParams({
+  project_name: projectName,
+  id: extId,
+  part_number: partNumber,
+});
+
+// 👇 Only filter by dwg_num if user explicitly typed it.
+// For Glide 2 (viewer), we *never* filter by assembly_drawing here,
+// so we get ALL mark_sets across ALL drawings for this triple.
+if (dwgNum.trim()) qs.set('dwg_num', dwgNum.trim());
+
+if (userMail.trim()) qs.set('user_mail', userMail.trim());
+
+// ❌ IMPORTANT: do NOT send assembly_drawing to /documents/by-identifier
+// Viewer uses assemblyDrawing only as a fallback pdf_url later,
+// not as a filter.
+// if (assemblyDrawing.trim()) {
+//   qs.set('assembly_drawing', assemblyDrawing.trim());
+// }
+
+
+       const res = await fetch(
+        `${apiBase}/documents/by-identifier?${qs.toString()}`,
+        { method: 'GET' }
+      );
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+
+        // 404 -> document/inspection map not found
+ if (res.status === 404 && text.includes('DOCUMENT_NOT_FOUND')) {
+  setErr(
+    'No inspection map exists. To create a map, go to Wootz.Browser > Assembly > All > Info > Inspection Map'
+  );
+  return; // stop here, boot null hi rahega
+}
+
+
+        throw new Error(text || 'Bootstrap failed');
+      }
+
+      const meta: any = await res.json();
+
+      // Normalise into BootstrapDoc shape used by the UI
+      const doc = meta.document || meta.documents?.[0] || {};
+
+
+      // 👇 Build a DWG → drawing_type map from all related documents (if present)
+      const docsArray: any[] = meta.documents
+        ? meta.documents
+        : doc
+        ? [doc]
+        : [];
+
+      const dwgTypeMap: Record<string, string | null> = {};
+      docsArray.forEach((d) => {
+        const key =
+          (d.dwg_num && String(d.dwg_num).trim()) || 'UNKNOWN';
+        const value =
+          (d.drawing_type && String(d.drawing_type).trim()) || null;
+        dwgTypeMap[key] = value;
       });
-      if (!res.ok) throw new Error(await res.text());
-      const data: BootstrapDoc = await res.json();
-      setBoot(data);
+
+      const bootData: BootstrapDoc = {
+        document: {
+          doc_id: doc.doc_id ?? '',
+          project_name: doc.project_name ?? projectName,
+          id: doc.id ?? extId,
+          part_number: doc.part_number ?? partNumber,
+          dwg_num: doc.dwg_num ?? null,
+          pdf_url: doc.pdf_url ?? (assemblyDrawing || ''),
+          page_count: doc.page_count ?? 0,
+          drawing_type: doc.drawing_type ?? null,
+        },
+        mark_sets: (meta.mark_sets || []) as BootstrapDoc['mark_sets'],
+        master_mark_set_id: meta.master_mark_set_id ?? null,
+        included_mark_set_id: meta.included_mark_set_id ?? null,
+        marks: [],
+        dwgTypeMap, // 👈 attach the map to boot
+      };
+
+      setBoot(bootData);
     } catch (e: any) {
       console.error(e);
       setErr('Failed to initialize document.');
@@ -321,10 +410,13 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
   };
 
   useEffect(() => {
-    if (!boot && hasBootstrapKeys && !loading) {
+    // URL se aayi triple ke liye sirf EK baar auto bootstrap karo
+    if (!boot && hasBootstrapKeys && !loading && !autoTriedBootstrap) {
+      setAutoTriedBootstrap(true);   // ✅ ab dobara auto-run nahi hoga
       runBootstrap();
     }
-  }, [boot, hasBootstrapKeys, loading]);
+  }, [boot, hasBootstrapKeys, loading, autoTriedBootstrap]);
+
 
   // ❌ We used to compute QC mark counts here by calling /viewer/groups
   //    for every non-master markset, just to show "X marks" in the UI.
@@ -386,9 +478,13 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
         project_name: projectName,
         id: extId,
         part_number: partNumber,
-        report_title: `${partNumber} Master Report`,
+        dwg_num: dwgNum || undefined,
+        report_title: dwgNum
+          ? `${partNumber} - ${dwgNum} Master Report`
+          : `${partNumber} Master Report`,
         apiBase,
       });
+
 
       // Show success toast (optional, or use native alert)
       alert('✓ Master report downloaded successfully!');
@@ -400,13 +496,35 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
     }
   };
 
-  const handleOpenMarkset = (markSetId: string) => {
-    if (!boot?.document?.pdf_url) {
-      setErr('No PDF URL on document.');
+  type MarksetLike = {
+  mark_set_id: string;
+  label?: string;
+  dwg_num?: string | null;
+  pdf_url?: string | null;
+};
+
+
+ const handleOpenMarkset = (ms: MarksetLike) => {
+    // Prefer per-markset pdf_url/dwg_num; fall back to document-level
+    const url =
+      (ms as any).pdf_url ||
+      (boot?.document as any)?.pdf_url ||
+      '';
+
+    if (!url) {
+      setErr('No PDF URL for this mark set.');
       return;
     }
-    onStart(boot.document.pdf_url, markSetId);
+
+    const dwg =
+      (ms as any).dwg_num ??
+      (boot?.document as any)?.dwg_num ??
+      null;
+
+    onStart(url, ms.mark_set_id, dwg);
   };
+
+
   const masterMarkset = boot?.mark_sets.find((ms) => ms.is_master);
   const otherMarksets =
     boot?.mark_sets
@@ -419,13 +537,96 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
         return bt - at;
       }) || [];
 
+  // 🔹 Group QC marksets by DWG number (drawing)
+  const groupedByDwg: Record<string, BootstrapDoc['mark_sets']> = {};
+  otherMarksets.forEach((ms) => {
+    const key =
+      ((ms as any).dwg_num as string | null | undefined) ??
+      (boot?.document as any)?.dwg_num ??
+      'UNKNOWN';
+
+    if (!groupedByDwg[key]) groupedByDwg[key] = [];
+    groupedByDwg[key].push(ms);
+  });
+
+  const dwgKeys = Object.keys(groupedByDwg).sort((a, b) => {
+    if (a === 'UNKNOWN') return 1;
+    if (b === 'UNKNOWN') return -1;
+    return a.localeCompare(b);
+  });
+
+
+// Helper: DWG + boot se human-friendly type name nikaalo
+const resolveTypeLabelForDwg = (
+  dwgKey: string,
+  bootState: BootstrapDoc | null
+): string => {
+  if (!bootState) return 'Other Drawings';
+
+  // ✅ Only use per-DWG type; don't fall back to document.drawing_type
+  const rawType = bootState.dwgTypeMap?.[dwgKey] ?? null;
+
+  const v = (rawType || '').trim();
+
+  // ✅ If blank or '-' → treat as "Other Drawings" (or whatever label you want)
+  if (!v || v === '-') {
+    return 'Other Drawings'; // <--- change this label if you prefer something else
+  }
+
+  const lc = v.toLowerCase();
+
+  if (lc === 'part') return 'Part Drawings';
+  if (lc === 'fabrication' || lc === 'fab') return 'Fabrication Drawings';
+  if (lc === 'assembly') return 'Assembly Drawings';
+  if (lc === 'sub assembly' || lc === 'sub-assembly' || lc === 'subassembly')
+    return 'Sub Assembly Drawings';
+  if (lc === 'boughtout' || lc === 'bought-out' || lc === 'bought out')
+    return 'Boughtout Items';
+
+  // fallback: "XYZ Drawings"
+  return `${v} Drawings`;
+};
+
+ 
+  // 🔹 Re-group each DWG cluster by drawing "type" (using drawing_type)
+  type DwgCluster = {
+    dwgKey: string;
+    dwgLabel: string;
+    marksets: BootstrapDoc['mark_sets'];
+    typeName: string;
+  };
+
+  const groupedByType: Record<string, DwgCluster[]> = {};
+  dwgKeys.forEach((dwgKey) => {
+    const marksets = groupedByDwg[dwgKey];
+    if (!marksets || !marksets.length) return;
+
+    // 👉 Now type is driven by drawing_type, not mark-set label
+    const typeName = resolveTypeLabelForDwg(dwgKey, boot);
+
+    const dwgLabel =
+      dwgKey === 'UNKNOWN' ? 'Drawing number not set' : dwgKey;
+
+    const cluster: DwgCluster = {
+      dwgKey,
+      dwgLabel,
+      marksets,
+      typeName,
+    };
+
+    if (!groupedByType[typeName]) groupedByType[typeName] = [];
+    groupedByType[typeName].push(cluster);
+  });
+
+  const typeKeys = Object.keys(groupedByType);
+
 
   return (
     <div
       style={{
         minHeight: '100vh',
         background: '#171717',
-        padding: 20,
+        padding: '24px 16px',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -436,11 +637,15 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
           background: '#1F1F1F',
           width: '100%',
           maxWidth: 860,
-          borderRadius: 8,
-          boxShadow: '0 2px 12px rgba(0,0,0,0.1)',
+          borderRadius: 16,
+          boxShadow: '0 12px 40px rgba(0,0,0,0.55)',
           padding: 24,
+          minHeight: '72vh',
+          display: 'flex',
+          flexDirection: 'column',
         }}
       >
+
         <div
           style={{
             textAlign: 'left',
@@ -500,12 +705,19 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
                 style={inp}
               />
               <input
-                placeholder="Your Email (optional)"
-                value={userMail}
-                onChange={(e) => setUserMail(e.target.value)}
+                placeholder="Drawing Number (dwg_num, optional)"
+                value={dwgNum}
+                onChange={(e) => setDwgNum(e.target.value)}
                 style={inp}
               />
             </div>
+
+            <input
+              placeholder="Your Email (optional)"
+              value={userMail}
+              onChange={(e) => setUserMail(e.target.value)}
+              style={{ ...inp, width: '100%', marginBottom: 12 }}
+            />
 
             <input
               placeholder="assembly_drawing / PDF URL"
@@ -536,22 +748,24 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
           </>
         )}
 
-        {hasBootstrapKeys && !boot && (
-          <div
-            style={{
-              padding: 12,
-              borderRadius: 6,
-              background: '#1F1F1F',
-              border: '1px solid #3B3B3B',
-              fontSize: 12,
-              fontWeight: 400,
-              fontStyle: 'italic',
-              color: '#C9C9C9',
-            }}
-          >
-            Initializing document… please wait.
-          </div>
-        )}
+ {hasBootstrapKeys && !boot && (
+  <div
+    style={{
+      padding: 12,
+      borderRadius: 6,
+      background: '#1F1F1F',
+      border: '1px solid #3B3B3B',
+      fontSize: 12,
+      fontWeight: 400,
+      fontStyle: 'italic',
+      color: '#C9C9C9',
+    }}
+  >
+    {loading && !err && 'Initializing document… please wait.'}
+    {!loading && err && err}
+  </div>
+)}
+
 
         {boot && (
           <>
@@ -657,9 +871,18 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
               </div>
             )} */}
 
-            {/* Other Mark Sets */}
+            {/* Other Mark Sets (grouped by DWG) */}
+            {/* Other Mark Sets (grouped by DWG & type) */}
             {otherMarksets.length > 0 && (
-              <div style={{ marginTop: 32 }}>
+              <div
+                style={{
+                  marginTop: 32,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 16,
+                }}
+              >
+                {/* Header + master report button */}
                 <div
                   style={{
                     fontWeight: 400,
@@ -668,117 +891,139 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'space-between',
-                    marginBottom: 8,
+                    marginBottom: 4,
                     gap: 12,
                   }}
                 >
                   <div style={{ fontWeight: 500 }}>Available Inspection Maps</div>
 
-                  {/* 🔥 NEW: Master Report button */}
-  <button
-  onClick={handleDownloadMasterReport}
-  disabled={loading}
-  style={{
-    padding: 0,
-    width: 34,
-    height: 34,
-    borderRadius: 8,
-    border: '1px solid #3B3B3B',
-    background: '#171717',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    cursor: loading ? 'not-allowed' : 'pointer',
-    opacity: loading ? 0.6 : 1,
-  }}
-  title="Download master inspection report (all marks × all runs)"
->
-  <img
-    src="/icons/spreadsheet.png"   // 👈 yahi file ab dono apps me reuse hogi
-    alt="Download master report"
-    style={{
-      width: 22,
-      height: 22,
-      display: 'block',
-    }}
-  />
-</button>
-
+                  <button
+                    onClick={handleDownloadMasterReport}
+                    disabled={loading}
+                    style={{
+                      padding: 0,
+                      width: 34,
+                      height: 34,
+                      borderRadius: 8,
+                      border: '1px solid #3B3B3B',
+                      background: '#171717',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: loading ? 'not-allowed' : 'pointer',
+                      opacity: loading ? 0.6 : 1,
+                    }}
+                    title="Download master inspection report (all marks × all runs)"
+                  >
+                    <img
+                      src="/icons/spreadsheet.png"
+                      alt="Download master report"
+                      style={{
+                        width: 22,
+                        height: 22,
+                        display: 'block',
+                      }}
+                    />
+                  </button>
                 </div>
+
+                {/* Scrollable list: sections by type → drawing cards */}
                 <div
                   style={{
-                    display: 'grid',
-                    gap: 12,
-                    maxHeight: 320,
+                    maxHeight: '56vh',
                     overflowY: 'auto',
+                    paddingRight: 4,
+                    paddingBottom: 4,
                   }}
                 >
-                  {otherMarksets.map((ms) => {
-                    return (
+                  {typeKeys.map((typeName) => (
+                    <div key={typeName} style={{ marginBottom: 18 }}>
+                      {/* e.g. "Assembly Drawings", "Part Drawings" */}
                       <div
-                        key={ms.mark_set_id}
                         style={{
-                          border: '1px solid #3B3B3B',
-                          borderRadius: 8,
-                          padding: '12px 16px',
-                          background: '#1F1F1F',
-                          minHeight: 76,
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
+                          fontSize: 13,
+                          fontWeight: 500,
+                          color: '#C9C9C9',
+                          marginBottom: 8,
                         }}
                       >
-                        <div>
-                          <div
-                            style={{ fontWeight: 600, color: '#FFFFFF', fontSize: 14 }}
-                          >
-                            {ms.label}
-                          </div>
+                        {typeName}
+                      </div>
 
-                          {/* Description is currently not shown; uncomment if needed later.
-                          {ms.description && (
-                            <div
+                      <div
+                        style={{
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: 12,
+                        }}
+                      >
+                        {groupedByType[typeName].map((cluster) => {
+                          const count = cluster.marksets.length;
+                          const countText = `Inspection map${
+                            count > 1 ? 's' : ''
+                          }: ${String(count).padStart(2, '0')}`;
+
+                          return (
+                            <button
+                              key={cluster.dwgKey}
+                              onClick={() => setActiveDwgKey(cluster.dwgKey)}
                               style={{
-                                color: '#444',
-                                fontSize: 12,
-                                marginTop: 4,
-                                whiteSpace: 'normal',
-                                wordBreak: 'break-word',
+                                textAlign: 'left',
+                                border: '1px solid #3B3B3B',
+                                borderRadius: 12,
+                                padding: '14px 18px',
+                                background: '#1F1F1F',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                gap: 12,
+                                cursor: 'pointer',
                               }}
                             >
-                              {ms.description}
-                            </div>
-                          )}
-                          */}
+                              <div>
+                                {/* Drawing number, e.g. "Ass - 001" */}
+                                <div
+                                  style={{
+                                    fontSize: 15,
+                                    fontWeight: 600,
+                                    color: '#FFFFFF',
+                                  }}
+                                >
+                                  {cluster.dwgLabel}
+                                </div>
 
-                          <div
-                            style={{
-                              marginTop: 6,
-                              fontWeight: 400,
-                              fontSize: 12,
-                              color: '#C9C9C9',
-                              display: 'flex',
-                              gap: 8,
-                              flexWrap: 'wrap',
-                            }}
-                          >
-                            {/* We no longer show mark counts here */}
-                            {ms.created_by && <span>{ms.created_by}</span>}
-                          </div>
-                        </div>
+                                {/* "Inspection map : 02" line */}
+                                <div
+                                  style={{
+                                    marginTop: 6,
+                                    fontSize: 12,
+                                    color: '#C9C9C9',
+                                  }}
+                                >
+                                  {countText}
+                                </div>
+                              </div>
 
-                        <button
-                          onClick={() => handleOpenMarkset(ms.mark_set_id)}
-                          style={btnSecondary}
-                        >
-                          Start
-                        </button>
+                              {/* Right arrow icon (same as before) */}
+                              <div
+                                style={{
+                                  fontSize: 20,
+                                  color: '#FFFFFF',
+                                  opacity: 0.85,
+                                }}
+                              >
+                                ›
+                              </div>
+                            </button>
+                          );
+                        })}
                       </div>
-                    );
-                  })}
+                    </div>
+                  ))}
                 </div>
               </div>
             )}
+
 
             {!masterMarkset && otherMarksets.length === 0 && (
               <div
@@ -793,6 +1038,21 @@ function ViewerSetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: s
             )}
           </>
         )}
+              {boot && activeDwgKey && groupedByDwg[activeDwgKey] && (
+        <DrawingSheetPanel
+          dwgLabel={
+            activeDwgKey === 'UNKNOWN'
+              ? 'Drawing number not set'
+              : activeDwgKey
+          }
+          marksets={groupedByDwg[activeDwgKey]}
+          onClose={() => setActiveDwgKey(null)}
+          onOpenMarkset={(ms) => {
+            // start inspection for that markset
+            handleOpenMarkset(ms);
+          }}
+        />
+      )}
       </div>
     </div>
   );
@@ -856,7 +1116,7 @@ function ViewerContent() {
   // Report metadata
   const [reportTitle, setReportTitle] = useState('');
   const [showReportTitle, setShowReportTitle] = useState(true);
-  
+
   const setZoomQ = useCallback(
     (z: number, ref?: MutableRefObject<number>) => {
       const q = quantize(z);
@@ -911,7 +1171,7 @@ function ViewerContent() {
     return !isTouch && w >= 1024;
   });
 
-    // Always keep sidebar closed while the report-title panel is active
+  // Always keep sidebar closed while the report-title panel is active
   useEffect(() => {
     if (showReportTitle) {
       setSidebarOpen(false);
@@ -964,7 +1224,7 @@ function ViewerContent() {
   const isZoomAnimatingRef = useRef(false);
   // ===== Windowing + prefix sums =====
   const GUTTER = 16; // vertical gap between pages
-    const SAFE_BOTTOM = 120; // px reserved at bottom so marks don't hide behind InputPanel/keyboard
+  const SAFE_BOTTOM = 120; // px reserved at bottom so marks don't hide behind InputPanel/keyboard
 
   const prefixHeightsRef = useRef<number[]>([]);   // top offsets of each page at current zoom
   const totalHeightRef = useRef<number>(0);
@@ -1223,11 +1483,15 @@ function ViewerContent() {
   const qProject = searchParams?.get('project_name') || '';
   const qExtId = searchParams?.get('id') || '';
   const qPartNumber = searchParams?.get('part_number') || '';
+  const qDwgNum = searchParams?.get('dwg_num') || '';
   const qUser = searchParams?.get('user_mail') || '';
   const qAssembly = searchParams?.get('assembly_drawing') || '';
-    // NEW: optional POC CC list from Glide (comma-separated emails)
+  // NEW: optional POC CC list from Glide (comma-separated emails)
   const qPocCc = searchParams?.get('poc_cc') || '';
-  const hasBootstrapKeys = !!(qProject && qExtId && qPartNumber && qAssembly);
+
+  // Viewer only needs the business triple; assembly_drawing is optional
+  const hasBootstrapKeys = !!(qProject && qExtId && qPartNumber);
+
   const pdfUrlParam = searchParams?.get('pdf_url') || '';
   const markSetIdParam = searchParams?.get('mark_set_id') || '';
   // Show viewer if pdf_url is present OR user already selected a markset
@@ -1256,7 +1520,7 @@ function ViewerContent() {
   const effectivePdfUrl = selectedPdfUrl || pdfUrlParam;
 
 
-  const handleSetupComplete = (url: string, setId: string) => {
+  const handleSetupComplete = (url: string, setId: string, dwgNum?: string | null) => {
     const prevQs =
       sessionStorage.getItem('viewerLastSetupParams') ||
       window.location.search.slice(1); // drop '?'
@@ -1265,6 +1529,11 @@ function ViewerContent() {
     // keep existing bootstrap params (project_name, id, part_number, user_mail, assembly_drawing)
     params.set('pdf_url', url);
     if (setId) params.set('mark_set_id', setId);
+    if (dwgNum && dwgNum.trim()) {
+      params.set('dwg_num', dwgNum.trim());
+    } else {
+      params.delete('dwg_num');
+    }
 
     const qsString = params.toString();
     sessionStorage.setItem('viewerLastSetupParams', qsString);
@@ -1395,6 +1664,7 @@ function ViewerContent() {
             id: qExtId,
             part_number: qPartNumber,
           });
+          if (qDwgNum) qs.set('dwg_num', qDwgNum);
           if (qUser) qs.set('user_mail', qUser);
 
           const metaRes = await fetch(`${apiBase}/documents/by-identifier?${qs.toString()}`);
@@ -1406,6 +1676,7 @@ function ViewerContent() {
             console.warn('by-identifier failed, falling back to legacy marks loader');
           }
         }
+
 
         // ========== MASTER MARKSET (old behaviour) ==========
         if (markSetMeta && markSetMeta.is_master) {
@@ -1555,7 +1826,8 @@ function ViewerContent() {
     };
 
     loadMarks();
-  }, [markSetId, isDemo, showSetup, apiBase, qProject, qExtId, qPartNumber, qUser]);
+  }, [markSetId, isDemo, showSetup, apiBase, qProject, qExtId, qPartNumber, qDwgNum, qUser]);
+
 
 
   useEffect(() => {
@@ -1939,11 +2211,11 @@ function ViewerContent() {
 
         const smartRegionRectAtZ = smartRegionRectAt1
           ? {
-              x: smartRegionRectAt1.x * z,
-              y: smartRegionRectAt1.y * z,
-              w: smartRegionRectAt1.w * z,
-              h: smartRegionRectAt1.h * z,
-            }
+            x: smartRegionRectAt1.x * z,
+            y: smartRegionRectAt1.y * z,
+            w: smartRegionRectAt1.w * z,
+            h: smartRegionRectAt1.h * z,
+          }
           : null;
 
         // Highlight current mark box (yellow) + flash
@@ -2194,7 +2466,7 @@ function ViewerContent() {
     navigateToMark,
   ]);
 
-    const openReview = useCallback(() => {
+  const openReview = useCallback(() => {
     // Central place to enter review mode
     setShowReview(true);
     setHasVisitedReview(true);
@@ -2434,17 +2706,28 @@ function ViewerContent() {
         toast.success('✓ Submission processed.', { duration: 3500 });
       }
 
-      // Navigate back to the mark-set chooser (same behavior you had)
+      // Navigate back to the mark-set chooser (reset to generic triple)
       setTimeout(() => {
         const qs =
           sessionStorage.getItem('viewerLastSetupParams') ||
           window.location.search.slice(1);
+
         const sp = new URLSearchParams(qs);
+
+        // Always keep these:
         sp.set('autoboot', '1');
-        sp.delete('pdf_url');
-        sp.delete('mark_set_id');
+
+        // 🔹 Clear all QC-specific viewer state from the URL
+        sp.delete('pdf_url');      // already there
+        sp.delete('mark_set_id');  // already there
+        sp.delete('dwg_num');      // 👈 NEW: don't auto-filter to last drawing
+
+        // (optional but nice) update the stored baseline so next run starts clean
+        sessionStorage.setItem('viewerLastSetupParams', sp.toString());
+
         window.location.href = `${window.location.pathname}?${sp.toString()}`;
       }, 1200);
+
 
     } catch (error) {
       console.error('Submit error:', error);
@@ -3002,99 +3285,99 @@ function ViewerContent() {
       )}
 
 
-        {/* ✅ Floating HUD (desktop) */}
-        <FloatingHUD
-          sidebarOpen={sidebarOpen}
-          onSidebarToggle={() => setSidebarOpen(!sidebarOpen)}
-          sidebarDisabled={showReportTitle}
-          currentMarkIndex={currentMarkIndex}
-          totalMarks={marks.length}
-          onZoomIn={zoomIn}
-          onZoomOut={zoomOut}
-          // Show Review shortcut only after first visit, and not during title/review overlay
-          canOpenReview={
-            hasVisitedReview &&
-            !showReportTitle &&
-            !showReview &&
-            marks.length > 0
-          }
-          onOpenReview={openReview}
-        />
+      {/* ✅ Floating HUD (desktop) */}
+      <FloatingHUD
+        sidebarOpen={sidebarOpen}
+        onSidebarToggle={() => setSidebarOpen(!sidebarOpen)}
+        sidebarDisabled={showReportTitle}
+        currentMarkIndex={currentMarkIndex}
+        totalMarks={marks.length}
+        onZoomIn={zoomIn}
+        onZoomOut={zoomOut}
+        // Show Review shortcut only after first visit, and not during title/review overlay
+        canOpenReview={
+          hasVisitedReview &&
+          !showReportTitle &&
+          !showReview &&
+          marks.length > 0
+        }
+        onOpenReview={openReview}
+      />
 
 
 
-        {/* 👇 NEW: proper scroll container for desktop, same as mobile */}
+      {/* 👇 NEW: proper scroll container for desktop, same as mobile */}
+      <div
+        className="pdf-surface-wrap"
+        ref={containerRef}
+      >
         <div
-          className="pdf-surface-wrap"
-          ref={containerRef}
+          className="pdf-surface"
+          style={{ position: 'relative', height: totalHeightRef.current }}
         >
-          <div
-            className="pdf-surface"
-            style={{ position: 'relative', height: totalHeightRef.current }}
-          >
-            {pagesToRender.map((pageNum) => {
-              const top = prefixHeightsRef.current[pageNum - 1] || 0;
-              return (
-                <div
-                  key={pageNum}
-                  style={{ position: 'absolute', top, left: 0 }}
-                  ref={(el) => {
-                    pageElsRef.current[pageNum - 1] = el;
-                  }}
-                >
-                  <PageCanvas
-                    pdf={pdf}
-                    pageNumber={pageNum}
-                    zoom={zoom}
-                    flashRect={
-                      flashRect?.pageNumber === pageNum
-                        ? { x: flashRect.x, y: flashRect.y, w: flashRect.w, h: flashRect.h }
-                        : null
-                    }
-                    selectedRect={
-                      selectedRect?.pageNumber === pageNum
-                        ? { x: selectedRect.x, y: selectedRect.y, w: selectedRect.w, h: selectedRect.h }
-                        : null
-                    }
-                    groupRects={getCurrentGroupRectsForPage(pageNum)}
-                    groupOutlineRect={getCurrentGroupOutlineForPage(pageNum)}
-                    showMarks={!showReportTitle}
-                  />
+          {pagesToRender.map((pageNum) => {
+            const top = prefixHeightsRef.current[pageNum - 1] || 0;
+            return (
+              <div
+                key={pageNum}
+                style={{ position: 'absolute', top, left: 0 }}
+                ref={(el) => {
+                  pageElsRef.current[pageNum - 1] = el;
+                }}
+              >
+                <PageCanvas
+                  pdf={pdf}
+                  pageNumber={pageNum}
+                  zoom={zoom}
+                  flashRect={
+                    flashRect?.pageNumber === pageNum
+                      ? { x: flashRect.x, y: flashRect.y, w: flashRect.w, h: flashRect.h }
+                      : null
+                  }
+                  selectedRect={
+                    selectedRect?.pageNumber === pageNum
+                      ? { x: selectedRect.x, y: selectedRect.y, w: selectedRect.w, h: selectedRect.h }
+                      : null
+                  }
+                  groupRects={getCurrentGroupRectsForPage(pageNum)}
+                  groupOutlineRect={getCurrentGroupOutlineForPage(pageNum)}
+                  showMarks={!showReportTitle}
+                />
 
 
-                  {/* Scaled single-layer search overlay */}
-                  {highlightPageNumber === pageNum && (
-                    <div
-                      style={{
-                        position: 'absolute',
-                        inset: 0,
-                        transform: `scale(${zoom})`,
-                        transformOrigin: 'top left',
-                        pointerEvents: 'none',
-                        zIndex: 100
-                      }}
-                    >
-                      {searchHighlights.map((h, idx) => (
-                        <div
-                          key={`hl-${idx}`}
-                          style={{
-                            position: 'absolute',
-                            left: h.x,
-                            top: h.y,
-                            width: h.width,
-                            height: h.height,
-                            background: 'rgba(255, 235, 59, 0.35)',
-                            border: '1px solid rgba(255, 193, 7, 0.85)'
-                          }}
-                        />
-                      ))}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+                {/* Scaled single-layer search overlay */}
+                {highlightPageNumber === pageNum && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      transform: `scale(${zoom})`,
+                      transformOrigin: 'top left',
+                      pointerEvents: 'none',
+                      zIndex: 100
+                    }}
+                  >
+                    {searchHighlights.map((h, idx) => (
+                      <div
+                        key={`hl-${idx}`}
+                        style={{
+                          position: 'absolute',
+                          left: h.x,
+                          top: h.y,
+                          width: h.width,
+                          height: h.height,
+                          background: 'rgba(255, 235, 59, 0.35)',
+                          border: '1px solid rgba(255, 193, 7, 0.85)'
+                        }}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
+      </div>
 
       {/* Keep Input Panel OUTSIDE the scroll area */}
       <div className="input-panel-section">

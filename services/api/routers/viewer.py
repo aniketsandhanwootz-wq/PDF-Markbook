@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from typing import Annotated, Dict, Any, List, Optional
+from typing import Annotated, Dict, Any, List, Optional, Tuple
 
 from main import get_storage_adapter  # DI from main
 from models import Document, MarkSet
@@ -13,8 +13,10 @@ router = APIRouter(prefix="/viewer", tags=["viewer"])
 # DI alias (no default!)
 Storage = Annotated[object, Depends(get_storage_adapter)]
 
+
 def _bool(s: str | None) -> bool:
     return (s or "").strip().upper() == "TRUE"
+
 
 def _marks_count_by_markset(storage) -> Dict[str, int]:
     """
@@ -34,11 +36,25 @@ def _marks_count_by_markset(storage) -> Dict[str, int]:
         counts[msid] = counts.get(msid, 0) + 1
     return counts
 
+
 def _master_mark_set_id(mark_sets: List[Dict[str, Any]]) -> Optional[str]:
     for ms in mark_sets:
         if _bool(ms.get("is_master")):
             return ms.get("mark_set_id")
     return None
+
+
+def _markset_sort_key(ms: MarkSet):
+    """
+    Sort helper: Master first, then created_at asc, then label.
+    Shared between single-doc and multi-doc bootstraps.
+    """
+    return (
+        0 if ms.is_master else 1,
+        ms.created_at or "",
+        ms.label or "",
+    )
+
 
 @router.get("/groups/{mark_set_id}", status_code=status.HTTP_200_OK)
 async def get_groups_with_marks(
@@ -66,7 +82,10 @@ async def get_groups_with_marks(
 
         doc_id = target.get("doc_id")
         if not doc_id:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="MARK_SET_HAS_NO_DOC_ID")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="MARK_SET_HAS_NO_DOC_ID",
+            )
 
         # 2) Find master markset for this doc
         master_ms = None
@@ -75,7 +94,10 @@ async def get_groups_with_marks(
                 master_ms = ms
                 break
         if not master_ms:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="MASTER_MARK_SET_NOT_FOUND")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="MASTER_MARK_SET_NOT_FOUND",
+            )
 
         master_id = master_ms.get("mark_set_id")
 
@@ -96,9 +118,7 @@ async def get_groups_with_marks(
         result_groups: List[Dict[str, Any]] = []
         for g in groups:
             raw_ids = g.get("mark_ids", []) or []
-            marks_for_group = [
-                mark_index[mid] for mid in raw_ids if mid in mark_index
-            ]
+            marks_for_group = [mark_index[mid] for mid in raw_ids if mid in mark_index]
 
             marks_for_group.sort(
                 key=lambda m: (
@@ -126,26 +146,34 @@ async def get_groups_with_marks(
             detail=f"Failed to fetch groups with marks: {e}",
         )
 
+
 @router.get("/bootstrap", status_code=status.HTTP_200_OK)
 async def bootstrap(
     storage: Storage,
     project_name: str = Query(..., min_length=1),
     id: str = Query(..., min_length=1, description="Business id (ProjectName + PartName)"),
     part_number: str = Query(..., min_length=1),
+    dwg_num: Optional[str] = Query(
+        None,
+        description="Drawing number for this PDF (assembly or part)",
+    ),
     # Which marks to include? "none" | "master" | mark_set_id
     include: str = Query("none"),
 ):
     """
-    Viewer entrypoint:
-      • Resolve document by (project_name, id, part_number)
+    Viewer entrypoint (single-document):
+
+      • Resolve document by (project_name, id, part_number, dwg_num)
       • Return all mark-sets (Master first), with counts
-      • Optionally include full marks for a chosen set (include=master or include=<mark_set_id>)
+      • Optionally include full marks for a chosen set
+        (include=master or include=<mark_set_id>)
     """
     # 1) Resolve document (Sheets → Domain)
     doc_raw = storage.get_document_by_business_key(
         project_name=project_name,
         external_id=id,
         part_number=part_number,
+        dwg_num=dwg_num or "",
     )
     if not doc_raw:
         raise HTTPException(status_code=404, detail="DOCUMENT_NOT_FOUND")
@@ -154,9 +182,7 @@ async def bootstrap(
 
     # 2) List mark-sets + convert to domain models
     mark_sets_raw = storage.list_mark_sets_by_document(doc.doc_id)
-    mark_set_models: List[MarkSet] = [
-        markset_from_sheets(ms) for ms in mark_sets_raw
-    ]
+    mark_set_models: List[MarkSet] = [markset_from_sheets(ms) for ms in mark_sets_raw]
 
     # 3) Compute master_id from domain models
     master_id = next((ms.mark_set_id for ms in mark_set_models if ms.is_master), None)
@@ -165,14 +191,7 @@ async def bootstrap(
     counts = _marks_count_by_markset(storage)
 
     # 5) Sort: Master first, then created_at asc, then label
-    def _key(ms: MarkSet):
-        return (
-            0 if ms.is_master else 1,
-            ms.created_at or "",
-            ms.label or "",
-        )
-
-    mark_sets_sorted = sorted(mark_set_models, key=_key)
+    mark_sets_sorted = sorted(mark_set_models, key=_markset_sort_key)
 
     # 6) Prepare minimal payload for list (Domain → dict)
     mark_sets_out = [
@@ -210,6 +229,9 @@ async def bootstrap(
             "project_name": doc.project_name or "",
             "id": doc.external_id or "",
             "part_number": doc.part_number or "",
+            "dwg_num": getattr(doc, "dwg_num", None) or (doc_raw.get("dwg_num") or ""),
+            "drawing_type": getattr(doc, "drawing_type", None)
+                or (doc_raw.get("drawing_type") or "-"),
             "pdf_url": doc.pdf_url,
             "page_count": doc.page_count,
         },
@@ -218,3 +240,119 @@ async def bootstrap(
         "included_mark_set_id": include_marks_for,
         "marks": marks_payload,  # empty if include=none or not found
     }
+
+
+@router.get("/bootstrap-assembly", status_code=status.HTTP_200_OK)
+async def bootstrap_assembly(
+    storage: Storage,
+    project_name: str = Query(..., min_length=1),
+    id: str = Query(..., min_length=1, description="Business id (ProjectName + PartName)"),
+    part_number: str = Query(..., min_length=1),
+):
+    """
+    NEW: Viewer entrypoint for multi-dwg / assembly-level bootstrap.
+
+    Given (project_name, id, part_number):
+
+      • Find ALL documents belonging to that triple (any dwg_num)
+      • For each document:
+          - return its doc metadata (including dwg_num, pdf_url, page_count)
+          - return its mark-sets (Master first), with marks_count
+          - indicate master_mark_set_id for that doc
+
+    This is what Glide Viewer (App 2) should call.
+    """
+    try:
+        try:
+            # Read all documents from backing store.
+            # If your adapter uses a different sheet/table name, update "documents".
+            all_docs_raw: List[Dict[str, Any]] = storage._get_all_dicts("documents")
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to list documents: {e}",
+            )
+
+        # Convert to domain models and filter for the given assembly triple
+        matching_docs: List[Tuple[Document, Dict[str, Any]]] = []
+        for row in all_docs_raw:
+            try:
+                doc = document_from_sheets(row)
+            except Exception:
+                # Skip rows that can't be parsed into a Document
+                continue
+
+            if (
+                (doc.project_name or "") == project_name
+                and (doc.external_id or "") == id
+                and (doc.part_number or "") == part_number
+            ):
+                matching_docs.append((doc, row))
+
+        if not matching_docs:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="DOCUMENTS_NOT_FOUND_FOR_ASSEMBLY",
+            )
+
+        # Precompute marks_count across all mark_sets
+        counts = _marks_count_by_markset(storage)
+
+        documents_payload: List[Dict[str, Any]] = []
+
+        for doc, raw in matching_docs:
+            # Mark-sets for this specific document
+            mark_sets_raw = storage.list_mark_sets_by_document(doc.doc_id)
+            mark_set_models: List[MarkSet] = [markset_from_sheets(ms) for ms in mark_sets_raw]
+
+            master_id = next((ms.mark_set_id for ms in mark_set_models if ms.is_master), None)
+
+            mark_sets_sorted = sorted(mark_set_models, key=_markset_sort_key)
+
+            mark_sets_out = [
+                {
+                    "mark_set_id": ms.mark_set_id,
+                    "label": ms.label or "",
+                    "is_master": ms.is_master,
+                    "is_active": ms.is_active,
+                    "created_by": ms.created_by or "",
+                    "created_at": ms.created_at or "",
+                    "updated_by": ms.updated_by or "",
+                    "marks_count": counts.get(ms.mark_set_id, 0),
+                }
+                for ms in mark_sets_sorted
+            ]
+
+            documents_payload.append(
+                {
+                    "document": {
+                        "doc_id": doc.doc_id,
+                        "project_name": doc.project_name or "",
+                        "id": doc.external_id or "",
+                        "part_number": doc.part_number or "",
+                        "dwg_num": getattr(doc, "dwg_num", None) or (raw.get("dwg_num") or ""),
+                        "drawing_type": getattr(doc, "drawing_type", None)
+                            or (raw.get("drawing_type") or "-"),
+                        "pdf_url": doc.pdf_url,
+                        "page_count": doc.page_count,
+                    },
+                    "mark_sets": mark_sets_out,
+                    "master_mark_set_id": master_id,
+                }
+            )
+
+        return {
+            "project_name": project_name,
+            "id": id,
+            "part_number": part_number,
+            "documents": documents_payload,
+            "documents_count": len(documents_payload),
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to bootstrap assembly: {e}",
+        )

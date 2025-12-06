@@ -1,4 +1,3 @@
-# services/api/models/document.py
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -21,8 +20,11 @@ class Document:
 
     part_number: Optional[str] = None
     project_name: Optional[str] = None
-    external_id: Optional[str] = None  # business id (ProjectName+PartName)
-    master_editors: Optional[str] = None  # comma-separated emails
+    external_id: Optional[str] = None      # business id (ProjectName+PartName)
+    dwg_num: Optional[str] = None          # drawing number (assembly/part)
+    drawing_type: Optional[str] = None     # type: Part/Fabrication/Assembly/...
+    master_editors: Optional[str] = None   # comma-separated emails
+
 
     created_by: Optional[str] = None
     created_at: str = ""

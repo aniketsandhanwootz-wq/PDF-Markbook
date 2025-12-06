@@ -15,11 +15,19 @@ class DocumentCreate(DocumentBase):
     part_number: Optional[str] = Field(None, description="Part number")
     project_name: Optional[str] = Field(None, description="Project name")
     external_id: Optional[str] = Field(None, description="External business ID (Glide id)")
+    dwg_num: Optional[str] = Field(
+        None,
+        description="Drawing number for this PDF (assembly or part)",
+    )
+    drawing_type: Optional[str] = Field(
+        None,
+        description="Type of drawing (Part/Fabrication/Assembly/Sub Assembly/Boughtout)",
+    )
     master_editors: Optional[str] = Field(
         None,
         description="Comma-separated list of emails who can edit the master markset",
     )
-    created_by: Optional[str] = Field(None, description="Creator email/ID")
+
 
 
 class DocumentInit(BaseModel):
@@ -27,8 +35,18 @@ class DocumentInit(BaseModel):
     part_number: str = Field(..., description="Part number")
     id: str = Field(..., description="Project Name + Part Name (external id)")
     project_name: str = Field(..., description="Project name")
+    dwg_num: Optional[str] = Field(
+        None,
+        description="Drawing number for this PDF (assembly or part)",
+    )
+    drawing_type: Optional[str] = Field(
+        None,
+        description="Type of drawing (Part/Fabrication/Assembly/Sub Assembly/Boughtout)",
+    )
     user_mail: str = Field(..., description="User email")
     assembly_drawing: str = Field(..., description="Assembly drawing URL (JPEG)")
+
+
 
 
 class DocumentOut(BaseModel):
@@ -38,7 +56,10 @@ class DocumentOut(BaseModel):
     part_number: Optional[str] = None
     project_name: Optional[str] = None
     external_id: Optional[str] = None
+    dwg_num: Optional[str] = None
+    drawing_type: Optional[str] = None
     master_editors: Optional[str] = None
+
 
     class Config:
         from_attributes = True

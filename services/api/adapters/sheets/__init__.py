@@ -22,6 +22,8 @@ HEADERS = {
         "part_number",
         "external_id",
         "project_name",
+        "dwg_num",        # 🔥 drawing number per PDF (assembly / part)
+        "drawing_type",   # 🔥 type of drawing (Part/Fab/Assembly/...)
         "master_editors",
         "created_by",
         "created_at",
@@ -310,9 +312,23 @@ class SheetsAdapter(StorageAdapter):
         project_name: str | None = None,
         external_id: str | None = None,
         master_editors: str | None = None,
+        dwg_num: str | None = None,       # drawing number (assembly / part)
+        drawing_type: str | None = None,  # type of drawing (Part/Fab/Assembly/...)
     ) -> str:
         doc_id = _uuid()
         now = _utc_iso()
+
+        # 👇 add this small debug log, optional but very helpful
+        print(
+            "[SheetsAdapter.create_document] doc_id=%s project_name=%s external_id=%s part_number=%s dwg_num=%s drawing_type=%s pdf_url=%s",
+            doc_id,
+            (project_name or "").strip(),
+            (external_id or "").strip(),
+            (part_number or "").strip(),
+            (dwg_num or "").strip(),
+            (drawing_type or "-").strip() or "-",
+            (pdf_url or "").strip(),
+        )
 
         data = {
             "doc_id": doc_id,
@@ -321,6 +337,8 @@ class SheetsAdapter(StorageAdapter):
             "part_number": (part_number or "").strip(),
             "external_id": (external_id or "").strip(),
             "project_name": (project_name or "").strip(),
+            "dwg_num": (dwg_num or "").strip(),
+            "drawing_type": (drawing_type or "-").strip() or "-",  # default "-"
             "master_editors": (master_editors or "").strip(),
             "created_by": (created_by or "").strip(),
             "created_at": now,
@@ -822,31 +840,81 @@ class SheetsAdapter(StorageAdapter):
             self.ws["mark_sets"].batch_update(updates)
 
     # ========== Document lookup ==========
-
     def get_document_by_business_key(
         self,
         *,
         project_name: str,
         external_id: str,
         part_number: str,
+        dwg_num: str | None = None,
     ) -> dict[str, Any] | None:
         """
-        Resolve a document by the 3-part business key:
-        (project_name, external_id, part_number), with whitespace trimmed.
+        Resolve a document by the business key:
+        (project_name, external_id, part_number, dwg_num), with whitespace trimmed.
+
+        Behaviour:
+        - If dwg_num is None/empty → match the FIRST document with matching
+          (project_name, external_id, part_number) (backwards compatible).
+        - If dwg_num is non-empty → require an exact dwg_num match as well.
+        """
+        pn = (project_name or "").strip()
+        eid = (external_id or "").strip()
+        pnumb = (part_number or "").strip()
+        dnum = (dwg_num or "").strip()
+
+        docs = self._get_all_dicts("documents")
+
+        if not dnum:
+            # Legacy behaviour: ignore dwg_num, return first match for 3-part key
+            for d in docs:
+                if (
+                    (d.get("project_name", "").strip() == pn)
+                    and (d.get("external_id", "").strip() == eid)
+                    and (d.get("part_number", "").strip() == pnumb)
+                ):
+                    return d
+            return None
+
+        # New behaviour: require dwg_num match as well
+        for d in docs:
+            if (
+                (d.get("project_name", "").strip() == pn)
+                and (d.get("external_id", "").strip() == eid)
+                and (d.get("part_number", "").strip() == pnumb)
+                and (d.get("dwg_num", "").strip() == dnum)
+            ):
+                return d
+        return None
+
+
+    def list_documents_by_business_key(
+        self,
+        *,
+        project_name: str,
+        external_id: str,
+        part_number: str,
+    ) -> list[dict[str, Any]]:
+        """
+        Return ALL documents that share the same 3-part business key
+        (project_name, external_id, part_number).
+
+        This is used for the viewer where an assembly can have multiple
+        PDFs (assembly + multiple part drawings) distinguished by dwg_num.
         """
         pn = (project_name or "").strip()
         eid = (external_id or "").strip()
         pnumb = (part_number or "").strip()
 
         docs = self._get_all_dicts("documents")
-        for d in docs:
+        return [
+            d
+            for d in docs
             if (
                 (d.get("project_name", "").strip() == pn)
                 and (d.get("external_id", "").strip() == eid)
                 and (d.get("part_number", "").strip() == pnumb)
-            ):
-                return d
-        return None
+            )
+        ]
 
     def get_document_by_identifier(self, identifier: str) -> dict[str, Any] | None:
         """

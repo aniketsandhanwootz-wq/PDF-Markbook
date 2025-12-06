@@ -116,11 +116,13 @@ type CreateDocMarkSetBody = {
   project_name: string;
   id: string;
   part_number: string;
+  dwg_num?: string | null;       // 🔥 NEW
   label: string;
   created_by?: string | null;
   is_master?: boolean;
   description?: string | null;   // ✅ NEW
 };
+
 
 // ------- NEW Setup Screen (doc bootstrap + markset picker) -------
 function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string, isMaster: boolean) => void }) {
@@ -138,8 +140,11 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
   const [projectName, setProjectName] = useState<string>(params?.get('project_name') || '');
   const [extId, setExtId] = useState<string>(params?.get('id') || '');
   const [partNumber, setPartNumber] = useState<string>(params?.get('part_number') || '');
+  const dwgNum = params?.get('dwg_num') || '';   // ✅ no state, always reflects URL
   const [userMail, setUserMail] = useState<string>(params?.get('user_mail') || '');
   const [assemblyDrawing, setAssemblyDrawing] = useState<string>(params?.get('assembly_drawing') || '');
+  const drawingTypeParam = params?.get('type') || '';
+
 
 
   // New markset modal-ish fields
@@ -204,6 +209,10 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
       setErr('Please fill Project, ID and Part Number.');
       return;
     }
+    if (!dwgNum) {
+      setErr('DWG number (dwg_num) missing in URL. Please open this page from Glide again.');
+      return;
+    }
     // we can allow either pdf_url or assembly_drawing; the backend cleans it
     if (!assemblyDrawing) {
       setErr('Please paste the PDF/assembly_drawing URL (Cloudinary/Glide link is okay).');
@@ -218,6 +227,8 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
           project_name: projectName,
           id: extId,
           part_number: partNumber,
+          dwg_num: dwgNum,                       // drawing number (from URL)
+          drawing_type: drawingTypeParam || undefined, // 👈 send URL ?type=... as drawing_type
           user_mail: userMail || undefined,
           pdf_url: undefined,
           assembly_drawing: assemblyDrawing,
@@ -269,6 +280,11 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
       search.set('part_number', boot.document.part_number);
     }
 
+    // 👉 also pass dwg_num so this drawing stays identifiable downstream
+    if (dwgNum) {
+      search.set('dwg_num', dwgNum);
+    }
+
     if (userMail) {
       search.set('user_mail', userMail);
       try {
@@ -294,10 +310,11 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
         project_name: projectName,
         id: extId,
         part_number: partNumber,
+        dwg_num: dwgNum || undefined,                       // 🔥 NEW
         label: newLabel.trim(),
         created_by: userMail || undefined,
         is_master: false,
-        description: newDescription.trim() || undefined,  // ✅ send description
+        description: newDescription.trim() || undefined,    // ✅ send description
       };
       const res = await fetch(`${apiBase}/documents/mark-sets`, {
         method: 'POST',
@@ -577,7 +594,9 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
           }}
         >
           {extId} - {partNumber}
+          {dwgNum ? ` - ${dwgNum}` : ''}
         </h1>
+
 
         {notice && (
           <div
@@ -767,6 +786,8 @@ function EditorContent() {
 
   // Part number passed from SetupScreen URL
   const partNumberFromUrl = searchParams?.get('part_number') || '';
+  const dwgNumFromUrl = searchParams?.get('dwg_num') || '';   // 🔥 NEW
+
 
   const [showSetup, setShowSetup] = useState(true);
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
@@ -815,15 +836,15 @@ function EditorContent() {
   const [error, setError] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [flashRect, setFlashRect] = useState<FlashRect>(null);
-const [toasts, setToasts] = useState<ToastMessage[]>([]);
-const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-useEffect(() => {
-  return () => {
-    if (toastTimeoutRef.current) {
-      clearTimeout(toastTimeoutRef.current);
-    }
-  };
-}, []);
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (toastTimeoutRef.current) {
+        clearTimeout(toastTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const [markOverlays, setMarkOverlays] = useState<MarkOverlay[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
@@ -915,26 +936,26 @@ useEffect(() => {
     },
   ];
 
-const addToast = useCallback(
-  (message: string, type: ToastMessage['type'] = 'info') => {
-    const id = Date.now();
+  const addToast = useCallback(
+    (message: string, type: ToastMessage['type'] = 'info') => {
+      const id = Date.now();
 
-    // Always show ONLY the latest toast
-    setToasts([{ id, message, type }]);
+      // Always show ONLY the latest toast
+      setToasts([{ id, message, type }]);
 
-    // Clear any previous auto-dismiss timer
-    if (toastTimeoutRef.current) {
-      clearTimeout(toastTimeoutRef.current);
-    }
+      // Clear any previous auto-dismiss timer
+      if (toastTimeoutRef.current) {
+        clearTimeout(toastTimeoutRef.current);
+      }
 
-    // Auto-dismiss after 2.5s (tweak if you want)
-    toastTimeoutRef.current = setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
-      toastTimeoutRef.current = null;
-    }, 2500);
-  },
-  []
-);
+      // Auto-dismiss after 2.5s (tweak if you want)
+      toastTimeoutRef.current = setTimeout(() => {
+        setToasts((prev) => prev.filter((t) => t.id !== id));
+        toastTimeoutRef.current = null;
+      }, 2500);
+    },
+    []
+  );
 
 
   const fetchGroups = useCallback(async () => {
@@ -1472,77 +1493,76 @@ const addToast = useCallback(
     // If you want it to just highlight (no scroll), uncomment:
     setSelectedMarkId(newMark.mark_id!);
   }, [pendingMark, marks.length, addToast, pdf, checkDuplicates]);
-// `silent = true` means: no toast (used for internal updates like GroupEditor)
-const updateMark = useCallback(
-  (markId: string, updates: Partial<Mark>, silent = false) => {
-    // 1️⃣ Always update local UI state
-    setMarks(prev =>
-      prev.map(m => (m.mark_id === markId ? { ...m, ...updates } : m))
-    );
+  // `silent = true` means: no toast (used for internal updates like GroupEditor)
+  const updateMark = useCallback(
+    (markId: string, updates: Partial<Mark>, silent = false) => {
+      // 1️⃣ Always update local UI state
+      setMarks(prev =>
+        prev.map(m => (m.mark_id === markId ? { ...m, ...updates } : m))
+      );
 
-    // 2️⃣ Build PATCH payload – ONLY instrument & is_required allowed to persist
-    const patch: Record<string, unknown> = {};
+      // 2️⃣ Build PATCH payload – ONLY instrument & is_required allowed to persist
+      const patch: Record<string, unknown> = {};
 
-    if (typeof updates.instrument === 'string') {
-      const trimmed = updates.instrument.trim();
-      if (trimmed.length > 0) {
-        patch.instrument = trimmed;
-      }
-      // empty string => don't send (backend doesn't allow empty instrument)
-    }
-
-    if (typeof updates.is_required === 'boolean') {
-      patch.is_required = updates.is_required;
-    }
-
-    // If nothing relevant changed (e.g. only geometry), skip API call
-    if (Object.keys(patch).length === 0) {
-      if (!silent) {
-        // geometry-only / no server change
-        addToast('Mark updated', 'success');
-      }
-      return;
-    }
-
-    const apiBase =
-      process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
-
-    (async () => {
-      try {
-        const qs = new URLSearchParams();
-        if (userMail) {
-          qs.set('user_mail', userMail);
+      if (typeof updates.instrument === 'string') {
+        const trimmed = updates.instrument.trim();
+        if (trimmed.length > 0) {
+          patch.instrument = trimmed;
         }
+        // empty string => don't send (backend doesn't allow empty instrument)
+      }
 
-        const url = `${apiBase}/marks/${encodeURIComponent(markId)}${
-          qs.toString() ? `?${qs.toString()}` : ''
-        }`;
+      if (typeof updates.is_required === 'boolean') {
+        patch.is_required = updates.is_required;
+      }
 
-        const res = await fetch(url, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(patch),
-        });
-
-        if (!res.ok) {
-          const txt = await res.text();
-          console.error('Failed to PATCH mark', res.status, txt);
-          // Optional: surface error to user
-          // if (!silent) addToast('Failed to save changes on server', 'error');
-          return;
-        }
-
+      // If nothing relevant changed (e.g. only geometry), skip API call
+      if (Object.keys(patch).length === 0) {
         if (!silent) {
+          // geometry-only / no server change
           addToast('Mark updated', 'success');
         }
-      } catch (err) {
-        console.error('Error while PATCHing mark', err);
-        // Optional: if (!silent) addToast('Failed to save changes on server', 'error');
+        return;
       }
-    })();
-  },
-  [addToast, userMail]
-);
+
+      const apiBase =
+        process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
+
+      (async () => {
+        try {
+          const qs = new URLSearchParams();
+          if (userMail) {
+            qs.set('user_mail', userMail);
+          }
+
+          const url = `${apiBase}/marks/${encodeURIComponent(markId)}${qs.toString() ? `?${qs.toString()}` : ''
+            }`;
+
+          const res = await fetch(url, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(patch),
+          });
+
+          if (!res.ok) {
+            const txt = await res.text();
+            console.error('Failed to PATCH mark', res.status, txt);
+            // Optional: surface error to user
+            // if (!silent) addToast('Failed to save changes on server', 'error');
+            return;
+          }
+
+          if (!silent) {
+            addToast('Mark updated', 'success');
+          }
+        } catch (err) {
+          console.error('Error while PATCHing mark', err);
+          // Optional: if (!silent) addToast('Failed to save changes on server', 'error');
+        }
+      })();
+    },
+    [addToast, userMail]
+  );
 
   // Delete a mark by ID
   const deleteMark = useCallback(
@@ -2089,7 +2109,13 @@ const updateMark = useCallback(
           <button className="sidebar-toggle" onClick={() => setSidebarOpen(!sidebarOpen)}>
             {sidebarOpen ? '◀' : '▶'}
           </button>
-          {sidebarOpen && <h3>{partNumberFromUrl || 'Part Number'}</h3>}
+          {sidebarOpen && (
+            <h3>
+              {partNumberFromUrl || 'Part Number'}
+              {dwgNumFromUrl ? ` (${dwgNumFromUrl})` : ''}
+            </h3>
+          )}
+
         </div>
         {sidebarOpen && (
           <MarkList
@@ -2320,7 +2346,7 @@ const updateMark = useCallback(
             nextGroupNumber={groups.length + 1}
             originalMarkIds={originalMarksRef.current.map((m) => m.mark_id)}
 
-  onUpdateMark={(markId, updates) => updateMark(markId, updates, true)}
+            onUpdateMark={(markId, updates) => updateMark(markId, updates, true)}
             // ❌ only these marks (created in this GroupEditor session) can be deleted via "×"
             deletableMarkIds={pendingGroupMarkIds}
             onDeleteMark={(markId) => {

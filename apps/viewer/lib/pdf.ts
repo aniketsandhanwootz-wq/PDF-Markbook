@@ -1,16 +1,18 @@
+// apps/viewer/lib/pdf.ts
+
 // Debounce utility for zoom operations
 export function debounce<T extends (...args: any[]) => any>(
   func: T,
   wait: number
 ): (...args: Parameters<T>) => void {
   let timeout: NodeJS.Timeout | null = null;
-  
+
   return function executedFunction(...args: Parameters<T>) {
     const later = () => {
       timeout = null;
       func(...args);
     };
-    
+
     if (timeout) {
       clearTimeout(timeout);
     }
@@ -24,7 +26,7 @@ export function throttle<T extends (...args: any[]) => any>(
   limit: number
 ): (...args: Parameters<T>) => void {
   let inThrottle: boolean;
-  
+
   return function executedFunction(...args: Parameters<T>) {
     if (!inThrottle) {
       func(...args);
@@ -101,7 +103,7 @@ export function isPageVisible(
   const pageBottom = pageTop + pageHeight;
   const viewportTop = scrollTop - buffer;
   const viewportBottom = scrollTop + viewportHeight + buffer;
-  
+
   return pageBottom >= viewportTop && pageTop <= viewportBottom;
 }
 
@@ -119,34 +121,60 @@ export const cancelIdleCallback =
     : (id: number) => clearTimeout(id);
 
 /**
- * Download master report for a document.
- * Calls the backend /reports/master/generate endpoint.
+ * Params for master report download.
+ * `dwg_num` is optional – when present, backend should scope
+ * the master report to that specific drawing.
  */
-export async function downloadMasterReport(params: {
+export type DownloadMasterReportParams = {
   project_name: string;
   id: string;
   part_number: string;
+  dwg_num?: string;       // 🔹 NEW: optional drawing number
   report_title?: string;
   apiBase?: string;
-}): Promise<void> {
-  const apiBase = params.apiBase || process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
-  
+};
+
+/**
+ * Download master report for a document.
+ * Calls the backend /reports/master/generate endpoint.
+ */
+export async function downloadMasterReport(
+  params: DownloadMasterReportParams
+): Promise<void> {
+  const apiBase =
+    params.apiBase || process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
+
+  // Build a nice default report title if caller didn't pass one
+  const effectiveTitle =
+    params.report_title ||
+    (params.dwg_num
+      ? `${params.part_number} - ${params.dwg_num} Master Report`
+      : `${params.part_number} Master Report`);
+
   try {
+    const body: any = {
+      project_name: params.project_name,
+      id: params.id,
+      part_number: params.part_number,
+      report_title: effectiveTitle,
+      max_runs: 100, // Can be made configurable later
+    };
+
+    if (params.dwg_num) {
+      body.dwg_num = params.dwg_num; // 🔹 pass dwg_num through to backend
+    }
+
     const response = await fetch(`${apiBase}/reports/master/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        project_name: params.project_name,
-        id: params.id,
-        part_number: params.part_number,
-        report_title: params.report_title || `${params.part_number} Master Report`,
-        max_runs: 100, // Can be made configurable later
-      }),
+      body: JSON.stringify(body),
     });
 
     if (!response.ok) {
       const text = await response.text().catch(() => '');
-      throw new Error(`Master report generation failed: ${response.status} ${text}`);
+      throw new Error(
+        `Master report generation failed: ${response.status} ${text}`
+      );
     }
 
     // Trigger download
@@ -154,7 +182,13 @@ export async function downloadMasterReport(params: {
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${params.part_number}_master_report.xlsx`;
+
+    // Filename: include dwg_num when available
+    const filename = params.dwg_num
+      ? `${params.part_number}_${params.dwg_num}_master_report.xlsx`
+      : `${params.part_number}_master_report.xlsx`;
+
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);

@@ -49,6 +49,7 @@ def _write_merged(ws: Worksheet, coord: str, value) -> None:
     else:
         cell.value = value
 
+
 def _crop_from_page_image(
     *,
     pil_page,
@@ -80,6 +81,7 @@ def _crop_from_page_image(
     crop = pil_page.crop((x0, y0, x1, y1))
     return crop.convert("RGB")
 
+
 async def generate_report_excel(
     *,
     pdf_url: str,
@@ -91,6 +93,7 @@ async def generate_report_excel(
     part_number: str = "",
     external_id: str = "",
     report_title: str = "",
+    dwg_num: str = "",                     # 🔹 NEW: optional drawing number
     padding_pct: float = 0.25,
     render_zoom: float = 2.2,
     logo_url: str = "https://res.cloudinary.com/dbwg6zz3l/image/upload/v1753101276/Black_Blue_ctiycp.png",
@@ -146,7 +149,6 @@ async def generate_report_excel(
             cell.alignment = copy(tmpl_cell.alignment)
             cell.number_format = tmpl_cell.number_format
 
-
     _tempfiles: List[str] = []
 
     # ---------- Settings: cap marks ----------
@@ -165,6 +167,7 @@ async def generate_report_excel(
         marks_sorted = marks_sorted[:max_marks]
 
     # ---------- Group marks by page ----------
+    from collections import defaultdict
     marks_by_page: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
     for m in marks_sorted:
         try:
@@ -230,6 +233,13 @@ async def generate_report_excel(
             _write_merged(ws, "A6", f"MarkSet Name: {ms_label_val}")
         else:
             _write_merged(ws, "A6", "MarkSet Name:")
+
+        # 🔹 Row 7: "Drawing No: <dwg_num>"
+        dwg_val = (dwg_num or "").strip()
+        if dwg_val:
+            _write_merged(ws, "A7", f"Drawing No: {dwg_val}")
+        else:
+            _write_merged(ws, "A7", "Drawing No:")
 
         # Row 5 right: "Created By: <email>" in merged E5:G5
         created_by = (user_email or "viewer_user").strip()
@@ -305,7 +315,6 @@ async def generate_report_excel(
                 _write_merged(ws, f"F{r}", instrument)   # F: Instrument
                 ws.row_dimensions[r].height = 75         # row height for thumbnail
 
-
                 # Image thumbnail into column B
                 if page_img is None:
                     continue  # can't render thumbnail without page
@@ -364,7 +373,6 @@ async def generate_report_excel(
             )
             ws.add_data_validation(status_dv)
             status_dv.add(f"G{first_mark_row}:G{last_mark_row}")
-
 
         # =====================================================
         # SAVE TO BYTES
