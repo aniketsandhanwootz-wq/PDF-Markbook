@@ -129,6 +129,8 @@ type Mark = {
   label?: string;
 };
 
+type MarkStatus = 'PASS' | 'FAIL' | 'DOUBT' | '';
+
 type FlashRect = {
   pageNumber: number;
   x: number;
@@ -302,7 +304,7 @@ function ViewerSetupScreen({
   const [err, setErr] = useState<string>('');
   const [autoTriedBootstrap, setAutoTriedBootstrap] = useState(false);
 
-    // 👉 NEW: which DWG is currently opened in the bottom sheet (null = closed)
+  // 👉 NEW: which DWG is currently opened in the bottom sheet (null = closed)
   const [activeDwgKey, setActiveDwgKey] = useState<string | null>(null);
   // 👉 NOTE: we no longer show QC mark counts on the initial screen,
   // so we don't need to compute them here. Keeping this commented so
@@ -319,28 +321,28 @@ function ViewerSetupScreen({
     try {
       setLoading(true);
 
-const qs = new URLSearchParams({
-  project_name: projectName,
-  id: extId,
-  part_number: partNumber,
-});
+      const qs = new URLSearchParams({
+        project_name: projectName,
+        id: extId,
+        part_number: partNumber,
+      });
 
-// 👇 Only filter by dwg_num if user explicitly typed it.
-// For Glide 2 (viewer), we *never* filter by assembly_drawing here,
-// so we get ALL mark_sets across ALL drawings for this triple.
-if (dwgNum.trim()) qs.set('dwg_num', dwgNum.trim());
+      // 👇 Only filter by dwg_num if user explicitly typed it.
+      // For Glide 2 (viewer), we *never* filter by assembly_drawing here,
+      // so we get ALL mark_sets across ALL drawings for this triple.
+      if (dwgNum.trim()) qs.set('dwg_num', dwgNum.trim());
 
-if (userMail.trim()) qs.set('user_mail', userMail.trim());
+      if (userMail.trim()) qs.set('user_mail', userMail.trim());
 
-// ❌ IMPORTANT: do NOT send assembly_drawing to /documents/by-identifier
-// Viewer uses assemblyDrawing only as a fallback pdf_url later,
-// not as a filter.
-// if (assemblyDrawing.trim()) {
-//   qs.set('assembly_drawing', assemblyDrawing.trim());
-// }
+      // ❌ IMPORTANT: do NOT send assembly_drawing to /documents/by-identifier
+      // Viewer uses assemblyDrawing only as a fallback pdf_url later,
+      // not as a filter.
+      // if (assemblyDrawing.trim()) {
+      //   qs.set('assembly_drawing', assemblyDrawing.trim());
+      // }
 
 
-       const res = await fetch(
+      const res = await fetch(
         `${apiBase}/documents/by-identifier?${qs.toString()}`,
         { method: 'GET' }
       );
@@ -349,12 +351,12 @@ if (userMail.trim()) qs.set('user_mail', userMail.trim());
         const text = await res.text().catch(() => '');
 
         // 404 -> document/inspection map not found
- if (res.status === 404 && text.includes('DOCUMENT_NOT_FOUND')) {
-  setErr(
-    'No inspection map exists. To create a map, go to Wootz.Browser > Assembly > All > Info > Inspection Map'
-  );
-  return; // stop here, boot null hi rahega
-}
+        if (res.status === 404 && text.includes('DOCUMENT_NOT_FOUND')) {
+          setErr(
+            'No inspection map exists. To create a map, go to Wootz.Browser > Assembly > All > Info > Inspection Map'
+          );
+          return; // stop here, boot null hi rahega
+        }
 
 
         throw new Error(text || 'Bootstrap failed');
@@ -370,8 +372,8 @@ if (userMail.trim()) qs.set('user_mail', userMail.trim());
       const docsArray: any[] = meta.documents
         ? meta.documents
         : doc
-        ? [doc]
-        : [];
+          ? [doc]
+          : [];
 
       const dwgTypeMap: Record<string, string | null> = {};
       docsArray.forEach((d) => {
@@ -497,14 +499,14 @@ if (userMail.trim()) qs.set('user_mail', userMail.trim());
   };
 
   type MarksetLike = {
-  mark_set_id: string;
-  label?: string;
-  dwg_num?: string | null;
-  pdf_url?: string | null;
-};
+    mark_set_id: string;
+    label?: string;
+    dwg_num?: string | null;
+    pdf_url?: string | null;
+  };
 
 
- const handleOpenMarkset = (ms: MarksetLike) => {
+  const handleOpenMarkset = (ms: MarksetLike) => {
     // Prefer per-markset pdf_url/dwg_num; fall back to document-level
     const url =
       (ms as any).pdf_url ||
@@ -556,38 +558,38 @@ if (userMail.trim()) qs.set('user_mail', userMail.trim());
   });
 
 
-// Helper: DWG + boot se human-friendly type name nikaalo
-const resolveTypeLabelForDwg = (
-  dwgKey: string,
-  bootState: BootstrapDoc | null
-): string => {
-  if (!bootState) return 'Other Drawings';
+  // Helper: DWG + boot se human-friendly type name nikaalo
+  const resolveTypeLabelForDwg = (
+    dwgKey: string,
+    bootState: BootstrapDoc | null
+  ): string => {
+    if (!bootState) return 'Other Drawings';
 
-  // ✅ Only use per-DWG type; don't fall back to document.drawing_type
-  const rawType = bootState.dwgTypeMap?.[dwgKey] ?? null;
+    // ✅ Only use per-DWG type; don't fall back to document.drawing_type
+    const rawType = bootState.dwgTypeMap?.[dwgKey] ?? null;
 
-  const v = (rawType || '').trim();
+    const v = (rawType || '').trim();
 
-  // ✅ If blank or '-' → treat as "Other Drawings" (or whatever label you want)
-  if (!v || v === '-') {
-    return 'Other Drawings'; // <--- change this label if you prefer something else
-  }
+    // ✅ If blank or '-' → treat as "Other Drawings" (or whatever label you want)
+    if (!v || v === '-') {
+      return 'Other Drawings'; // <--- change this label if you prefer something else
+    }
 
-  const lc = v.toLowerCase();
+    const lc = v.toLowerCase();
 
-  if (lc === 'part') return 'Part Drawings';
-  if (lc === 'fabrication' || lc === 'fab') return 'Fabrication Drawings';
-  if (lc === 'assembly') return 'Assembly Drawings';
-  if (lc === 'sub assembly' || lc === 'sub-assembly' || lc === 'subassembly')
-    return 'Sub Assembly Drawings';
-  if (lc === 'boughtout' || lc === 'bought-out' || lc === 'bought out')
-    return 'Boughtout Items';
+    if (lc === 'part') return 'Part Drawings';
+    if (lc === 'fabrication' || lc === 'fab') return 'Fabrication Drawings';
+    if (lc === 'assembly') return 'Assembly Drawings';
+    if (lc === 'sub assembly' || lc === 'sub-assembly' || lc === 'subassembly')
+      return 'Sub Assembly Drawings';
+    if (lc === 'boughtout' || lc === 'bought-out' || lc === 'bought out')
+      return 'Boughtout Items';
 
-  // fallback: "XYZ Drawings"
-  return `${v} Drawings`;
-};
+    // fallback: "XYZ Drawings"
+    return `${v} Drawings`;
+  };
 
- 
+
   // 🔹 Re-group each DWG cluster by drawing "type" (using drawing_type)
   type DwgCluster = {
     dwgKey: string;
@@ -748,23 +750,23 @@ const resolveTypeLabelForDwg = (
           </>
         )}
 
- {hasBootstrapKeys && !boot && (
-  <div
-    style={{
-      padding: 12,
-      borderRadius: 6,
-      background: '#1F1F1F',
-      border: '1px solid #3B3B3B',
-      fontSize: 12,
-      fontWeight: 400,
-      fontStyle: 'italic',
-      color: '#C9C9C9',
-    }}
-  >
-    {loading && !err && 'Initializing document… please wait.'}
-    {!loading && err && err}
-  </div>
-)}
+        {hasBootstrapKeys && !boot && (
+          <div
+            style={{
+              padding: 12,
+              borderRadius: 6,
+              background: '#1F1F1F',
+              border: '1px solid #3B3B3B',
+              fontSize: 12,
+              fontWeight: 400,
+              fontStyle: 'italic',
+              color: '#C9C9C9',
+            }}
+          >
+            {loading && !err && 'Initializing document… please wait.'}
+            {!loading && err && err}
+          </div>
+        )}
 
 
         {boot && (
@@ -959,9 +961,8 @@ const resolveTypeLabelForDwg = (
                       >
                         {groupedByType[typeName].map((cluster) => {
                           const count = cluster.marksets.length;
-                          const countText = `Inspection map${
-                            count > 1 ? 's' : ''
-                          }: ${String(count).padStart(2, '0')}`;
+                          const countText = `Inspection map${count > 1 ? 's' : ''
+                            }: ${String(count).padStart(2, '0')}`;
 
                           return (
                             <button
@@ -980,9 +981,14 @@ const resolveTypeLabelForDwg = (
                                 cursor: 'pointer',
                               }}
                             >
-                              <div>
-                                {/* Drawing number, e.g. "Ass - 001" */}
-                                <div
+                              <div
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'baseline',
+                                  gap: 8,
+                                }}
+                              >
+                                <span
                                   style={{
                                     fontSize: 15,
                                     fontWeight: 600,
@@ -990,18 +996,16 @@ const resolveTypeLabelForDwg = (
                                   }}
                                 >
                                   {cluster.dwgLabel}
-                                </div>
+                                </span>
 
-                                {/* "Inspection map : 02" line */}
-                                <div
+                                <span
                                   style={{
-                                    marginTop: 6,
                                     fontSize: 12,
                                     color: '#C9C9C9',
                                   }}
                                 >
-                                  {countText}
-                                </div>
+                                  • {countText}
+                                </span>
                               </div>
 
                               {/* Right arrow icon (same as before) */}
@@ -1038,21 +1042,21 @@ const resolveTypeLabelForDwg = (
             )}
           </>
         )}
-              {boot && activeDwgKey && groupedByDwg[activeDwgKey] && (
-        <DrawingSheetPanel
-          dwgLabel={
-            activeDwgKey === 'UNKNOWN'
-              ? 'Drawing number not set'
-              : activeDwgKey
-          }
-          marksets={groupedByDwg[activeDwgKey]}
-          onClose={() => setActiveDwgKey(null)}
-          onOpenMarkset={(ms) => {
-            // start inspection for that markset
-            handleOpenMarkset(ms);
-          }}
-        />
-      )}
+        {boot && activeDwgKey && groupedByDwg[activeDwgKey] && (
+          <DrawingSheetPanel
+            dwgLabel={
+              activeDwgKey === 'UNKNOWN'
+                ? 'Drawing number not set'
+                : activeDwgKey
+            }
+            marksets={groupedByDwg[activeDwgKey]}
+            onClose={() => setActiveDwgKey(null)}
+            onOpenMarkset={(ms) => {
+              // start inspection for that markset
+              handleOpenMarkset(ms);
+            }}
+          />
+        )}
       </div>
     </div>
   );
@@ -1190,11 +1194,13 @@ function ViewerContent() {
   const pdfTouchAction: CSSProperties['touchAction'] = 'pan-x pan-y';
 
 
-  // Input mode states
   const [entries, setEntries] = useState<Record<string, string>>({});
+  // Per-mark QC status: PASS / FAIL / DOUBT (keyed by mark_id)
+  const [statuses, setStatuses] = useState<Record<string, string>>({});
   const [showReview, setShowReview] = useState(false);
   const [hasVisitedReview, setHasVisitedReview] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
 
 
   // Refs used by the viewer and smooth zoom
@@ -1641,17 +1647,18 @@ function ViewerContent() {
       setMarkToGroupIndex([]);
       return;
     }
-
     // No markset -> reset
     if (!markSetId) {
       setMarks([]);
       setEntries({});
+      setStatuses({});           // 🔴 reset statuses as well
       setIsMasterMarkSet(null);
       setGroupWindows(null);
       setMarkToGroupIndex([]);
       setIsMobileInputMode(false);
       return;
     }
+
 
     const loadMarks = async () => {
       try {
@@ -1688,7 +1695,7 @@ function ViewerContent() {
           if (!res.ok) throw new Error('Failed to fetch master marks');
           const marksData: Mark[] = await res.json();
 
-          const sorted = [...marksData].sort((a, b) => a.order_index - b.order_index);
+           const sorted = [...marksData].sort((a, b) => a.order_index - b.order_index);
           setMarks(sorted);
 
           const initialEntries: Record<string, string> = {};
@@ -1696,6 +1703,8 @@ function ViewerContent() {
             if (mark.mark_id) initialEntries[mark.mark_id] = '';
           });
           setEntries(initialEntries);
+          setStatuses({}); // 🔴 clear any stale statuses when loading new marks
+
 
           const isMobile =
             sorted.length > 0 &&
@@ -1782,6 +1791,8 @@ function ViewerContent() {
             if (mark.mark_id) initialEntries[mark.mark_id] = '';
           });
           setEntries(initialEntries);
+          setStatuses({}); // 🔴 start with blank statuses for this QC run
+
 
           const isMobile =
             orderedMarks.length > 0 &&
@@ -1808,6 +1819,8 @@ function ViewerContent() {
           if (mark.mark_id) initialEntries[mark.mark_id] = '';
         });
         setEntries(initialEntries);
+        setStatuses({}); // 🔴 legacy path also resets statuses
+
 
         const isMobile =
           sorted.length > 0 &&
@@ -2635,6 +2648,19 @@ function ViewerContent() {
     }
   }, [currentMarkIndex, marks]);
 
+    const handleStatusChange = useCallback(
+    (status: 'PASS' | 'FAIL' | 'DOUBT') => {
+      const currentMark = marks[currentMarkIndex];
+      if (currentMark?.mark_id) {
+        setStatuses((prev) => ({
+          ...prev,
+          [currentMark.mark_id!]: status,
+        }));
+      }
+    },
+    [currentMarkIndex, marks]
+  );
+
   const handleSubmit = useCallback(async () => {
     if (!markSetId) {
       toast.error('No mark set ID provided');
@@ -2658,7 +2684,17 @@ function ViewerContent() {
       }
     });
 
+    // Build a parallel status map (default "NA" if not selected)
+    const finalStatuses: Record<string, string> = {};
+    marks.forEach((mark) => {
+      if (!mark.mark_id) return;
+      const s = statuses[mark.mark_id];
+      finalStatuses[mark.mark_id] = s || 'NA';
+    });
+
     try {
+      // Use actual email from query params if present
+
       // Use actual email from query params if present
       const userEmail = searchParams?.get('user_mail') || qUser || null;
       if (userEmail && !userEmail.includes('@')) {
@@ -2671,8 +2707,9 @@ function ViewerContent() {
         body: JSON.stringify({
           mark_set_id: markSetId,
           entries: finalEntries,
+          statuses: finalStatuses,   // 🔴 NEW: per-mark PASS/FAIL/DOUBT
           pdf_url: rawPdfUrl,
-          user_email: userEmail,   // still accepted (alias user_mail also works server-side)
+          user_email: userEmail,     // still accepted (alias user_mail also works server-side)
           padding_pct: 0.25,
           office_variant: 'o365',
 
@@ -2683,6 +2720,7 @@ function ViewerContent() {
           // 🔴 NEW: pass POC CC list through as-is (comma-separated)
           poc_cc: qPocCc || undefined,
         }),
+
 
       });
 
@@ -2984,9 +3022,11 @@ function ViewerContent() {
 
 
   // Mobile input mode
-  if (isMobileInputMode && marks.length > 0) {
+    if (isMobileInputMode && marks.length > 0) {
     const currentMark = marks[currentMarkIndex];
     const currentValue = currentMark?.mark_id ? entries[currentMark.mark_id] || '' : '';
+    const currentStatus =
+      currentMark?.mark_id ? (statuses[currentMark.mark_id] as 'PASS' | 'FAIL' | 'DOUBT' | undefined) || '' : '';
 
     const currentGroupMeta =
       isMasterMarkSet === false &&
@@ -2995,6 +3035,7 @@ function ViewerContent() {
         markToGroupIndex.length
         ? groupWindows[currentGroupIndex] ?? null
         : null;
+
 
     const currentGroupInstrumentSummary =
       currentGroupMeta && marks.length
@@ -3199,29 +3240,35 @@ function ViewerContent() {
                   : 'Slide to start this group'
               }
               onGroupSlideComplete={proceedFromGroupToMarks}
+              // 🔴 NEW: PASS / FAIL / DOUBT wiring (mobile)
+              status={currentStatus}
+              onStatusChange={handleStatusChange}
             />
+
           )}
         </div>
 
 
 
         {/* 🔹 Review overlay (mobile) */}
-        {showReview && (
-          <ReviewScreen
-            marks={marks}
-            entries={entries}
-            onBack={() => {
-              // Just hide overlay; viewer state is preserved
-              setShowReview(false);
-            }}
-            onSubmit={handleSubmit}
-            isSubmitting={isSubmitting}
-            onJumpTo={(i) => {
-              setShowReview(false);
-              setTimeout(() => jumpDirectToMark(i), 120);
-            }}
-          />
-        )}
+{showReview && (
+  <ReviewScreen
+    marks={marks}
+    entries={entries}
+    onBack={() => {
+      // Just hide overlay; viewer state is preserved
+      setShowReview(false);
+    }}
+    onSubmit={handleSubmit}
+    isSubmitting={isSubmitting}
+    onJumpTo={(i) => {
+      setShowReview(false);
+      setTimeout(() => jumpDirectToMark(i), 120);
+    }}
+    statusByMarkId={statuses as Record<string, 'PASS' | 'FAIL' | 'DOUBT' | ''>}
+  />
+)}
+
       </div>
     );
   }
@@ -3253,6 +3300,11 @@ function ViewerContent() {
         const list = Array.from(instruments);
         return list.length ? list.join(', ') : 'No instrument mentioned';
       })()
+      : '';
+
+        const currentStatusDesktop =
+    marks[currentMarkIndex]?.mark_id
+      ? (statuses[marks[currentMarkIndex]!.mark_id!] as 'PASS' | 'FAIL' | 'DOUBT' | undefined) || ''
       : '';
 
   return (
@@ -3416,7 +3468,11 @@ function ViewerContent() {
                 : 'Slide to start this group'
             }
             onGroupSlideComplete={proceedFromGroupToMarks}
+            // 🔴 NEW: PASS / FAIL / DOUBT wiring (desktop)
+            status={currentStatusDesktop}
+            onStatusChange={handleStatusChange}
           />
+
         )}
       </div>
 
@@ -3429,21 +3485,23 @@ function ViewerContent() {
         onResultFound={handleSearchResult}
       />
       {/* 🔹 Review overlay (desktop) */}
-      {showReview && (
-        <ReviewScreen
-          marks={marks}
-          entries={entries}
-          onBack={() => {
-            setShowReview(false);
-          }}
-          onSubmit={handleSubmit}
-          isSubmitting={isSubmitting}
-          onJumpTo={(i) => {
-            setShowReview(false);
-            setTimeout(() => jumpDirectToMark(i), 120);
-          }}
-        />
-      )}
+{showReview && (
+  <ReviewScreen
+    marks={marks}
+    entries={entries}
+    onBack={() => {
+      setShowReview(false);
+    }}
+    onSubmit={handleSubmit}
+    isSubmitting={isSubmitting}
+    onJumpTo={(i) => {
+      setShowReview(false);
+      setTimeout(() => jumpDirectToMark(i), 120);
+    }}
+    statusByMarkId={statuses as Record<string, 'PASS' | 'FAIL' | 'DOUBT' | ''>}
+  />
+)}
+
     </div>
   );
 

@@ -182,25 +182,17 @@ export default function DrawingSheetPanel({
                   >
                     {ms.label}
                   </div>
-                  <div
-                    style={{
-                      marginTop: 6,
-                      fontWeight: 400,
-                      fontSize: 12,
-                      color: '#C9C9C9',
-                      display: 'flex',
-                      gap: 6,
-                      flexWrap: 'wrap',
-                    }}
-                  >
-                    {ms.dwg_num && <span>{ms.dwg_num}</span>}
-                    {ms.created_by && (
-                      <span>
-                        {ms.dwg_num ? '· ' : ''}
-                        {ms.created_by}
-                      </span>
-                    )}
-                  </div>
+<div
+  style={{
+    marginTop: 6,
+    fontWeight: 400,
+    fontSize: 12,
+    color: '#C9C9C9',
+  }}
+>
+  {ms.created_by || ''}
+</div>
+
                 </div>
 
                 <button

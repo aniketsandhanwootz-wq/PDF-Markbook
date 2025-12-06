@@ -185,8 +185,13 @@ type InputPanelProps = {
 
   /** Called when user successfully slides all the way (proceed to group marks) */
   onGroupSlideComplete?: () => void;
-};
 
+  /** PASS / FAIL / DOUBT selection for the current mark (optional) */
+  status?: 'PASS' | 'FAIL' | 'DOUBT' | '';
+
+  /** Notify parent when user changes PASS / FAIL / DOUBT (optional) */
+  onStatusChange?: (status: 'PASS' | 'FAIL' | 'DOUBT') => void;
+};
 
 function indexToLabel(idx: number): string {
   let n = idx + 1,
@@ -215,7 +220,10 @@ export default function InputPanel({
   showGroupSlide,
   groupSlideLabel,
   onGroupSlideComplete,
+  status,
+  onStatusChange,
 }: InputPanelProps) {
+
 
   // --- Keyboard overlap handling (mobile) ------------------------------
   const [kbOverlap, setKbOverlap] = useState(0); // pixels to lift the panel
@@ -388,36 +396,38 @@ export default function InputPanel({
             </div>
           )}
         </div>
-) : (
-  <div
-    style={{
-      // ↑ yahan se actual gap control hoga
-      padding: '12px 10px 14px', // top, left/right, bottom
-      display: 'flex',
-      alignItems: 'center',
-      flexShrink: 0,
-    }}
-  >
-    <input
-      type="text"
-      inputMode="decimal"
-      enterKeyHint="next"
-      pattern="[0-9]*[.,]?[0-9]*"
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      placeholder="Type value here..."
-      style={{
-        width: '100%',
-        padding: '10px 12px', // normal internal padding
-        fontSize: 16,
-        border: '2px solid #3B3B3B',
-        borderRadius: 8,
-        outline: 'none',
-        transition: 'border-color 0.2s',
-        minHeight: 44,        // ✅ use minHeight instead of fixed height
-        background: '#1F1F1F',
-        color: '#FFFFFF',
-      }}
+      ) : (
+        <div
+          style={{
+            // Input + status options stacked compactly
+            padding: '10px 10px 10px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 6,
+            flexShrink: 0,
+          }}
+        >
+          {/* Value input */}
+          <input
+            type="text"
+            inputMode="decimal"
+            enterKeyHint="next"
+            pattern="[0-9]*[.,]?[0-9]*"
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder="Type value here..."
+            style={{
+              width: '100%',
+              padding: '10px 12px',
+              fontSize: 16,
+              border: '2px solid #3B3B3B',
+              borderRadius: 8,
+              outline: 'none',
+              transition: 'border-color 0.2s',
+              minHeight: 44,
+              background: '#1F1F1F',
+              color: '#FFFFFF',
+            }}
             onFocus={(e) => {
               setSelfFocused(true);
               e.target.style.borderColor = '#D99E02';
@@ -435,8 +445,47 @@ export default function InputPanel({
               }
             }}
           />
+
+          {/* PASS / FAIL / DOUBT selector */}
+          <div
+            style={{
+              display: 'flex',
+              gap: 6,
+              marginTop: 2,
+            }}
+          >
+            {(['PASS', 'FAIL', 'DOUBT'] as const).map((opt) => {
+              const isSelected = (status || '') === opt;
+              return (
+                <button
+                  key={opt}
+                  type="button"
+                  onClick={() => {
+                    if (onStatusChange) onStatusChange(opt);
+                  }}
+                  style={{
+                    flex: 1,
+                    padding: '6px 8px',
+                    fontSize: 13,
+                    fontWeight: 600,
+                    borderRadius: 8,
+                    minHeight: 32,
+                    border: isSelected ? '2px solid #D99E02' : '2px solid #3B3B3B',
+                    background: isSelected ? '#D99E02' : '#1F1F1F',
+                    color: '#FFFFFF',
+                    cursor: 'pointer',
+                    transition: 'all 0.15s ease',
+                    textTransform: 'capitalize',
+                  }}
+                >
+                  {opt.toLowerCase()}
+                </button>
+              );
+            })}
+          </div>
         </div>
       )}
+
 
       {/* Nav / Slide action */}
 {isGroupMode && showGroupSlide && onGroupSlideComplete ? (

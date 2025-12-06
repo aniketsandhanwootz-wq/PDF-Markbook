@@ -19,7 +19,10 @@ type ReviewScreenProps = {
   isSubmitting: boolean;
   /** called when a review row is clicked */
   onJumpTo: (index: number) => void;
+  /** Optional PASS / FAIL / DOUBT status per mark_id */
+  statusByMarkId?: Record<string, 'PASS' | 'FAIL' | 'DOUBT' | ''>;
 };
+
 
 export default function ReviewScreen({
   marks,
@@ -28,6 +31,7 @@ export default function ReviewScreen({
   onSubmit,
   isSubmitting,
   onJumpTo,
+  statusByMarkId,
 }: ReviewScreenProps) {
   const completedCount = Object.values(entries).filter((v) => v.trim() !== '').length;
   const allFilled = marks.length > 0 && completedCount === marks.length;
@@ -120,6 +124,22 @@ export default function ReviewScreen({
           const value = entries[mark.mark_id || ''] || '';
           const isFilled = value.trim() !== '';
 
+                    const status = statusByMarkId?.[mark.mark_id || ''] || '';
+          let statusLabel = '';
+          let statusBg = '';
+          let statusColor = '#FFFFFF';
+
+          if (status === 'PASS') {
+            statusLabel = 'Pass';
+            statusBg = '#59f32aff';       // dark green
+          } else if (status === 'FAIL') {
+            statusLabel = 'Fail';
+            statusBg = '#FFB5B6';       // dark red
+          } else if (status === 'DOUBT') {
+            statusLabel = 'Doubt';
+            statusBg = '#D99E02';       // dark blue
+          }
+
           return (
             <div
               key={mark.mark_id || idx}
@@ -203,21 +223,50 @@ export default function ReviewScreen({
               </div>
 
               {/* Content */}
+              {/* Content */}
               <div style={{ flex: 1 }}>
                 <div
                   style={{
-                    fontSize: '14px',
-                    fontWeight: 600,
-                    color: '#FFFFFF',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 8,
                     marginBottom: '4px',
-                    whiteSpace: 'normal',
-                    overflowWrap: 'anywhere',
-                    wordBreak: 'break-word',
-                    lineHeight: '1.25',
                   }}
                 >
-                  <span style={{ opacity: 0.85 }}>{mark.label ?? '–'}.</span> {mark.name}
+                  <div
+                    style={{
+                      fontSize: '14px',
+                      fontWeight: 600,
+                      color: '#FFFFFF',
+                      whiteSpace: 'normal',
+                      overflowWrap: 'anywhere',
+                      wordBreak: 'break-word',
+                      lineHeight: '1.25',
+                    }}
+                  >
+                    <span style={{ opacity: 0.85 }}>{mark.label ?? '–'}.</span> {mark.name}
+                  </div>
+
+                  {statusLabel && (
+                    <span
+                      style={{
+                        padding: '2px 8px',
+                        borderRadius: 999,
+                        fontSize: 11,
+                        fontWeight: 600,
+                        textTransform: 'uppercase',
+                        background: statusBg,
+                        color: statusColor,
+                        border: '1px solid #3B3B3B',
+                        flexShrink: 0,
+                      }}
+                    >
+                      {statusLabel}
+                    </span>
+                  )}
                 </div>
+
 
                 {isFilled ? (
                   <div
