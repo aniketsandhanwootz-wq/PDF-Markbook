@@ -11,7 +11,7 @@ from openpyxl import load_workbook
 from openpyxl.drawing.image import Image as OpenpyxlImage
 from openpyxl.cell.cell import MergedCell
 from openpyxl.worksheet.worksheet import Worksheet
-from openpyxl.worksheet.datavalidation import DataValidation
+from openpyxl.styles import PatternFill
 
 from core.report_pdf import _require_pdfium, _fetch_pdf_bytes
 
@@ -93,21 +93,22 @@ async def generate_report_excel(
     part_number: str = "",
     external_id: str = "",
     report_title: str = "",
-    dwg_num: str = "",                     # 🔹 NEW: optional drawing number
+    dwg_num: str = "",                     # optional drawing number
     padding_pct: float = 0.25,
     render_zoom: float = 2.2,
     logo_url: str = "https://res.cloudinary.com/dbwg6zz3l/image/upload/v1753101276/Black_Blue_ctiycp.png",
+    statuses: Optional[Dict[str, str]] = None,  # per-mark status map
 ) -> bytes:
     """
     Build Excel from template with:
-      - Header: Part Number, ID (external_id), MarkSet Name, Created By/At
+      - Header: Part Number, ID (external_id), MarkSet Name, Created By/At, Drawing No
       - One row per mark:
           A: Label
           B: Thumbnail image of mark region (under "Required Value" header)
           C/D: Tolerance Min/Max (left empty)
           E: Observed Value (user input)
-          F: Instrument (from mark.instrument)
-          G: Status (dropdown: Pass/Fail/Doubt)
+          F: Instrument (from mark["instrument"])
+          G: Status (text + colour based on PASS/FAIL/DOUBT – NO dropdown)
           H: Comment (left empty)
 
     Optimised for:
@@ -115,6 +116,9 @@ async def generate_report_excel(
       - Using temp files for images so openpyxl never sees raw PIL Images
       - Basic mark cap from settings.max_marks_per_report (default 300)
     """
+
+    # Normalize statuses map
+    statuses = statuses or {}
 
     # ---------- PDF + template ----------
     _require_pdfium()
@@ -133,8 +137,10 @@ async def generate_report_excel(
     template_row_index = 9
     template_row_cells = {
         col: ws.cell(row=template_row_index, column=col)
-        for col in range(1, 9)  # columns A..H
+        # A..I (1..9) → includes Comment column as well
+        for col in range(1, 9 + 1)
     }
+
 
     def _apply_row_style(target_row: int) -> None:
         """
@@ -167,7 +173,6 @@ async def generate_report_excel(
         marks_sorted = marks_sorted[:max_marks]
 
     # ---------- Group marks by page ----------
-    from collections import defaultdict
     marks_by_page: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
     for m in marks_sorted:
         try:
@@ -210,7 +215,6 @@ async def generate_report_excel(
         if title_val:
             _write_merged(ws, "A3", f"Report Title: {title_val}")
         else:
-            # keep static label if no title provided
             _write_merged(ws, "A3", "Report Title:")
 
         # Row 4: "ID: <external_id / mark_set_id>"
@@ -234,7 +238,7 @@ async def generate_report_excel(
         else:
             _write_merged(ws, "A6", "MarkSet Name:")
 
-        # 🔹 Row 7: "Drawing No: <dwg_num>"
+        # Row 7: "Drawing No: <dwg_num>"
         dwg_val = (dwg_num or "").strip()
         if dwg_val:
             _write_merged(ws, "A7", f"Drawing No: {dwg_val}")
@@ -261,7 +265,6 @@ async def generate_report_excel(
                 logo_img.width = 150
                 logo_img.height = 60
                 ws.add_image(logo_img, "C1")
-                # no need to keep logo_img reference
                 del logo_img
             except Exception as e:
                 print(f"Logo failed: {e}")
@@ -309,10 +312,44 @@ async def generate_report_excel(
                 observed = (entries.get(mark_id, "") or "").strip()
                 instrument = (m.get("instrument") or "").strip()
 
+                # ---------- STATUS TEXT + COLOUR ----------
+                raw_status = (statuses.get(mark_id, "") or "").strip().upper()
+
+                if raw_status == "PASS":
+                    status_text = "Pass"
+                    status_color = "FF00B050"  # green
+                elif raw_status == "FAIL":
+                    status_text = "Fail"
+                    status_color = "FFFF0000"  # red
+                elif raw_status == "DOUBT":
+                    status_text = "Doubt"
+                    status_color = "FFFFFF00"  # yellow
+                else:
+                    status_text = ""
+                    status_color = None
+
                 # Text cells (merge-safe)
                 _write_merged(ws, f"A{r}", label)        # A: Label
-                _write_merged(ws, f"E{r}", observed)     # E: Observed Value
-                _write_merged(ws, f"F{r}", instrument)   # F: Instrument
+                # B: Inspection Point → image goes here (handled below)
+                # C, D, E: Required + Tol Min/Max (left blank for now)
+
+                # ✅ F: Observed Value
+                _write_merged(ws, f"F{r}", observed)
+
+                # ✅ G: Instrument
+                _write_merged(ws, f"G{r}", instrument)
+
+                # ✅ H: Status – write text + apply fill (no dropdown)
+                status_cell = ws.cell(row=r, column=8)  # col 8 = H
+                status_cell.value = status_text
+                if status_color:
+                    status_cell.fill = PatternFill(
+                        start_color=status_color,
+                        end_color=status_color,
+                        fill_type="solid",
+                    )
+
+
                 ws.row_dimensions[r].height = 75         # row height for thumbnail
 
                 # Image thumbnail into column B
@@ -326,14 +363,14 @@ async def generate_report_excel(
                         padding_pct,
                     )
 
-                    # Write to temp file so openpyxl sees a filename (has fp)
+                    # Write to temp file so openpyxl sees a filename
                     bio = io.BytesIO()
                     crop_img.save(bio, format="PNG")
                     crop_png = bio.getvalue()
                     thumb_path = _bytes_to_tempfile(crop_png, suffix=".png")
                     _tempfiles.append(thumb_path)
 
-                    thumb_img = OpenpyxlImage(thumb_path)  # IMPORTANT: pass path
+                    thumb_img = OpenpyxlImage(thumb_path)
                     img_w_px, img_h_px = crop_img.size
 
                     # Fit within approx 175x100 px box
@@ -345,11 +382,9 @@ async def generate_report_excel(
 
                     ws.add_image(thumb_img, f"B{r}")
 
-                    # Drop references ASAP for GC
                     del crop_img
                     del thumb_img
                     del bio
-
                 except Exception as e:
                     print(f"Image failed for mark on page {page_index}, row {r}: {e}")
                     continue
@@ -360,28 +395,13 @@ async def generate_report_excel(
                 gc.collect()
 
         # =====================================================
-        # DATA VALIDATION: Status column dropdown
+        # NO DATA VALIDATION – Status column is filled & coloured
         # =====================================================
-        first_mark_row = start_row
-        last_mark_row = current_row - 1
 
-        if last_mark_row >= first_mark_row:
-            status_dv = DataValidation(
-                type="list",
-                formula1='"Pass,Fail,Doubt"',
-                allow_blank=True,
-            )
-            ws.add_data_validation(status_dv)
-            status_dv.add(f"G{first_mark_row}:G{last_mark_row}")
-
-        # =====================================================
-        # SAVE TO BYTES
-        # =====================================================
         out = io.BytesIO()
         wb.save(out)
         out.seek(0)
 
-        # Encourage cleanup of any lingering image state
         gc.collect()
         return out.read()
 

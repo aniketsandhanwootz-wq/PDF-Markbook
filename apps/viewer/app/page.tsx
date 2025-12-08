@@ -2701,28 +2701,27 @@ function ViewerContent() {
         console.warn('Invalid email format, skipping email send');
       }
 
-      const response = await fetch(`${apiBase}/reports/generate-bundle`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          mark_set_id: markSetId,
-          entries: finalEntries,
-          statuses: finalStatuses,   // 🔴 NEW: per-mark PASS/FAIL/DOUBT
-          pdf_url: rawPdfUrl,
-          user_email: userEmail,     // still accepted (alias user_mail also works server-side)
-          padding_pct: 0.25,
-          office_variant: 'o365',
+const response = await fetch(`${apiBase}/reports/generate-bundle`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    mark_set_id: markSetId,
+    entries: finalEntries,
+    statuses: finalStatuses,   // 🔥 NEW: per-mark PASS / FAIL / DOUBT / NA
+    pdf_url: rawPdfUrl,
+    user_email: userEmail,     // still accepted (alias user_mail also works server-side)
+    padding_pct: 0.25,
+    office_variant: 'o365',
 
-          // 🔴 NEW: pass viewer metadata through
-          report_title: reportTitle.trim(),
-          report_id: reportId,
+    // viewer metadata
+    report_title: reportTitle.trim(),
+    report_id: reportId,
 
-          // 🔴 NEW: pass POC CC list through as-is (comma-separated)
-          poc_cc: qPocCc || undefined,
-        }),
+    // POC CC list (comma-separated)
+    poc_cc: qPocCc || undefined,
+  }),
+});
 
-
-      });
 
       if (!response.ok) {
         const text = await response.text().catch(() => '');
@@ -2776,15 +2775,17 @@ function ViewerContent() {
   }, [
     markSetId,
     entries,
+    statuses,       // ✅ VERY IMPORTANT: include statuses
     apiBase,
     rawPdfUrl,
     searchParams,
     qUser,
-    qPocCc,        // 🔴 NEW dep
+    qPocCc,
     marks,
     reportTitle,
     reportId,
   ]);
+
 
 
 

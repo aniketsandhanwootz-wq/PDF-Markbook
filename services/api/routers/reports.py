@@ -21,25 +21,20 @@ def get_storage():
 router = APIRouter(prefix="/reports", tags=["reports"])
 
 class ReportBundleLegacyBody(BaseModel):
-    """
-    Legacy body used by the Viewer to call /reports/generate-bundle.
-
-    This is a thin compatibility wrapper around the new Excel-only
-    /reports/bundle/generate endpoint.
-    """
     mark_set_id: str = Field(..., min_length=8)
-    entries: Dict[str, str] = {}           # mark_id -> value
+    entries: Dict[str, str] = {}           # mark_id -> observed value
     pdf_url: Optional[str] = None
     user_email: Optional[str] = None
     padding_pct: float = 0.25
-    office_variant: Optional[str] = None   # ignored here; kept for backward compat
+    office_variant: Optional[str] = None
 
-    # 🔴 NEW: viewer metadata
-    report_title: Optional[str] = None     # human-readable title from ReportTitlePanel
-    report_id: Optional[str] = None        # unique QC submission ID from viewer
-
-    # 🔴 NEW: optional POC CC list (comma-separated emails, from Glide → Viewer)
+    report_title: Optional[str] = None
+    report_id: Optional[str] = None
     poc_cc: Optional[str] = None
+
+    # ✅ NEW: per-mark status coming from Viewer
+    statuses: Dict[str, str] = {}          # mark_id -> "PASS"/"FAIL"/"DOUBT"/""
+
 
 
 
@@ -71,12 +66,12 @@ async def generate_bundle_legacy(
                         mark_set_id=body.mark_set_id,
                         entries=body.entries,
                         submitted_by=(body.user_email or "viewer_user"),
-                        # 🔴 NEW: forward viewer's report_id into Sheets
+                        statuses=(body.statuses or None),   # ✅ NEW
                         report_id=body.report_id,
                     )
             except Exception as e:
                 logger.warning(f"Failed to persist user inputs: {e}")
-                # do not fail the request just because audit/write failed
+
 
         # 2) Resolve mark_set -> doc_id from Sheets (mark_sets tab)
         try:

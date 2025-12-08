@@ -447,42 +447,46 @@ export default function InputPanel({
           />
 
           {/* PASS / FAIL / DOUBT selector */}
-          <div
-            style={{
-              display: 'flex',
-              gap: 6,
-              marginTop: 2,
-            }}
-          >
-            {(['PASS', 'FAIL', 'DOUBT'] as const).map((opt) => {
-              const isSelected = (status || '') === opt;
-              return (
-                <button
-                  key={opt}
-                  type="button"
-                  onClick={() => {
-                    if (onStatusChange) onStatusChange(opt);
-                  }}
-                  style={{
-                    flex: 1,
-                    padding: '6px 8px',
-                    fontSize: 13,
-                    fontWeight: 600,
-                    borderRadius: 8,
-                    minHeight: 32,
-                    border: isSelected ? '2px solid #D99E02' : '2px solid #3B3B3B',
-                    background: isSelected ? '#D99E02' : '#1F1F1F',
-                    color: '#FFFFFF',
-                    cursor: 'pointer',
-                    transition: 'all 0.15s ease',
-                    textTransform: 'capitalize',
-                  }}
-                >
-                  {opt.toLowerCase()}
-                </button>
-              );
-            })}
-          </div>
+<div
+  style={{
+    display: 'flex',
+    gap: 6,
+    marginTop: 2,
+  }}
+>
+  {(['PASS', 'DOUBT', 'FAIL'] as const).map((opt) => {
+    const isSelected = (status || '') === opt;
+
+    return (
+      <button
+        key={opt}
+        type="button"
+        onClick={() => {
+          if (onStatusChange) onStatusChange(opt);
+        }}
+        style={{
+          flex: 1,
+          padding: '6px 8px',
+          fontSize: 13,
+          fontWeight: 600,
+          borderRadius: 8,
+          minHeight: 32,
+          // 🔁 same border behaviour as before
+          border: isSelected ? '2px solid #D99E02' : '2px solid #3B3B3B',
+          // 🎨 selected background now your colour:
+          background: isSelected ? '#352E1F' : '#1F1F1F',
+          color: '#FFFFFF',
+          cursor: 'pointer',
+          transition: 'all 0.15s ease',
+          textTransform: 'capitalize',
+        }}
+      >
+        {opt.toLowerCase()}
+      </button>
+    );
+  })}
+</div>
+
         </div>
       )}
 

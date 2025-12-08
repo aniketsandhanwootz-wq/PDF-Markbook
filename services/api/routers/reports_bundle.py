@@ -563,17 +563,32 @@ async def _do_generate_and_send_excel_bundle(
         )
 
 
-        # 8) Build mark_id -> user_value map ONLY for filtered marks
+        # 8) Build mark_id -> user_value + mark_id -> status maps ONLY for filtered marks
         mark_id_to_value: Dict[str, str] = {}
+        mark_id_to_status: Dict[str, str] = {}
+
         for ui in user_inputs:
             try:
                 mid = ui.get("mark_id")
                 if not mid or mid not in filtered_ids:
                     continue
+
+                # Observed value (what user typed)
                 mark_id_to_value[mid] = ui.get("user_value", "")
+
+                # Try to pick up status from mark_user_input row
+                raw_status = (
+                    ui.get("status")
+                    or ui.get("qc_status")
+                    or ui.get("result")
+                    or ""
+                )
+                if raw_status:
+                    mark_id_to_status[mid] = raw_status
             except Exception as e:
                 logger.warning(f"Error processing user input for Excel: {e}")
                 continue
+
 
         pdf_url = doc.get("pdf_url")
         if not pdf_url:
@@ -596,7 +611,9 @@ async def _do_generate_and_send_excel_bundle(
                 report_title=req.report_name or "",
                 padding_pct=0.25,
                 logo_url="https://res.cloudinary.com/dbwg6zz3l/image/upload/v1753101276/Black_Blue_ctiycp.png",
+                statuses=mark_id_to_status,  # 🔹 NEW: pass per-mark statuses into Excel
             )
+
         except Exception as e:
             logger.exception(f"Failed to build Excel: {e}")
             return

@@ -11,10 +11,15 @@ class UserInputCreate(BaseModel):
     mark_set_id: str = Field(..., description="Mark set ID")
     user_value: str = Field(..., description="Observed value")
     submitted_by: str = Field(..., description="User email/ID")
-    # NEW: link this input to a specific QC submission/report
+    status: Optional[str] = Field(
+        None,
+        description='QC status for this mark ("PASS", "FAIL", "DOUBT", or empty)',
+    )
+    # link this input to a specific QC submission/report
     report_id: Optional[str] = Field(
         None, description="QC submission report ID (grouping key for one run)"
     )
+
 
 
 class UserInputBatchCreate(BaseModel):
@@ -24,10 +29,15 @@ class UserInputBatchCreate(BaseModel):
     entries: dict[str, str] = Field(
         ..., description="Map of mark_id -> user_value"
     )
-    # NEW: same report_id used for all entries in this batch
+    statuses: Optional[dict[str, str]] = Field(
+        None,
+        description='Optional map of mark_id -> status ("PASS", "FAIL", "DOUBT", or empty)',
+    )
+    # same report_id used for all entries in this batch
     report_id: Optional[str] = Field(
         None, description="QC submission report ID (grouping key for one run)"
     )
+
 
 
 class UserInputOut(BaseModel):
@@ -38,11 +48,12 @@ class UserInputOut(BaseModel):
     user_value: str
     submitted_at: str
     submitted_by: str
-    # NEW: expose report_id in responses
     report_id: Optional[str] = None
+    status: Optional[str] = None   # ✅ NEW
 
     class Config:
         from_attributes = True
+
 
 
 class UserInputUpdate(BaseModel):

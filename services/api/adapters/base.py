@@ -344,9 +344,19 @@ class StorageAdapter(Protocol):
         mark_set_id: str,
         user_value: str,
         submitted_by: str,
+        status: Optional[str] = None,
+        report_id: Optional[str] = None,
     ) -> str:
         """
         Persist a single user QC value for a mark.
+
+        Args:
+            mark_id: Mark ID
+            mark_set_id: Mark set ID
+            user_value: Observed value
+            submitted_by: Who submitted the value
+            status: Optional QC status ("PASS" / "FAIL" / "DOUBT" / "")
+            report_id: Optional QC submission/report ID grouping one run
 
         Returns:
             Generated input_id.
@@ -358,14 +368,19 @@ class StorageAdapter(Protocol):
         mark_set_id: str,
         entries: Dict[str, str],
         submitted_by: str,
+        statuses: Optional[Dict[str, str]] = None,
+        report_id: Optional[str] = None,
     ) -> int:
         """
         Persist multiple user QC values in one call.
 
         Args:
             mark_set_id: Mark set ID
-            entries: {mark_id: user_value}
+            entries:  {mark_id: observed value}
             submitted_by: Who submitted
+            statuses: Optional {mark_id: status} map
+                      (status = "PASS" / "FAIL" / "DOUBT" / "" )
+            report_id: Optional QC submission/report ID shared by these rows
 
         Returns:
             Number of rows written.
@@ -376,9 +391,10 @@ class StorageAdapter(Protocol):
         self,
         mark_set_id: str,
         submitted_by: Optional[str] = None,
+        report_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Fetch user input rows for a mark set, optionally filtered by user.
+        Fetch user input rows for a mark set, optionally filtered by user and/or report.
 
         Returns:
             List of dicts with fields:
@@ -388,6 +404,8 @@ class StorageAdapter(Protocol):
                 - user_value
                 - submitted_at
                 - submitted_by
+                - report_id (optional)
+                - status   (optional, used by Excel colouring)
         """
         ...
 

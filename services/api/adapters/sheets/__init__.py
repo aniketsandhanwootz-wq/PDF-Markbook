@@ -90,8 +90,10 @@ HEADERS = {
         "user_value",
         "submitted_at",
         "submitted_by",
-        "report_id",       
+        "report_id",
+        "status",            # ✅ NEW: status per mark
     ],
+
     "inspection_reports": [
         "report_id",
         "mark_set_id",
@@ -1324,13 +1326,13 @@ class SheetsAdapter(StorageAdapter):
         self.ws["groups"].update("A1", filtered)
 
     # ========== User Input Methods ==========
-
     def create_user_input(
         self,
         mark_id: str,
         mark_set_id: str,
         user_value: str,
         submitted_by: str,
+        status: str | None = None,
         report_id: str | None = None,
     ) -> str:
         """Create a single user input entry.
@@ -1341,11 +1343,21 @@ class SheetsAdapter(StorageAdapter):
         now = _utc_iso()
         self._append_rows(
             "mark_user_input",
-            [[input_id, mark_id, mark_set_id, user_value, now, submitted_by, report_id or ""]],
+            [[
+                input_id,
+                mark_id,
+                mark_set_id,
+                user_value,
+                now,
+                submitted_by,
+                report_id or "",
+                status or "",   # ✅ NEW: status written to its own column
+            ]],
         )
         # Clear cache because we changed user_input table
         self._user_input_cache.clear()
         return input_id
+
 
 
     def create_user_inputs_batch(
@@ -1353,17 +1365,34 @@ class SheetsAdapter(StorageAdapter):
         mark_set_id: str,
         entries: dict[str, str],
         submitted_by: str,
+        statuses: dict[str, str] | None = None,
         report_id: str | None = None,
     ) -> int:
         """Create multiple user input entries in batch.
 
         All rows get the same report_id, representing one QC submission.
+
+        statuses (optional): map of mark_id -> status ("PASS"/"FAIL"/"DOUBT"/"").
         """
         now = _utc_iso()
-        rows = []
+        rows: list[list[Any]] = []
+        statuses = statuses or {}
+
         for mark_id, user_value in entries.items():
             input_id = _uuid()
-            rows.append([input_id, mark_id, mark_set_id, user_value, now, submitted_by, report_id or ""])
+            status_val = (statuses.get(mark_id) or "").strip()
+            rows.append(
+                [
+                    input_id,
+                    mark_id,
+                    mark_set_id,
+                    user_value,
+                    now,
+                    submitted_by,
+                    report_id or "",
+                    status_val,  # ✅ NEW: per-mark status
+                ]
+            )
 
         if rows:
             self._append_rows("mark_user_input", rows)

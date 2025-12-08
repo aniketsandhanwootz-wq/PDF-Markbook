@@ -6,6 +6,37 @@ type Mark = {
   label?: string;
 };
 
+type MarkStatus = 'PASS' | 'FAIL' | 'DOUBT' | '';
+
+const STATUS_STYLE: Record<MarkStatus, { label: string; color: string }> = {
+  PASS:  { label: 'PASS',  color: '#16a34a' },  // green
+  FAIL:  { label: 'FAIL',  color: '#dc2626' },  // red
+  DOUBT: { label: 'DOUBT', color: '#ca8a04' },  // yellow-ish
+  '':    { label: 'NA',    color: '#6b7280' },  // grey
+};
+
+function renderStatusText(status: MarkStatus | undefined) {
+  const key: MarkStatus = (status ?? '') as MarkStatus;
+  const s = STATUS_STYLE[key] ?? STATUS_STYLE[''];
+
+  return (
+    <span
+      style={{
+        fontSize: 11,
+        fontWeight: 600,
+        padding: '2px 8px',
+        borderRadius: 999,
+        border: `1px solid ${s.color}`,  // thin colored outline
+        color: s.color,                  // 🔴 text color carries the meaning
+        background: 'transparent',       // ✅ neutral background
+        letterSpacing: 0.3,
+      }}
+    >
+      {s.label}
+    </span>
+  );
+}
+
 type Entry = {
   mark_id: string;
   value: string;
@@ -120,25 +151,11 @@ export default function ReviewScreen({
         }}
         aria-busy={isSubmitting}
       >
-        {marks.map((mark, idx) => {
-          const value = entries[mark.mark_id || ''] || '';
-          const isFilled = value.trim() !== '';
+{marks.map((mark, idx) => {
+  const value = entries[mark.mark_id || ''] || '';
+  const isFilled = value.trim() !== '';
 
-                    const status = statusByMarkId?.[mark.mark_id || ''] || '';
-          let statusLabel = '';
-          let statusBg = '';
-          let statusColor = '#FFFFFF';
-
-          if (status === 'PASS') {
-            statusLabel = 'Pass';
-            statusBg = '#59f32aff';       // dark green
-          } else if (status === 'FAIL') {
-            statusLabel = 'Fail';
-            statusBg = '#FFB5B6';       // dark red
-          } else if (status === 'DOUBT') {
-            statusLabel = 'Doubt';
-            statusBg = '#D99E02';       // dark blue
-          }
+  const status = (statusByMarkId?.[mark.mark_id || ''] ?? '') as MarkStatus;
 
           return (
             <div
@@ -248,25 +265,8 @@ export default function ReviewScreen({
                     <span style={{ opacity: 0.85 }}>{mark.label ?? '–'}.</span> {mark.name}
                   </div>
 
-                  {statusLabel && (
-                    <span
-                      style={{
-                        padding: '2px 8px',
-                        borderRadius: 999,
-                        fontSize: 11,
-                        fontWeight: 600,
-                        textTransform: 'uppercase',
-                        background: statusBg,
-                        color: statusColor,
-                        border: '1px solid #3B3B3B',
-                        flexShrink: 0,
-                      }}
-                    >
-                      {statusLabel}
-                    </span>
-                  )}
+                  {renderStatusText(status)}
                 </div>
-
 
                 {isFilled ? (
                   <div
