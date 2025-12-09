@@ -33,7 +33,12 @@ class Settings(BaseSettings):
         default=None,
         description="Comma-separated emails that will be CC'ed on every inspection report",
     )
-    
+
+    # Google Drive settings
+    gdrive_root_folder_name: str = "Wootz_Markbook"
+    # Optional: if you create the root folder manually & share it, put its ID here
+    gdrive_root_folder_id: str = ""
+
     # Report / generation limits
     # Max number of marks that will be included in a single report (Excel/PDF).
     # This protects against OOM if a map accidentally has too many marks.
