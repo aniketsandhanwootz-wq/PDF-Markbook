@@ -920,34 +920,37 @@ function ViewerSetupScreen({
                 >
                   <div style={{ fontWeight: 500 }}>Available Inspection Maps</div>
 
-                  <button
-                    onClick={handleDownloadMasterReport}
-                    disabled={loading}
-                    style={{
-                      padding: 0,
-                      width: 34,
-                      height: 34,
-                      borderRadius: 8,
-                      border: '1px solid #3B3B3B',
-                      background: '#171717',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      cursor: loading ? 'not-allowed' : 'pointer',
-                      opacity: loading ? 0.6 : 1,
-                    }}
-                    title="Download master inspection report (all marks × all runs)"
-                  >
-                    <img
-                      src="/icons/spreadsheet.png"
-                      alt="Download master report"
-                      style={{
-                        width: 22,
-                        height: 22,
-                        display: 'block',
-                      }}
-                    />
-                  </button>
+<button
+  // ❌ temporarily disabled: no onClick
+  // onClick={handleDownloadMasterReport}
+  disabled={true}
+  style={{
+    padding: 0,
+    width: 34,
+    height: 34,
+    borderRadius: 8,
+    border: '1px solid #3B3B3B',
+    background: '#171717',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'default',     // pointer nahi dikhayenge
+    opacity: 0.35,         // thoda fade so it looks disabled
+  }}
+  title="Master report download will be enabled soon"
+>
+  <img
+    src="/icons/spreadsheet.png"
+    alt="Master report (coming soon)"
+    style={{
+      width: 22,
+      height: 22,
+      display: 'block',
+      pointerEvents: 'none', // image pe click bhi ignore
+    }}
+  />
+</button>
+
                 </div>
 
                 {/* Scrollable list: sections by type → drawing cards */}
@@ -1009,7 +1012,7 @@ function ViewerSetupScreen({
       >
         <span
           style={{
-            fontSize: 15,
+            fontSize: 14,
             fontWeight: 600,
             color: '#FFFFFF',
           }}
@@ -1020,7 +1023,7 @@ function ViewerSetupScreen({
 
       <div
         style={{
-          fontSize: 20,
+          fontSize: 16,
           color: '#FFFFFF',
           opacity: 0.85,
         }}
