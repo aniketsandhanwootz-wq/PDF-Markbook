@@ -25,6 +25,7 @@ import asyncio
 from core.email_sender import send_email_with_attachments
 from settings import get_settings
 from core.report_excel import generate_report_excel
+from core.drive_client import upload_report_excel_to_drive
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -618,13 +619,32 @@ async def _do_generate_and_send_excel_bundle(
             logger.exception(f"Failed to build Excel: {e}")
             return
 
+        # 9a) Upload Excel to Google Drive and get a direct download URL
+        inspection_doc_url = ""
+        try:
+            inspection_doc_url = (
+                upload_report_excel_to_drive(
+                    excel_bytes=excel_bytes,
+                    project_name=doc.get("project_name", "") or "",
+                    external_id=doc.get("external_id", "") or "",
+                    part_number=doc.get("part_number", "") or "",
+                    dwg_num=doc.get("dwg_num", "") or "",
+                    mark_set_label=qc_ms.get("name", "") or qc_ms.get("label", "") or "",
+                    user_email=req.submitted_by or req.email_to,
+                )
+                or ""
+            )
+        except Exception as e:
+            logger.warning(f"Failed to upload report to Google Drive: {e}")
+            inspection_doc_url = ""
+
         # 9b) Create a report history record (inspection_reports) using the SAME report_id
         try:
             if hasattr(storage, "create_report_record"):
                 storage.create_report_record(
                     mark_set_id=qc_mark_set_id,
-                    # If you later upload the Excel anywhere, store that URL here
-                    inspection_doc_url="",
+                    # 🔗 Store the Drive direct-download URL here (can be empty if upload failed)
+                    inspection_doc_url=inspection_doc_url or "",
                     created_by=req.submitted_by or req.email_to,
                     # 🔑 keep this in sync with mark_user_input.report_id
                     report_id=req.report_id,
@@ -634,6 +654,7 @@ async def _do_generate_and_send_excel_bundle(
                 )
         except Exception as e:
             logger.warning(f"Failed to create report record: {e}")
+
 
 
         # 10) Send email with ONLY Excel attached (async)

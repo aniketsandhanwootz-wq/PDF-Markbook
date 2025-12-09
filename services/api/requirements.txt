@@ -20,3 +20,5 @@ email-validator
 python-multipart
 # NEW: Excel generation
 xlsxwriter
+google-api-python-client==2.154.0
+google-auth-httplib2==0.2.0

@@ -43,3 +43,6 @@ services/api/creds/sa.json
 .env
 .env.*
 apps/**/.env*
+
+services/api/credentials/drive_oauth_client.json
+services/api/credentials/drive_token.json
