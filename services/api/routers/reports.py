@@ -131,26 +131,41 @@ async def generate_bundle_legacy(
 
 
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            # follow_redirects=True is IMPORTANT for dev where HTTP -> HTTPS redirect (307) ho raha hai
+            async with httpx.AsyncClient(
+                timeout=30.0,
+                follow_redirects=True,
+            ) as client:
                 resp = await client.post(bundle_url, json=payload)
+
+            logger.info(
+                "Called /reports/bundle/generate",
+                extra={
+                    "bundle_url": bundle_url,
+                    "status_code": resp.status_code,
+                },
+            )
+
         except httpx.TimeoutException as e:
             logger.error(f"Timeout calling bundle endpoint: {e}")
             raise HTTPException(
-                status_code=504, 
-                detail="Request to report bundle service timed out"
+                status_code=504,
+                detail="Request to report bundle service timed out",
             )
         except httpx.RequestError as e:
             logger.error(f"Failed to queue report bundle: {e}")
             raise HTTPException(
-                status_code=502, 
-                detail=f"Failed to queue report bundle: {str(e)}"
+                status_code=502,
+                detail=f"Failed to queue report bundle: {str(e)}",
             )
 
         if resp.status_code >= 400:
-            logger.error(f"Bundle endpoint returned error: {resp.status_code} - {resp.text}")
+            logger.error(
+                f"Bundle endpoint returned error: {resp.status_code} - {resp.text}"
+            )
             raise HTTPException(
-                status_code=resp.status_code, 
-                detail=f"Report bundle service error: {resp.text}"
+                status_code=resp.status_code,
+                detail=f"Report bundle service error: {resp.text}",
             )
 
         return {
