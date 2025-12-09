@@ -1,7 +1,8 @@
 # services/api/core/drive_client.py
 from __future__ import annotations
-
 import logging
+import os
+import json
 from io import BytesIO
 from typing import Optional
 from pathlib import Path
@@ -10,6 +11,7 @@ from google.oauth2.credentials import Credentials as UserCredentials
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
+
 
 from settings import get_settings
 
@@ -28,32 +30,53 @@ TOKEN_FILE = CREDS_DIR / "drive_token.json"
 
 def _get_drive_credentials() -> UserCredentials:
     """
-    Load user OAuth credentials from drive_token.json (created by drive_oauth_init.py).
-    Refresh the access token if needed and re-save the file.
-    """
-    if not TOKEN_FILE.exists():
-        msg = (
-            f"Drive token file not found at {TOKEN_FILE}. "
-            "Run drive_oauth_init.py once to authorize Google Drive."
-        )
-        logger.error(msg)
-        raise RuntimeError(msg)
+    Load user OAuth credentials.
 
-    creds = UserCredentials.from_authorized_user_file(str(TOKEN_FILE), SCOPES)
+    Priority:
+    1) If DRIVE_TOKEN_JSON env var is set (Render/prod), use that.
+    2) Else, fall back to local creds/drive_token.json (dev).
+    """
+    token_env = os.getenv("DRIVE_TOKEN_JSON")
+
+    # 1) Prefer env var (Render, or if you ever set it locally)
+    if token_env:
+        try:
+            info = json.loads(token_env)
+            creds = UserCredentials.from_authorized_user_info(info, SCOPES)
+        except Exception as e:
+            logger.exception("Failed to load DRIVE_TOKEN_JSON from env: %s", e)
+            raise
+    else:
+        # 2) Fallback: local token file (dev)
+        if not TOKEN_FILE.exists():
+            msg = (
+                f"Drive token not found in env or at {TOKEN_FILE}. "
+                "Either set DRIVE_TOKEN_JSON or run drive_oauth_init.py once."
+            )
+            logger.error(msg)
+            raise RuntimeError(msg)
+
+        creds = UserCredentials.from_authorized_user_file(str(TOKEN_FILE), SCOPES)
 
     # Refresh if expired and we have a refresh token
     if creds.expired and creds.refresh_token:
         try:
             logger.info("Refreshing Google Drive OAuth token...")
             creds.refresh(Request())
-            CREDS_DIR.mkdir(parents=True, exist_ok=True)
-            TOKEN_FILE.write_text(creds.to_json())
-            logger.info("Google Drive OAuth token refreshed and saved.")
+
+            # If we are using file-based creds (dev), persist refreshed token
+            if not token_env:
+                CREDS_DIR.mkdir(parents=True, exist_ok=True)
+                TOKEN_FILE.write_text(creds.to_json())
+                logger.info("Google Drive OAuth token refreshed and saved.")
+            else:
+                logger.info("Drive OAuth token refreshed (env-based creds, not writing to disk).")
         except Exception as e:
             logger.exception("Failed to refresh Drive OAuth token: %s", e)
             raise
 
     return creds
+
 
 
 def get_drive_service():
