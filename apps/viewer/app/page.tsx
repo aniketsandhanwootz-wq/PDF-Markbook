@@ -563,30 +563,37 @@ function ViewerSetupScreen({
     dwgKey: string,
     bootState: BootstrapDoc | null
   ): string => {
-    if (!bootState) return 'Other Drawings';
+    if (!bootState) return 'Others';
 
-    // ✅ Only use per-DWG type; don't fall back to document.drawing_type
+    // Sirf per-DWG drawing_type use karna hai
     const rawType = bootState.dwgTypeMap?.[dwgKey] ?? null;
-
     const v = (rawType || '').trim();
 
-    // ✅ If blank or '-' → treat as "Other Drawings" (or whatever label you want)
+    // Agar blank / '-' hai to "Others"
     if (!v || v === '-') {
-      return 'Other Drawings'; // <--- change this label if you prefer something else
+      return 'Others';
     }
 
     const lc = v.toLowerCase();
 
-    if (lc === 'part') return 'Part Drawings';
-    if (lc === 'fabrication' || lc === 'fab') return 'Fabrication Drawings';
-    if (lc === 'assembly') return 'Assembly Drawings';
-    if (lc === 'sub assembly' || lc === 'sub-assembly' || lc === 'subassembly')
-      return 'Sub Assembly Drawings';
-    if (lc === 'boughtout' || lc === 'bought-out' || lc === 'bought out')
-      return 'Boughtout Items';
+    if (lc === 'assembly') {
+      return 'Assembly';
+    }
+    if (lc === 'sub assembly' || lc === 'sub-assembly' || lc === 'subassembly') {
+      return 'Sub Assembly';
+    }
+    if (lc === 'part' || lc === 'part drawing' || lc === 'part drawings') {
+      return 'Parts';
+    }
+    if (lc === 'boughtout' || lc === 'bought-out' || lc === 'bought out') {
+      return 'Boughtouts';
+    }
+    if (lc === 'fabrication' || lc === 'fab') {
+      return 'Fabrication';
+    }
 
-    // fallback: "XYZ Drawings"
-    return `${v} Drawings`;
+    // Kuch aur diya hai to wohi label use karlo (jaise koi custom type)
+    return v;
   };
 
 
@@ -620,7 +627,21 @@ function ViewerSetupScreen({
     groupedByType[typeName].push(cluster);
   });
 
-  const typeKeys = Object.keys(groupedByType);
+  const TYPE_ORDER = ['Assembly', 'Sub Assembly', 'Parts', 'Boughtouts', 'Fabrication'];
+
+  const typeKeys = Object.keys(groupedByType).sort((a, b) => {
+    const ia = TYPE_ORDER.indexOf(a);
+    const ib = TYPE_ORDER.indexOf(b);
+
+    const na = ia === -1 ? TYPE_ORDER.length + 1 : ia;
+    const nb = ib === -1 ? TYPE_ORDER.length + 1 : ib;
+
+    if (na !== nb) {
+      return na - nb; // pehle ordered types, phir Others / custom
+    }
+    // Same bucket ho to alphabetically
+    return a.localeCompare(b);
+  });
 
 
   return (
@@ -959,68 +980,57 @@ function ViewerSetupScreen({
                           gap: 12,
                         }}
                       >
-                        {groupedByType[typeName].map((cluster) => {
-                          const count = cluster.marksets.length;
-                          const countText = `Inspection map${count > 1 ? 's' : ''
-                            }: ${String(count).padStart(2, '0')}`;
+{groupedByType[typeName].map((cluster) => {
+  const count = cluster.marksets.length;
+  const dwgWithCount = `${cluster.dwgLabel} : ${String(count).padStart(2, '0')}`;
 
-                          return (
-                            <button
-                              key={cluster.dwgKey}
-                              onClick={() => setActiveDwgKey(cluster.dwgKey)}
-                              style={{
-                                textAlign: 'left',
-                                border: '1px solid #3B3B3B',
-                                borderRadius: 12,
-                                padding: '14px 18px',
-                                background: '#1F1F1F',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'space-between',
-                                gap: 12,
-                                cursor: 'pointer',
-                              }}
-                            >
-                              <div
-                                style={{
-                                  display: 'flex',
-                                  alignItems: 'baseline',
-                                  gap: 8,
-                                }}
-                              >
-                                <span
-                                  style={{
-                                    fontSize: 15,
-                                    fontWeight: 600,
-                                    color: '#FFFFFF',
-                                  }}
-                                >
-                                  {cluster.dwgLabel}
-                                </span>
+  return (
+    <button
+      key={cluster.dwgKey}
+      onClick={() => setActiveDwgKey(cluster.dwgKey)}
+      style={{
+        textAlign: 'left',
+        border: '1px solid #3B3B3B',
+        borderRadius: 12,
+        padding: '14px 18px',
+        background: '#1F1F1F',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 12,
+        cursor: 'pointer',
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'baseline',
+        }}
+      >
+        <span
+          style={{
+            fontSize: 15,
+            fontWeight: 600,
+            color: '#FFFFFF',
+          }}
+        >
+          {dwgWithCount}
+        </span>
+      </div>
 
-                                <span
-                                  style={{
-                                    fontSize: 12,
-                                    color: '#C9C9C9',
-                                  }}
-                                >
-                                  • {countText}
-                                </span>
-                              </div>
+      <div
+        style={{
+          fontSize: 20,
+          color: '#FFFFFF',
+          opacity: 0.85,
+        }}
+      >
+        ›
+      </div>
+    </button>
+  );
+})}
 
-                              {/* Right arrow icon (same as before) */}
-                              <div
-                                style={{
-                                  fontSize: 20,
-                                  color: '#FFFFFF',
-                                  opacity: 0.85,
-                                }}
-                              >
-                                ›
-                              </div>
-                            </button>
-                          );
-                        })}
                       </div>
                     </div>
                   ))}

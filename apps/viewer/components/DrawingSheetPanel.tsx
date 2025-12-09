@@ -93,39 +93,19 @@ export default function DrawingSheetPanel({
               gap: 8,
             }}
           >
-            <div>
-              <div
-                style={{
-                  fontSize: 11,
-                  textTransform: 'uppercase',
-                  letterSpacing: 0.6,
-                  color: '#A3A3A3',
-                }}
-              >
-                Drawing
-              </div>
-              <div
-                style={{
-                  fontSize: 16,
-                  fontWeight: 600,
-                  color: '#FFFFFF',
-                  marginTop: 2,
-                  wordBreak: 'break-word',
-                }}
-              >
-                {dwgLabel}
-              </div>
-              <div
-                style={{
-                  fontSize: 12,
-                  color: '#9E9E9E',
-                  marginTop: 2,
-                }}
-              >
-                {marksets.length} inspection map
-                {marksets.length === 1 ? '' : 's'}
-              </div>
-            </div>
+<div>
+  <div
+    style={{
+      fontSize: 16,
+      fontWeight: 600,
+      color: '#FFFFFF',
+      marginTop: 2,
+      wordBreak: 'break-word',
+    }}
+  >
+    {dwgLabel}
+  </div>
+</div>
 
             <button
               onClick={onClose}
