@@ -1591,7 +1591,7 @@ function ViewerContent() {
   const markSetId = selectedMarkSetId || markSetIdParam;
 
   // 🔹 Local draft persistence (report title + entries + statuses + cursor)
-  const { draft, hasDraft, clearDraft } = useQCDraft({
+  const { draft, hasDraft, clearDraft, loaded } = useQCDraft({
     enabled: !!markSetId && !showSetup,
     projectName: qProject || '',
     extId: qExtId || '',
@@ -1612,9 +1612,13 @@ function ViewerContent() {
   const [showDraftDialog, setShowDraftDialog] = useState(false);
   const [hasHandledInitialDraft, setHasHandledInitialDraft] = useState(false);
 
-  // Decide once per markset: either show resume dialog, or enable autosave directly
+   // Decide once per markset: either show resume dialog, or enable autosave directly
   useEffect(() => {
     if (!markSetId || showSetup) return;
+
+    // ✅ NEW: wait until useQCDraft has actually checked localStorage
+    if (!loaded) return;
+
     if (hasHandledInitialDraft) return;
 
     if (draft && hasDraft) {
@@ -1625,7 +1629,8 @@ function ViewerContent() {
       setAutosaveEnabled(true);
       setHasHandledInitialDraft(true);
     }
-  }, [draft, hasDraft, hasHandledInitialDraft, markSetId, showSetup]);
+  }, [draft, hasDraft, hasHandledInitialDraft, markSetId, showSetup, loaded]);
+
 
   // Reset viewer bootstrap state when markset changes
   useEffect(() => {
@@ -1637,6 +1642,10 @@ function ViewerContent() {
     setCurrentMarkIndex(0);
     setShowReview(false);
     setHasVisitedReview(false);
+
+    // ✅ NEW: draft handling is per-markset, so reset these too
+    setAutosaveEnabled(false);
+    setHasHandledInitialDraft(false);
   }, [markSetId]);
 
 

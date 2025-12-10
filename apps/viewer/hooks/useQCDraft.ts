@@ -58,12 +58,24 @@ export function useQCDraft({
   }, [enabled, projectName, extId, partNumber, markSetId, userEmail]);
 
   const [draft, setDraft] = useState<QCDraft | null>(null);
+  // ✅ Has this storage key been checked at least once?
+  const [loaded, setLoaded] = useState(false);
 
+  
   // 🔹 Initial load from localStorage
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    // whenever storageKey changes, we are going to re-check storage
+    setLoaded(false);
+
+    if (typeof window === 'undefined') {
+      setDraft(null);
+      setLoaded(true);
+      return;
+    }
+
     if (!storageKey) {
       setDraft(null);
+      setLoaded(true);
       return;
     }
 
@@ -71,12 +83,14 @@ export function useQCDraft({
       const raw = window.localStorage.getItem(storageKey);
       if (!raw) {
         setDraft(null);
+        setLoaded(true);
         return;
       }
 
       const parsed = JSON.parse(raw);
       if (!parsed || typeof parsed !== 'object') {
         setDraft(null);
+        setLoaded(true);
         return;
       }
 
@@ -91,21 +105,26 @@ export function useQCDraft({
         currentMarkIndex:
           typeof parsed.currentMarkIndex === 'number' ? parsed.currentMarkIndex : 0,
         titleConfirmed: !!parsed.titleConfirmed,
-        updatedAt: typeof parsed.updatedAt === 'number' ? parsed.updatedAt : Date.now(),
+        updatedAt:
+          typeof parsed.updatedAt === 'number' ? parsed.updatedAt : Date.now(),
       };
 
       setDraft(draftObj);
+      setLoaded(true);
     } catch (e) {
       console.warn('[useQCDraft] failed to parse draft from localStorage', e);
       setDraft(null);
+      setLoaded(true);
     }
   }, [storageKey]);
 
-  // 🔹 Throttled autosave to localStorage (no extra RAM copy)
+
+   // 🔹 Throttled autosave to localStorage (no extra RAM copy)
   useEffect(() => {
     if (typeof window === 'undefined') return;
     if (!storageKey) return;
     if (!enabled || !autosave) return;
+    if (!loaded) return; // ✅ NEW: don't write until we've finished initial read
 
     const timeout = window.setTimeout(() => {
       try {
@@ -131,12 +150,14 @@ export function useQCDraft({
     storageKey,
     enabled,
     autosave,
+    loaded, // ✅ NEW dependency
     liveState.reportTitle,
     liveState.entries,
     liveState.statuses,
     liveState.currentMarkIndex,
     liveState.titleConfirmed,
   ]);
+
 
   const clearDraft = useCallback(() => {
     if (typeof window === 'undefined') return;
@@ -154,5 +175,7 @@ export function useQCDraft({
     hasDraft: !!draft,
     clearDraft,
     storageKey,
+    loaded, // ✅ NEW
   };
 }
+
