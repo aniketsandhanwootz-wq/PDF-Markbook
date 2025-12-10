@@ -74,10 +74,14 @@ export function useQCDraft({
     }
 
     if (!storageKey) {
+      // Viewer not enabled / no key yet:
+      // we DON'T want the caller to think we've "loaded" anything
+      // for this key, so keep loaded = false.
       setDraft(null);
-      setLoaded(true);
+      setLoaded(false);    // 🔁 was: true  ❌
       return;
     }
+
 
     try {
       const raw = window.localStorage.getItem(storageKey);
