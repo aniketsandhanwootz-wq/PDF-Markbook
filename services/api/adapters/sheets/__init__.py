@@ -71,6 +71,9 @@ HEADERS = {
         "required_value_conf",
         "required_value_final",
     ],
+    "instruments": [
+        "instrument_name",
+    ],
 
     "groups": [
         "group_id",
@@ -118,6 +121,7 @@ SHEET_TAB_ORDER = [
     "groups",
     "mark_user_input",
     "inspection_reports",
+    "instruments",
 ]
 
 
@@ -222,6 +226,8 @@ class SheetsAdapter(StorageAdapter):
         self._doc_cache: dict[str, dict[str, Any]] = {}
         self._pages_by_doc_cache: dict[str, list[dict[str, Any]]] = {}
         self._user_input_cache: dict[str, list[dict[str, Any]]] = {}
+        self._instrument_names_cache: set[str] = set()  # 👈 master instrument names
+
 
     # ========== Worksheet helpers ==========
 
@@ -304,6 +310,60 @@ class SheetsAdapter(StorageAdapter):
             self.ws[tab].update("A1", [header])
         row = [data.get(col, "") for col in header]
         self._append_rows(tab, [row])
+
+    # ========== Instrument master helpers ==========
+
+    def _load_instrument_names(self) -> set[str]:
+        """
+        Load master instrument names from the `instruments` sheet once
+        and cache them in memory.
+        """
+        if self._instrument_names_cache:
+            return self._instrument_names_cache
+
+        try:
+            rows = self._get_all_dicts("instruments")
+        except Exception:
+            rows = []
+
+        names: set[str] = set()
+        for r in rows:
+            val = (r.get("instrument_name") or "").strip()
+            if val:
+                names.add(val)
+
+        self._instrument_names_cache = names
+        return names
+
+    def _ensure_instrument_names(self, candidates: list[str]) -> None:
+        """
+        Ensure that all given instrument names exist in the `instruments` tab.
+
+        - Ignores blanks.
+        - Case-insensitive (Foo and foo are treated as same).
+        - Only appends truly new names.
+        """
+        if not candidates:
+            return
+
+        existing = self._load_instrument_names()
+        lower_existing = {n.lower() for n in existing}
+
+        new_names: list[str] = []
+        for c in candidates:
+            name = (c or "").strip()
+            if not name:
+                continue
+            if name.lower() in lower_existing:
+                continue
+            lower_existing.add(name.lower())
+            existing.add(name)
+            new_names.append(name)
+
+        if new_names:
+            rows = [[name] for name in new_names]  # single column: instrument_name
+            self._append_rows("instruments", rows)
+            self._instrument_names_cache = existing
 
     # ========== StorageAdapter API ==========
 
@@ -753,6 +813,14 @@ class SheetsAdapter(StorageAdapter):
                     m.get("required_value_final", ""),
                 ]
             )
+        # Seed/update instrument master list based on incoming marks
+        try:
+            self._ensure_instrument_names(
+                [(m.get("instrument") or "") for m in marks]
+            )
+        except Exception:
+            # Best-effort only; do not fail mark save if this breaks
+            pass
 
 
         # --- 3) Rewrite marks sheet, keeping other mark sets intact ---
@@ -774,16 +842,30 @@ class SheetsAdapter(StorageAdapter):
 
     def list_distinct_instruments(self) -> list[str]:
         """
-        Return a sorted list of distinct non-empty instrument names
-        from the marks sheet.
+        Return a sorted list of distinct non-empty instrument names.
+
+        Priority:
+        1) If the dedicated `instruments` tab has any rows, use that as the
+           master list (this is what you can open/download in Sheets).
+        2) Otherwise, fall back to scanning the `marks` sheet once and seed
+           the `instruments` tab from there.
         """
+        names = self._load_instrument_names()
+        if names:
+            return sorted(names, key=lambda s: s.lower())
+
+        # Fallback: derive from marks and seed `instruments` tab
         rows = self._get_all_dicts("marks")
-        instruments: set[str] = set()
+        candidates: list[str] = []
         for m in rows:
             inst = (m.get("instrument") or "").strip()
             if inst:
-                instruments.add(inst)
-        return sorted(instruments, key=lambda s: s.lower())
+                candidates.append(inst)
+
+        self._ensure_instrument_names(candidates)
+        names = self._load_instrument_names()
+        return sorted(names, key=lambda s: s.lower())
+
 
     def patch_mark(self, mark_id: str, updates: dict[str, Any]) -> dict[str, Any]:
         """
@@ -800,9 +882,14 @@ class SheetsAdapter(StorageAdapter):
 
         allowed: dict[str, Any] = {}
 
-        # instrument
         if "instrument" in updates and updates["instrument"] is not None:
             allowed["instrument"] = str(updates["instrument"])
+            # ensure this instrument exists in master list
+            try:
+                self._ensure_instrument_names([allowed["instrument"]])
+            except Exception:
+                pass
+
 
         # is_required
         if "is_required" in updates and updates["is_required"] is not None:

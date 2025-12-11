@@ -10,6 +10,43 @@ import React, {
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { runRequiredValueOCR } from '../lib/pagesApi'; // 👈 NEW
 
+// Simple in-memory cache for instrument suggestions so we only hit
+// /instruments/suggestions once per browser session.
+let globalInstrumentCache: string[] | null = null;
+
+// --- fuzzy / subsequence match helpers for instrument search ---
+
+function isSubsequence(query: string, target: string): boolean {
+    let i = 0;
+    let j = 0;
+    const q = query.toLowerCase();
+    const t = target.toLowerCase();
+
+    while (i < q.length && j < t.length) {
+        if (q[i] === t[j]) {
+            i++;
+        }
+        j++;
+    }
+    return i === q.length;
+}
+
+function scoreInstrument(query: string, candidate: string): number {
+    const q = query.toLowerCase();
+    const c = candidate.toLowerCase();
+    if (!q) return 0;
+
+    const idx = c.indexOf(q);
+    if (idx !== -1) {
+        // direct substring match, earlier index is better
+        return idx;
+    }
+    if (isSubsequence(q, c)) {
+        // subsequence match but not contiguous; push slightly later
+        return 100 + c.length;
+    }
+    return Number.POSITIVE_INFINITY; // no match
+}
 
 type Mark = {
     mark_id: string;
@@ -143,6 +180,169 @@ function applySharpenFilter(
   ctx.putImageData(imageData, 0, 0);
 }
 
+type InstrumentComboProps = {
+    value: string;
+    allInstruments: string[];
+    onChange: (next: string) => void;
+    onAddNewLocal: (next: string) => void;
+};
+
+function InstrumentCombo({
+    value,
+    allInstruments,
+    onChange,
+    onAddNewLocal,
+}: InstrumentComboProps) {
+    const [inputValue, setInputValue] = useState<string>(value || '');
+    const [isOpen, setIsOpen] = useState(false);
+    const containerRef = useRef<HTMLDivElement | null>(null);
+
+    // Keep local input in sync if mark.instrument changes from outside
+    useEffect(() => {
+        setInputValue(value || '');
+    }, [value]);
+
+    const matches = useMemo(() => {
+        const q = inputValue.trim();
+        if (!q) {
+            // Show top instruments when empty
+            return allInstruments
+                .slice(0, 20)
+                .map((name) => ({ name, score: 0 }));
+        }
+        return allInstruments
+            .map((name) => ({ name, score: scoreInstrument(q, name) }))
+            .filter((x) => x.score !== Number.POSITIVE_INFINITY)
+            .sort((a, b) => a.score - b.score)
+            .slice(0, 20);
+    }, [inputValue, allInstruments]);
+
+    const hasExact = useMemo(() => {
+        const q = inputValue.trim().toLowerCase();
+        if (!q) return false;
+        return allInstruments.some(
+            (name) => name.toLowerCase() === q,
+        );
+    }, [inputValue, allInstruments]);
+
+    // Close on outside click
+    useEffect(() => {
+        if (!isOpen) return;
+
+        function handleClickOutside(e: MouseEvent) {
+            if (!containerRef.current) return;
+            if (!containerRef.current.contains(e.target as Node)) {
+                setIsOpen(false);
+            }
+        }
+
+        window.addEventListener('mousedown', handleClickOutside);
+        return () => window.removeEventListener('mousedown', handleClickOutside);
+    }, [isOpen]);
+
+    const handleSelect = (name: string) => {
+        setInputValue(name);
+        onChange(name);
+        setIsOpen(false);
+    };
+
+    const handleAddNew = () => {
+        const trimmed = inputValue.trim();
+        if (!trimmed) return;
+        onAddNewLocal(trimmed);
+        handleSelect(trimmed);
+    };
+
+    return (
+        <div
+            ref={containerRef}
+            style={{ position: 'relative', flex: 1, minWidth: 160 }}
+        >
+            <input
+                type="text"
+                value={inputValue}
+                onFocus={() => setIsOpen(true)}
+                onChange={(e) => {
+                    const v = e.target.value;
+                    setInputValue(v);
+                    setIsOpen(true);
+                    onChange(v);
+                }}
+                placeholder="Instrument..."
+                style={{
+                    border: '1px solid #ddd',
+                    borderRadius: 4,
+                    fontSize: 12,
+                    padding: '4px 6px',
+                    width: '100%',
+                    boxSizing: 'border-box',
+                }}
+            />
+
+            {isOpen &&
+                (matches.length > 0 ||
+                    (!hasExact && inputValue.trim())) && (
+                    <div
+                        style={{
+                            position: 'absolute',
+                            zIndex: 10,
+                            top: '100%',
+                            left: 0,
+                            right: 0,
+                            marginTop: 2,
+                            maxHeight: 180,
+                            overflowY: 'auto',
+                            background: '#fff',
+                            border: '1px solid #ddd',
+                            borderRadius: 4,
+                            boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
+                            fontSize: 12,
+                        }}
+                    >
+                        {matches.map((m) => (
+                            <div
+                                key={m.name}
+                                onMouseDown={(e) => {
+                                    e.preventDefault(); // don't blur input
+                                    handleSelect(m.name);
+                                }}
+                                style={{
+                                    padding: '4px 8px',
+                                    cursor: 'pointer',
+                                    whiteSpace: 'nowrap',
+                                    textOverflow: 'ellipsis',
+                                    overflow: 'hidden',
+                                }}
+                            >
+                                {m.name}
+                            </div>
+                        ))}
+
+                        {!hasExact && inputValue.trim() && (
+                            <div
+                                onMouseDown={(e) => {
+                                    e.preventDefault();
+                                    handleAddNew();
+                                }}
+                                style={{
+                                    padding: '4px 8px',
+                                    cursor: 'pointer',
+                                    borderTop: matches.length
+                                        ? '1px solid #eee'
+                                        : 'none',
+                                    fontStyle: 'italic',
+                                    background: '#f5f5f5',
+                                }}
+                            >
+                                Add “{inputValue.trim()}” Instrument
+                            </div>
+                        )}
+                    </div>
+                )}
+        </div>
+    );
+}
+
 export default function GroupEditor({
     isOpen,
     pdf,
@@ -199,12 +399,9 @@ export default function GroupEditor({
     );
     const [currentRect, setCurrentRect] = useState<DrawRect>(null);
 
-    // instrument suggestions (same API as MarkList)
-    const [instrumentQuery, setInstrumentQuery] = useState<string>('');
-    const [instrumentSuggestions, setInstrumentSuggestions] = useState<string[]>(
-        []
-    );
-    const suggestionsAbortRef = useRef<AbortController | null>(null);
+    // All known instruments for autocomplete (fetched once then cached)
+    const [allInstruments, setAllInstruments] = useState<string[]>([]);
+
 
 const runOcrForMark = useCallback(
     async (
@@ -286,37 +483,50 @@ const runOcrForMark = useCallback(
         });
     };
 
-    const fetchSuggestions = useCallback(async (q: string) => {
+    const loadInstrumentSuggestions = useCallback(async () => {
+        // If we already have a cached list, reuse it and avoid a network call
+        if (globalInstrumentCache && globalInstrumentCache.length > 0) {
+            setAllInstruments(globalInstrumentCache);
+            return;
+        }
+
         try {
-            if (suggestionsAbortRef.current) {
-                suggestionsAbortRef.current.abort();
-            }
-            const ctrl = new AbortController();
-            suggestionsAbortRef.current = ctrl;
-
-            const url = q.trim()
-                ? `${apiBase}/instruments/suggestions?q=${encodeURIComponent(
-                    q.trim()
-                )}`
-                : `${apiBase}/instruments/suggestions`;
-
-            const res = await fetch(url, { signal: ctrl.signal });
+            const res = await fetch(`${apiBase}/instruments/suggestions`);
             if (!res.ok) return;
             const data = await res.json();
             if (Array.isArray(data)) {
-                setInstrumentSuggestions(data as string[]);
+                globalInstrumentCache = data as string[];
+                setAllInstruments(globalInstrumentCache);
             }
-        } catch (e: any) {
-            if (e?.name === 'AbortError') return;
+        } catch (e) {
             console.warn('Failed to fetch instrument suggestions', e);
         }
     }, []);
 
-    // Prefetch suggestions when dialog opens
+    // Prefetch suggestions when dialog opens (only first time hits backend)
     useEffect(() => {
         if (!isOpen) return;
-        fetchSuggestions('');
-    }, [isOpen, fetchSuggestions]);
+        loadInstrumentSuggestions();
+    }, [isOpen, loadInstrumentSuggestions]);
+
+    // When user adds a brand-new instrument, keep it in local + global cache
+    const rememberInstrumentLocally = useCallback((name: string) => {
+        const trimmed = name.trim();
+        if (!trimmed) return;
+
+        setAllInstruments((prev) => {
+            if (
+                prev.some(
+                    (i) => i.toLowerCase() === trimmed.toLowerCase(),
+                )
+            ) {
+                return prev;
+            }
+            const next = [...prev, trimmed];
+            globalInstrumentCache = next;
+            return next;
+        });
+    }, []);
 
     /**
     * High-res preview of ONLY the selected area.
@@ -966,14 +1176,15 @@ setOverlaySize({ w: cssWidth, h: cssHeight });
                                 border: '1px solid #eee',
                                 borderRadius: 4,
                                 padding: 6,
-                                minHeight: 140,
-                                maxHeight: 300,
-                                overflow: 'auto',
+                                flex: 1,          // 👈 take all remaining height
+                                minHeight: 0,     // 👈 allow flexbox to shrink properly
+                                overflow: 'auto', // 👈 still scroll when content is taller
                                 background: '#fafafa',
                                 width: '100%',
                                 boxSizing: 'border-box',
                             }}
                         >
+
 
                             {marksInArea.length === 0 && (
                                 <div
@@ -1101,28 +1312,17 @@ setOverlaySize({ w: cssWidth, h: cssHeight });
             }
         />
 
-        <input
-            type="text"
-            list="ge-instrument-suggestions"
-            defaultValue={m.instrument || ''}
-            onChange={(e) => {
-                const v = e.target.value;
-                setInstrumentQuery(v);
-                fetchSuggestions(v);
+         <InstrumentCombo
+            value={m.instrument || ''}
+            allInstruments={allInstruments}
+            onChange={(val) => {
                 onUpdateMark(m.mark_id, {
-                    instrument: v || undefined,
+                    instrument: val || undefined,
                 });
             }}
-            placeholder="Instrument..."
-            style={{
-                border: '1px solid #ddd',
-                borderRadius: 4,
-                fontSize: 12,
-                padding: '4px 6px',
-                minWidth: 160,
-                flex: 1,
-            }}
+            onAddNewLocal={rememberInstrumentLocally}
         />
+
 
                                             {/* Cross immediately after instrument box, only for NEW balloons */}
                                             {onDeleteMark && isNew && (
@@ -1181,13 +1381,6 @@ setOverlaySize({ w: cssWidth, h: cssHeight });
                                 );
                             })}
 
-
-
-                            <datalist id="ge-instrument-suggestions">
-                                {instrumentSuggestions.map((opt) => (
-                                    <option key={opt} value={opt} />
-                                ))}
-                            </datalist>
                         </div>
                     </div>
                 </div>
