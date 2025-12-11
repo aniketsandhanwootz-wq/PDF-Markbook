@@ -8,17 +8,27 @@ import React, {
     useCallback,
 } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
+import { runRequiredValueOCR } from '../lib/pagesApi'; // 👈 NEW
+
 
 type Mark = {
     mark_id: string;
     label?: string;
     instrument?: string;
     is_required?: boolean;
+
+    // Normalized bbox (existing)
     nx: number;
     ny: number;
     nw: number;
     nh: number;
+
+    // 🔢 OCR fields (NEW)
+    required_value_ocr?: string | null;
+    required_value_conf?: number | null;
+    required_value_final?: string | null;
 };
+
 
 type GroupEditorProps = {
     isOpen: boolean;
@@ -195,6 +205,42 @@ export default function GroupEditor({
         []
     );
     const suggestionsAbortRef = useRef<AbortController | null>(null);
+
+const runOcrForMark = useCallback(
+    async (
+        markId: string,
+        normRect: { nx: number; ny: number; nw: number; nh: number }
+    ) => {
+        if (!ownerMarkSetId) {
+            return;
+        }
+
+        try {
+            const resp = await runRequiredValueOCR(apiBase, {
+                mark_set_id: ownerMarkSetId,
+                page_index: pageIndex,
+                nx: normRect.nx,
+                ny: normRect.ny,
+                nw: normRect.nw,
+                nh: normRect.nh,
+            });
+
+            const requiredValue = resp.required_value_ocr ?? null;
+            const conf = resp.required_value_conf ?? null;
+
+            onUpdateMark(markId, {
+                required_value_ocr: requiredValue ?? undefined,
+                required_value_conf: conf ?? undefined,
+                // Initial "final" value = OCR suggestion
+                required_value_final: requiredValue ?? undefined,
+            });
+        } catch (e) {
+            console.warn('OCR for required value failed', e);
+            // If OCR fails, we simply leave it blank and user can type manually
+        }
+    },
+    [ownerMarkSetId, pageIndex, onUpdateMark]
+);
 
     useEffect(() => {
         if (!isOpen) return;
@@ -512,6 +558,9 @@ setOverlaySize({ w: cssWidth, h: cssHeight });
                 onUpdateMark(newId, { is_required: false });
             }
 
+            // 🔍 Immediately trigger OCR for required value
+            runOcrForMark(newId, markRect);
+
             // user interacted with selection
             userSelectionTouchedRef.current = true;
 
@@ -525,6 +574,7 @@ setOverlaySize({ w: cssWidth, h: cssHeight });
             // and focus it visually (yellow border + list highlight)
             setHighlightedMarkId(newId);
         }
+
 
 
         setIsDrawing(false);
@@ -942,7 +992,6 @@ setOverlaySize({ w: cssWidth, h: cssHeight });
                                 </div>
                             )}
 
-
                             {marksInArea.map((m) => {
                                 const required = m.is_required !== false;
                                 const isSelected = selected.has(m.mark_id);
@@ -953,6 +1002,16 @@ setOverlaySize({ w: cssWidth, h: cssHeight });
                                     !originalMarkIds || originalMarkIds.length === 0
                                         ? true
                                         : !originalMarkIds.includes(m.mark_id);
+
+                                // 🔢 OCR helpers (NEW)
+                                const conf = m.required_value_conf ?? null;
+                                const lowConfidence =
+                                    conf !== null && conf < 70; // threshold
+                                const initialRequiredValue =
+                                    m.required_value_final ??
+                                    m.required_value_ocr ??
+                                    '';
+
 
                                 return (
                                     <div
@@ -989,53 +1048,81 @@ setOverlaySize({ w: cssWidth, h: cssHeight });
                                             }}
                                         />
 
-                                        {/* Label + instrument + actions all on one line */}
-                                        <div
-                                            style={{
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                gap: 6,
-                                                flex: 1,
-                                            }}
-                                        >
-                                            <span
-                                                style={{
-                                                    display: 'inline-flex',
-                                                    alignItems: 'center',
-                                                    justifyContent: 'center',
-                                                    minWidth: 20,
-                                                    height: 20,
-                                                    borderRadius: '999px',
-                                                    border: '1px solid #000',
-                                                    fontSize: 12,
-                                                    fontWeight: 700,
-                                                }}
-                                            >
-                                                {m.label || '—'}
-                                            </span>
+        {/* Label + required value + instrument + actions all on one line */}
+    <div
+        style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            flex: 1,
+        }}
+    >
+        <span
+            style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                minWidth: 20,
+                height: 20,
+                borderRadius: '999px',
+                border: '1px solid #000',
+                fontSize: 12,
+                fontWeight: 700,
+            }}
+        >
+            {m.label || '—'}
+        </span>
 
-                                            <input
-                                                type="text"
-                                                list="ge-instrument-suggestions"
-                                                defaultValue={m.instrument || ''}
-                                                onChange={(e) => {
-                                                    const v = e.target.value;
-                                                    setInstrumentQuery(v);
-                                                    fetchSuggestions(v);
-                                                    onUpdateMark(m.mark_id, {
-                                                        instrument: v || undefined,
-                                                    });
-                                                }}
-                                                placeholder="Instrument..."
-                                                style={{
-                                                    border: '1px solid #ddd',
-                                                    borderRadius: 4,
-                                                    fontSize: 12,
-                                                    padding: '4px 6px',
-                                                    minWidth: 160,
-                                                    flex: 1,
-                                                }}
-                                            />
+        {/* 🔢 Required Value input (left of instrument) */}
+        <input
+            type="text"
+            value={initialRequiredValue}
+            onChange={(e) => {
+                const v = e.target.value;
+                onUpdateMark(m.mark_id, {
+                    required_value_final: v || undefined,
+                });
+            }}
+            placeholder="Req. value"
+            style={{
+                border: '1px solid',
+                borderColor: lowConfidence
+                    ? '#ff9800' // orange for low confidence
+                    : '#ddd',
+                borderRadius: 4,
+                fontSize: 12,
+                padding: '4px 6px',
+                minWidth: 90,
+            }}
+            title={
+                conf !== null
+                    ? `OCR confidence: ${conf.toFixed(1)}%`
+                    : 'Required value'
+            }
+        />
+
+        <input
+            type="text"
+            list="ge-instrument-suggestions"
+            defaultValue={m.instrument || ''}
+            onChange={(e) => {
+                const v = e.target.value;
+                setInstrumentQuery(v);
+                fetchSuggestions(v);
+                onUpdateMark(m.mark_id, {
+                    instrument: v || undefined,
+                });
+            }}
+            placeholder="Instrument..."
+            style={{
+                border: '1px solid #ddd',
+                borderRadius: 4,
+                fontSize: 12,
+                padding: '4px 6px',
+                minWidth: 160,
+                flex: 1,
+            }}
+        />
 
                                             {/* Cross immediately after instrument box, only for NEW balloons */}
                                             {onDeleteMark && isNew && (

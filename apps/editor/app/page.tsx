@@ -33,7 +33,13 @@ type Mark = {
   label?: string;          // A, B, C...
   instrument?: string;     // Vernier, Micrometer, etc.
   is_required?: boolean;   // true = mandatory, false = optional
+
+  // 🔢 OCR fields (NEW – must be here too!)
+  required_value_ocr?: string | null;
+  required_value_conf?: number | null;
+  required_value_final?: string | null;
 };
+
 
 type Group = {
   group_id: string;

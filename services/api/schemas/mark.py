@@ -44,6 +44,24 @@ class MarkBase(BaseModel):
     nw: float = Field(..., gt=0.0, le=1.0, description="Normalized width")
     nh: float = Field(..., gt=0.0, le=1.0, description="Normalized height")
 
+    # 🔴 NEW: required value fields (can be omitted by older clients)
+    required_value_ocr: Optional[str] = Field(
+        default=None,
+        max_length=100,
+        description="Raw OCR-detected required value (e.g. '12.5')",
+    )
+    required_value_conf: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=100.0,
+        description="OCR confidence score 0–100 for required_value_ocr",
+    )
+    required_value_final: Optional[str] = Field(
+        default=None,
+        max_length=100,
+        description="User-confirmed required value (used in reports/QC)",
+    )
+
     @model_validator(mode="after")
     def validate_bounds(self) -> "MarkBase":
         """Ensure mark is within page bounds and has non-zero area."""
@@ -86,9 +104,12 @@ class MarkOut(MarkBase):
 class MarkPatch(BaseModel):
     """
     Schema for updating mark fields that are allowed to change.
-    We only allow changing:
+    We allow changing:
       - instrument
       - is_required
+      - required_value_ocr
+      - required_value_conf
+      - required_value_final
     """
     instrument: Optional[str] = Field(
         None,
@@ -99,4 +120,57 @@ class MarkPatch(BaseModel):
     is_required: Optional[bool] = Field(
         None,
         description="Updated required flag",
+    )
+    required_value_ocr: Optional[str] = Field(
+        default=None,
+        max_length=100,
+        description="Updated raw OCR-detected required value",
+    )
+    required_value_conf: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=100.0,
+        description="Updated OCR confidence score 0–100",
+    )
+    required_value_final: Optional[str] = Field(
+        default=None,
+        max_length=100,
+        description="Updated user-confirmed required value",
+    )
+
+
+
+# 🔴 NEW: OCR request/response DTOs for /ocr/required-value
+
+class RequiredValueOCRRequest(BaseModel):
+    """
+    Payload sent by the Editor when a mark is created.
+
+    We do NOT persist anything here; this is only for OCR.
+    """
+    mark_set_id: str = Field(
+        ...,
+        min_length=1,
+        description="Mark set ID (used to resolve document/pdf_url)",
+    )
+    page_index: int = Field(..., ge=0, description="0-based page index")
+    nx: float = Field(..., gt=0.0, le=1.0)
+    ny: float = Field(..., gt=0.0, le=1.0)
+    nw: float = Field(..., gt=0.0, le=1.0)
+    nh: float = Field(..., gt=0.0, le=1.0)
+
+
+class RequiredValueOCRResponse(BaseModel):
+    """
+    OCR result for a single mark region.
+    """
+    required_value_ocr: Optional[str] = Field(
+        default=None,
+        description="Raw OCR-detected required value, or null if none found",
+    )
+    required_value_conf: float = Field(
+        ...,
+        ge=0.0,
+        le=100.0,
+        description="Confidence score 0–100 for OCR value (0.0 on failure)",
     )

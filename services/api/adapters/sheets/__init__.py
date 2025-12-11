@@ -66,7 +66,12 @@ HEADERS = {
         "created_at",
         "updated_by",
         "updated_at",
+        # 🔴 NEW: OCR + required value fields
+        "required_value_ocr",
+        "required_value_conf",
+        "required_value_final",
     ],
+
     "groups": [
         "group_id",
         "mark_set_id",
@@ -573,8 +578,13 @@ class SheetsAdapter(StorageAdapter):
                         now,
                         (created_by or ""),
                         now,
+                        # 🔴 NEW: required value fields (usually empty at initial creation)
+                        m.get("required_value_ocr", ""),
+                        m.get("required_value_conf", ""),
+                        m.get("required_value_final", ""),
                     ]
                 )
+
             self._append_rows("marks", mrows)
 
         return mark_set_id
@@ -619,8 +629,15 @@ class SheetsAdapter(StorageAdapter):
                         "ny": ny,
                         "nw": nw,
                         "nh": nh,
+                        # 🔴 NEW: required value fields
+                        "required_value_ocr": m.get("required_value_ocr", ""),
+                        "required_value_conf": _safe_float(
+                            m.get("required_value_conf"), default=None
+                        ),
+                        "required_value_final": m.get("required_value_final", ""),
                     }
                 )
+
             except Exception:
                 # Any unexpected row issues? just skip
                 continue
@@ -730,8 +747,13 @@ class SheetsAdapter(StorageAdapter):
                     now,
                     (target.get("updated_by") or ""),
                     now,
+                    # 🔴 NEW: carry over OCR + required fields if present
+                    m.get("required_value_ocr", ""),
+                    m.get("required_value_conf", ""),
+                    m.get("required_value_final", ""),
                 ]
             )
+
 
         # --- 3) Rewrite marks sheet, keeping other mark sets intact ---
         all_marks = self._get_all_dicts("marks")
@@ -768,16 +790,37 @@ class SheetsAdapter(StorageAdapter):
         Update mutable mark fields:
         - instrument
         - is_required
+        - required_value_ocr
+        - required_value_conf
+        - required_value_final
         """
         r = self._find_row_by_value("marks", "mark_id", mark_id)
         if not r:
             raise ValueError("MARK_NOT_FOUND")
 
         allowed: dict[str, Any] = {}
+
+        # instrument
         if "instrument" in updates and updates["instrument"] is not None:
             allowed["instrument"] = str(updates["instrument"])
+
+        # is_required
         if "is_required" in updates and updates["is_required"] is not None:
             allowed["is_required"] = "TRUE" if bool(updates["is_required"]) else "FALSE"
+
+        # required_value_ocr
+        if "required_value_ocr" in updates:
+            allowed["required_value_ocr"] = updates["required_value_ocr"] or ""
+
+        # required_value_conf (store as string; list_marks will convert to float)
+        if "required_value_conf" in updates:
+            val = updates["required_value_conf"]
+            allowed["required_value_conf"] = "" if val is None else str(val)
+
+        # required_value_final
+        if "required_value_final" in updates:
+            allowed["required_value_final"] = updates["required_value_final"] or ""
+
         if allowed:
             allowed["updated_at"] = _utc_iso()
             self._update_cells("marks", r, allowed)
@@ -785,6 +828,7 @@ class SheetsAdapter(StorageAdapter):
         header = self.ws["marks"].row_values(1)
         vals = self.ws["marks"].row_values(r)
         return {header[i]: (vals[i] if i < len(vals) else "") for i in range(len(header))}
+
 
     def activate_mark_set(self, mark_set_id: str) -> None:
         r = self._find_row_by_value("mark_sets", "mark_set_id", mark_set_id)
@@ -1057,8 +1101,13 @@ class SheetsAdapter(StorageAdapter):
                     now,
                     (created_by or m.get("updated_by", "")),
                     now,
+                    # 🔴 NEW: copy OCR + required fields on clone
+                    m.get("required_value_ocr", ""),
+                    m.get("required_value_conf", ""),
+                    m.get("required_value_final", ""),
                 ]
             )
+
         if rows:
             self._append_rows("marks", rows)
         return new_id
