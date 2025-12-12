@@ -1,3 +1,5 @@
+//Should be located at: apps/editor/components/MarkList.tsx
+//It was earlier marklist but now it is used to show groups (marks inside groups). So it should be later renamed to GroupMarkList.tsx
 'use client';
 
 import React, { useState, useEffect } from 'react';

@@ -90,6 +90,8 @@ type GroupEditorProps = {
     originalMarkIds?: string[];
     onClose: () => void;
     onSaved: () => void;
+onPersistMarks?: () => Promise<void>; // 👈 NEW: persist master marks
+ 
     onUpdateMark: (markId: string, updates: Partial<Mark>) => void;
     onFocusMark: (markId: string) => void;
     // Optional: create marks directly from the preview
@@ -356,8 +358,9 @@ export default function GroupEditor({
     initialName,
     initialSelectedMarkIds,
     originalMarkIds,
-    onClose,
+    onClose, 
     onSaved,
+    onPersistMarks,
     onUpdateMark,
     onFocusMark,
     onCreateMarkInGroup,
@@ -421,16 +424,17 @@ const runOcrForMark = useCallback(
                 nw: normRect.nw,
                 nh: normRect.nh,
             });
+// Always store something in state so it survives until PUT save.
+// If OCR returns nothing, keep empty string and 0 confidence.
+const requiredValue = (resp.required_value_ocr ?? "").toString();
+const conf = Number(resp.required_value_conf ?? 0);
 
-            const requiredValue = resp.required_value_ocr ?? null;
-            const conf = resp.required_value_conf ?? null;
+onUpdateMark(markId, {
+    required_value_ocr: requiredValue,
+    required_value_conf: conf,               // <-- keep 0, don't make it undefined
+    required_value_final: requiredValue,     // <-- user can edit later
+});
 
-            onUpdateMark(markId, {
-                required_value_ocr: requiredValue ?? undefined,
-                required_value_conf: conf ?? undefined,
-                // Initial "final" value = OCR suggestion
-                required_value_final: requiredValue ?? undefined,
-            });
         } catch (e) {
             console.warn('OCR for required value failed', e);
             // If OCR fails, we simply leave it blank and user can type manually
@@ -816,6 +820,18 @@ setOverlaySize({ w: cssWidth, h: cssHeight });
 
         try {
             setSaving(true);
+// 1) Persist marks first (so instrument/required_value changes survive refresh)
+if (onPersistMarks) {
+    try {
+        await onPersistMarks();
+    } catch (e) {
+        console.error('Persist marks failed', e);
+        window.alert('Failed to save mark changes (instrument / required value). Group not saved.');
+        return;
+    }
+} else {
+    console.warn('onPersistMarks not provided — mark edits will not persist on refresh.');
+}
 
             const payload: any = {
                 page_index: pageIndex,
@@ -1292,8 +1308,9 @@ setOverlaySize({ w: cssWidth, h: cssHeight });
             onChange={(e) => {
                 const v = e.target.value;
                 onUpdateMark(m.mark_id, {
-                    required_value_final: v || undefined,
+                    required_value_final: v,
                 });
+
             }}
             placeholder="Req. value"
             style={{

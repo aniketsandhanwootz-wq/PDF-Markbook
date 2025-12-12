@@ -1352,10 +1352,17 @@ function EditorContent() {
       const url = `${apiBase}/mark-sets/${targetId}/marks${userMail ? `?user_mail=${encodeURIComponent(userMail)}` : ''
         }`;
 
+      // ✅ Ensure required_value_* keys are ALWAYS present in JSON (prevents refresh-loss)
+     const payload = applyLabels(marks).map((m) => ({
+       ...m,
+       required_value_ocr: m.required_value_ocr ?? '',
+      required_value_conf: m.required_value_conf ?? 0,
+      required_value_final: m.required_value_final ?? '',
+     }));
       const res = await fetch(url, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(applyLabels(marks)),
+        body: JSON.stringify(payload),
       });
 
       if (!res.ok) {
@@ -1383,6 +1390,46 @@ function EditorContent() {
       addToast('Failed to save marks', 'error');
     }
   }, [marks, isDemo, addToast, isMasterMarkSet, userMail]);
+
+    // ✅ PATCH 4: used by GroupEditor to persist FULL marks array into MASTER pool
+  const persistMasterMarks = useCallback(async () => {
+    if (isDemo) return;
+
+    // In QC editor: persist to MASTER mark-set (universal pool)
+    // In MASTER editor: persist to itself
+    const targetId = isMasterMarkSet
+      ? markSetId.current
+      : marksSourceMarkSetId.current;
+
+    if (!targetId) throw new Error('Missing masterMarkSetId (targetId)');
+    if (!userMail) throw new Error('Missing userMail');
+
+    const apiBase =
+      process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
+
+    const url = `${apiBase}/mark-sets/${targetId}/marks?user_mail=${encodeURIComponent(
+      userMail
+    )}`;
+
+    // ✅ keep OCR keys always present (prevents refresh-loss)
+    const payload = applyLabels(marks).map((m) => ({
+      ...m,
+      required_value_ocr: m.required_value_ocr ?? '',
+      required_value_conf: m.required_value_conf ?? 0,
+      required_value_final: m.required_value_final ?? '',
+    }));
+
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload), // ✅ FULL marks array
+    });
+
+    if (!res.ok) {
+      const txt = await res.text();
+      throw new Error(txt || 'PUT marks failed');
+    }
+  }, [marks, isDemo, isMasterMarkSet, userMail]);
 
   // Save marks + close window (old "Save & Submit" behaviour)
   const saveAndSubmit = useCallback(async () => {
@@ -1521,6 +1568,19 @@ function EditorContent() {
       if (typeof updates.is_required === 'boolean') {
         patch.is_required = updates.is_required;
       }
+      // --- required value fields ---
+      if (updates.required_value_ocr !== undefined) {
+        patch.required_value_ocr = (updates.required_value_ocr ?? '').toString();
+      }
+
+      if (updates.required_value_conf !== undefined) {
+        patch.required_value_conf =
+          updates.required_value_conf === null ? null : Number(updates.required_value_conf);
+      }
+
+      if (updates.required_value_final !== undefined) {
+        patch.required_value_final = (updates.required_value_final ?? '').toString();
+      }
 
       // If nothing relevant changed (e.g. only geometry), skip API call
       if (Object.keys(patch).length === 0) {
@@ -1528,6 +1588,12 @@ function EditorContent() {
           // geometry-only / no server change
           addToast('Mark updated', 'success');
         }
+        return;
+      }
+      // ✅ If mark is not persisted yet, DO NOT PATCH backend (prevents /marks/group-* 404 spam)
+      // These get persisted later via final PUT /mark-sets/{id}/marks
+      if (markId.startsWith('group-') || markId.startsWith('temp-')) {
+        if (!silent) addToast('Mark updated', 'success');
         return;
       }
 
@@ -2351,6 +2417,7 @@ function EditorContent() {
             ownerMarkSetId={ownerMarkSetId.current}
             nextGroupNumber={groups.length + 1}
             originalMarkIds={originalMarksRef.current.map((m) => m.mark_id)}
+            onPersistMarks={persistMasterMarks}
 
             onUpdateMark={(markId, updates) => updateMark(markId, updates, true)}
             // ❌ only these marks (created in this GroupEditor session) can be deleted via "×"
