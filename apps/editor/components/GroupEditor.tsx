@@ -256,7 +256,7 @@ function InstrumentCombo({
     return (
         <div
             ref={containerRef}
-            style={{ position: 'relative', flex: 1, minWidth: 160 }}
+            style={{ position: 'relative', flex: 1, minWidth: 115, maxWidth: 190 }}
         >
             <input
                 type="text"
@@ -1266,6 +1266,7 @@ setOverlaySize({ w: cssWidth, h: cssHeight });
             alignItems: 'center',
             gap: 6,
             flex: 1,
+    minWidth: 0,  
         }}
     >
         <span
@@ -1303,7 +1304,10 @@ setOverlaySize({ w: cssWidth, h: cssHeight });
                 borderRadius: 4,
                 fontSize: 12,
                 padding: '4px 6px',
-                minWidth: 90,
+                minWidth: 50,
+                flex: '0 0 30%',
+                maxWidth: '30%',
+                boxSizing: 'border-box',
             }}
             title={
                 conf !== null
