@@ -291,7 +291,18 @@ async def update_marks(
             detail="Marks listing not supported by this backend",
         )
 
-    marks_data = [mark.model_dump() for mark in marks]
+    marks_data = [mark.model_dump(exclude_unset=True) for mark in marks]
+
+    if marks_data:
+        sample = marks_data[0]
+        logger.info(
+            "[PUT marks] sample required_value_ocr=%r conf=%r final=%r keys=%s",
+            sample.get("required_value_ocr"),
+            sample.get("required_value_conf"),
+            sample.get("required_value_final"),
+            list(sample.keys()),
+        )
+
 
     # ---------- MASTER EDITOR FLOW: full rewrite ----------
     if can_full_edit:
@@ -345,7 +356,7 @@ async def update_marks(
 
             # required values stored as strings in Sheets; treat "" as empty
             orig_rvo = (orig.get("required_value_ocr") or "").strip()
-            orig_rvc = (orig.get("required_value_conf") or "").strip()
+            orig_rvc = "" if orig.get("required_value_conf") is None else str(orig.get("required_value_conf")).strip()
             orig_rvf = (orig.get("required_value_final") or "").strip()
 
             # start from original normalized values

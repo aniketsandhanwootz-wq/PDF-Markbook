@@ -148,6 +148,15 @@ def _safe_int(v, default=None):
         return int(float(s))
     except Exception:
         return default
+    
+def _empty_to_none(v) -> Optional[str]:
+    """
+    Convert None / "" / whitespace-only to None. Keep normal strings.
+    """
+    if v is None:
+        return None
+    s = str(v).strip()
+    return s or None
 
 
 def _utc_iso() -> str:
@@ -310,6 +319,17 @@ class SheetsAdapter(StorageAdapter):
             self.ws[tab].update("A1", [header])
         row = [data.get(col, "") for col in header]
         self._append_rows(tab, [row])
+
+    def _dict_to_row(self, tab: str, data: dict[str, Any]) -> list[Any]:
+        """
+        Convert dict -> row aligned to the CURRENT sheet header order.
+        Prevents column-shift bugs when sheet has extra columns.
+        """
+        header = self.ws[tab].row_values(1)
+        if not header:
+            header = HEADERS[tab][:]
+            self.ws[tab].update("A1", [header])
+        return [data.get(col, "") for col in header]
 
     # ========== Instrument master helpers ==========
 
@@ -683,18 +703,16 @@ class SheetsAdapter(StorageAdapter):
                         "page_index": pid_to_idx.get(m.get("page_id", ""), 0),
                         "order_index": _safe_int(m.get("order_index"), default=0),
                         "label": (m.get("label", "") or ""),
-                        "instrument": (m.get("instrument", "") or ""),
+                        "instrument": _empty_to_none(m.get("instrument")),
                         "is_required": is_required,
                         "nx": nx,
                         "ny": ny,
                         "nw": nw,
                         "nh": nh,
                         # 🔴 NEW: required value fields
-                        "required_value_ocr": m.get("required_value_ocr", ""),
-                        "required_value_conf": _safe_float(
-                            m.get("required_value_conf"), default=None
-                        ),
-                        "required_value_final": m.get("required_value_final", ""),
+                        "required_value_ocr": _empty_to_none(m.get("required_value_ocr")),
+                        "required_value_conf": _safe_float(m.get("required_value_conf"), default=None),
+                        "required_value_final": _empty_to_none(m.get("required_value_final")),
                     }
                 )
 
@@ -767,6 +785,15 @@ class SheetsAdapter(StorageAdapter):
         seen_order: set[int] = set()
         new_rows: list[list[Any]] = []
 
+        header = self.ws["marks"].row_values(1) or HEADERS["marks"][:]
+        print("[SheetsAdapter.update_marks] header=", header)
+        print(
+            "[SheetsAdapter.update_marks] required_value_* positions=",
+            {c: (header.index(c) if c in header else None) for c in
+            ("required_value_ocr", "required_value_conf", "required_value_final")},
+        )
+
+
         for m in marks:
             page_index = int(m["page_index"])
 
@@ -790,29 +817,38 @@ class SheetsAdapter(StorageAdapter):
             instrument = m.get("instrument", "") or ""
             is_required = bool(m.get("is_required", True))
 
-            new_rows.append(
-                [
-                    mark_id,  # <-- stable mark_id
-                    mark_set_id,
-                    page_id,
-                    label_val,
-                    instrument,
-                    "TRUE" if is_required else "FALSE",
-                    oi,
-                    float(m["nx"]),
-                    float(m["ny"]),
-                    float(m["nw"]),
-                    float(m["nh"]),
-                    (target.get("created_by") or ""),
-                    now,
-                    (target.get("updated_by") or ""),
-                    now,
-                    # 🔴 NEW: carry over OCR + required fields if present
-                    m.get("required_value_ocr", ""),
-                    m.get("required_value_conf", ""),
-                    m.get("required_value_final", ""),
-                ]
-            )
+            # Normalize conf to a string (Sheets stores cells as strings)
+            val_conf = m.get("required_value_conf", "")
+            if val_conf is None:
+                val_conf = ""
+            elif isinstance(val_conf, (int, float)):
+                val_conf = str(val_conf)
+            else:
+                val_conf = str(val_conf).strip()
+
+            row_dict = {
+                "mark_id": mark_id,
+                "mark_set_id": mark_set_id,
+                "page_id": page_id,
+                "label": label_val,
+                "instrument": instrument,
+                "is_required": "TRUE" if is_required else "FALSE",
+                "order_index": oi,
+                "nx": float(m["nx"]),
+                "ny": float(m["ny"]),
+                "nw": float(m["nw"]),
+                "nh": float(m["nh"]),
+                "created_by": (target.get("created_by") or ""),
+                "created_at": now,
+                "updated_by": (target.get("updated_by") or ""),
+                "updated_at": now,
+                "required_value_ocr": (m.get("required_value_ocr") or ""),
+                "required_value_conf": val_conf,
+                "required_value_final": (m.get("required_value_final") or ""),
+            }
+
+            new_rows.append([row_dict.get(col, "") for col in header])
+
         # Seed/update instrument master list based on incoming marks
         try:
             self._ensure_instrument_names(

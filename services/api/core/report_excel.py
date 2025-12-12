@@ -12,6 +12,9 @@ from openpyxl.drawing.image import Image as OpenpyxlImage
 from openpyxl.cell.cell import MergedCell
 from openpyxl.worksheet.worksheet import Worksheet
 from openpyxl.styles import PatternFill
+from openpyxl.worksheet.datavalidation import DataValidation
+from openpyxl.formatting.rule import FormulaRule
+
 
 from core.report_pdf import _require_pdfium, _fetch_pdf_bytes
 
@@ -231,12 +234,13 @@ async def generate_report_excel(
         else:
             _write_merged(ws, "A5", "Part Number:")
 
-        # Row 6: "MarkSet Name: <mark_set_label>"
+        # Row 6: "Inspection Map Name: <mark_set_label>"
         ms_label_val = (mark_set_label or "").strip()
         if ms_label_val:
-            _write_merged(ws, "A6", f"MarkSet Name: {ms_label_val}")
+            _write_merged(ws, "A6", f"Inspection Map Name: {ms_label_val}")
         else:
-            _write_merged(ws, "A6", "MarkSet Name:")
+            _write_merged(ws, "A6", "Inspection Map Name:")
+
 
         # Row 7: "Drawing No: <dwg_num>"
         dwg_val = (dwg_num or "").strip()
@@ -254,6 +258,9 @@ async def generate_report_excel(
         created_at_str = ist_time.strftime("%Y-%m-%d %H:%M IST")
         _write_merged(ws, "E6", f"Created At: {created_at_str}")
 
+        # ✅ Template has "#VALUE!" stored in A1 (merged A1:I2). Clear it so it doesn't show near logo.
+        _write_merged(ws, "A1", "")
+        # =====================================================
         # ---------- LOGO ----------
         if logo_url:
             try:
@@ -311,30 +318,36 @@ async def generate_report_excel(
                 label = (m.get("label") or f"Mark {r - start_row + 1}").strip()
                 observed = (entries.get(mark_id, "") or "").strip()
                 instrument = (m.get("instrument") or "").strip()
+                # ✅ Required Value (prefer final, fallback to OCR)
+                required_value = (m.get("required_value_final") or m.get("required_value_ocr") or "")
+                required_value = str(required_value).strip()
 
                 # ---------- STATUS TEXT + COLOUR ----------
                 raw_status = (statuses.get(mark_id, "") or "").strip().upper()
 
                 if raw_status == "PASS":
                     status_text = "Pass"
-                    status_color = "FF00B050"  # green
+                    status_color = "FF9AE096"  # Pass: 154,224,150
                 elif raw_status == "FAIL":
                     status_text = "Fail"
-                    status_color = "FFFF0000"  # red
+                    status_color = "FFB02418"  # Fail: 176,36,24
                 elif raw_status == "DOUBT":
                     status_text = "Doubt"
-                    status_color = "FFFFFF00"  # yellow
+                    status_color = "FFE6AC89"  # Doubt: 230,172,137
                 else:
                     status_text = ""
                     status_color = None
+                # ------------------------------------------
 
-                # Text cells (merge-safe)
                 _write_merged(ws, f"A{r}", label)        # A: Label
-                # B: Inspection Point → image goes here (handled below)
-                # C, D, E: Required + Tol Min/Max (left blank for now)
+                # B: Inspection Reference → image goes here (handled below)
+
+                # ✅ C: Required Value
+                _write_merged(ws, f"C{r}", required_value)
 
                 # ✅ F: Observed Value
                 _write_merged(ws, f"F{r}", observed)
+
 
                 # ✅ G: Instrument
                 _write_merged(ws, f"G{r}", instrument)
@@ -395,9 +408,46 @@ async def generate_report_excel(
                 gc.collect()
 
         # =====================================================
-        # NO DATA VALIDATION – Status column is filled & coloured
         # =====================================================
+        # STATUS: Dropdown + Conditional Formatting (so colour changes when user edits)
+        # =====================================================
+        last_row = current_row - 1
+        if last_row >= start_row:
+            status_range = f"H{start_row}:H{last_row}"
 
+            # Dropdown values (allow blank)
+            dv = DataValidation(
+                type="list",
+                formula1='"Pass,Fail,Doubt"',
+                allow_blank=True,
+                showErrorMessage=True,
+                errorTitle="Invalid Status",
+                error="Select only from: Pass, Fail, Doubt",
+            )
+            ws.add_data_validation(dv)
+            dv.add(status_range)
+
+            # Conditional formatting fills (matches your RGBs)
+            pass_fill = PatternFill(start_color="FF9AE096", end_color="FF9AE096", fill_type="solid")
+            fail_fill = PatternFill(start_color="FFB02418", end_color="FFB02418", fill_type="solid")
+            doubt_fill = PatternFill(start_color="FFE6AC89", end_color="FFE6AC89", fill_type="solid")
+
+            # Use first cell formula; Excel will apply relative rows across the range
+            ws.conditional_formatting.add(
+                status_range,
+                FormulaRule(formula=[f'H{start_row}="Pass"'], fill=pass_fill),
+            )
+            ws.conditional_formatting.add(
+                status_range,
+                FormulaRule(formula=[f'H{start_row}="Fail"'], fill=fail_fill),
+            )
+            ws.conditional_formatting.add(
+                status_range,
+                FormulaRule(formula=[f'H{start_row}="Doubt"'], fill=doubt_fill),
+            )
+
+        # =====================================================
+        # FINALIZE: save to bytes
         out = io.BytesIO()
         wb.save(out)
         out.seek(0)

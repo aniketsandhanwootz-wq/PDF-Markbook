@@ -136,27 +136,41 @@ class MarkOut(BaseModel):
     mark_id: str
     page_index: int
     order_index: int
-    label: str
-    instrument: str
-    is_required: bool
+
+    # these are sometimes missing in old data / older marksets
+    label: Optional[str] = None
+    instrument: Optional[str] = None
+
+    is_required: bool = True
+
     nx: float
     ny: float
     nw: float
     nh: float
 
+    # 🔴 NEW: required value fields (may be absent in older rows)
+    required_value_ocr: Optional[str] = Field(default=None, max_length=100)
+    required_value_conf: Optional[float] = Field(default=None, ge=0.0, le=100.0)
+    required_value_final: Optional[str] = Field(default=None, max_length=100)
+
+
 
 class MarkPatch(BaseModel):
     """Partial update for mark fields."""
     instrument: Optional[str] = Field(
-        None,
-        min_length=1,
+        default=None,
         max_length=200,
         description="Updated instrument",
     )
     is_required: Optional[bool] = Field(
-        None,
+        default=None,
         description="Updated required flag",
     )
+
+    # 🔴 NEW: OCR fields patchable
+    required_value_ocr: Optional[str] = Field(default=None, max_length=100)
+    required_value_conf: Optional[float] = Field(default=None, ge=0.0, le=100.0)
+    required_value_final: Optional[str] = Field(default=None, max_length=100)
 
 
 # ============ Health Check ============

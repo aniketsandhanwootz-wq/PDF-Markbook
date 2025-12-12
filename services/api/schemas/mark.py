@@ -27,12 +27,12 @@ class MarkBase(BaseModel):
         max_length=50,
         description="Fixed mark label like A, B, C (usually server-generated)",
     )
-    instrument: str = Field(
-        ...,
-        min_length=1,
+    instrument: Optional[str] = Field(
+        default=None,
         max_length=200,
-        description="Instrument used for this mark",
+        description="Instrument used for this mark (optional)",
     )
+
     is_required: bool = Field(
         True,
         description="Whether this mark is mandatory during QC",
@@ -112,11 +112,11 @@ class MarkPatch(BaseModel):
       - required_value_final
     """
     instrument: Optional[str] = Field(
-        None,
-        min_length=1,
+        default=None,
         max_length=200,
-        description="Updated instrument",
+        description="Updated instrument (optional)",
     )
+
     is_required: Optional[bool] = Field(
         None,
         description="Updated required flag",

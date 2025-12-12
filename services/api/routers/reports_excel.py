@@ -26,6 +26,9 @@ class ExcelReportBody(BaseModel):
     padding_pct: float = 0.25
     logo_url: Optional[str] = None  # allow override if needed
 
+    # ✅ NEW: per-mark statuses (PASS/FAIL/DOUBT/"")
+    statuses: Dict[str, str] = {}
+
 @router.post("/generate")
 async def generate_excel_report(body: ExcelReportBody, storage = Depends(get_storage)):
     # Resolve mark set and document
@@ -68,7 +71,9 @@ async def generate_excel_report(body: ExcelReportBody, storage = Depends(get_sto
             report_title=body.report_title or "",
             padding_pct=body.padding_pct,
             logo_url=body.logo_url or "https://res.cloudinary.com/dbwg6zz3l/image/upload/v1753101276/Black_Blue_ctiycp.png",
-        )
+            # ✅ NEW
+            statuses=body.statuses,        
+            )
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"EXCEL_BUILD_FAILED: {e}")
