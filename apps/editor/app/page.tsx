@@ -251,7 +251,7 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
     }
   };
 
-  const handleOpenMarkset = (markSetId: string, isMaster: boolean) => {
+  const handleOpenMarkset = (markSetId: string, isMaster: boolean, inspectionMapName?: string) => {
     if (!boot?.document?.pdf_url) {
       setErr('No PDF URL on document.');
       return;
@@ -280,6 +280,9 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
     search.set('mark_set_id', markSetId);
     search.set('is_master', isMaster ? '1' : '0');
     search.set('master_mark_set_id', masterForViewer);
+    // ✅ pass ID and Inspection Map Name for export filename
+    if (extId) search.set('id', extId);
+    if (inspectionMapName) search.set('inspection_map_name', inspectionMapName);
 
     // 👉 pass part_number so editor sidebar can show it
     if (boot.document.part_number) {
@@ -484,7 +487,14 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
         {!isEditing && (
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <button
-              onClick={() => handleOpenMarkset(ms.mark_set_id, ms.is_master)}
+              onClick={() =>
+  handleOpenMarkset(
+    ms.mark_set_id,
+    ms.is_master,
+    ms.is_master ? 'MASTER' : ms.label
+  )
+}
+
               style={btn}
             >
               Open
@@ -793,6 +803,10 @@ function EditorContent() {
   // Part number passed from SetupScreen URL
   const partNumberFromUrl = searchParams?.get('part_number') || '';
   const dwgNumFromUrl = searchParams?.get('dwg_num') || '';   // 🔥 NEW
+
+    // ✅ Used for Map PDF filename
+  const extIdFromUrl = searchParams?.get('id') || '';
+  const inspectionMapNameFromUrl = searchParams?.get('inspection_map_name') || '';
 
 
   const [showSetup, setShowSetup] = useState(true);
@@ -1726,7 +1740,26 @@ function EditorContent() {
       const doc = await PDFDocument.load(srcBytes);
       const font = await doc.embedFont(StandardFonts.Helvetica);
 
-      const toDraw = applyLabels(marks);
+            // ✅ Export marks:
+      // - MASTER: export all marks
+      // - QC: export ONLY marks that are included in this Inspection Map (union of group.mark_ids)
+      let exportMarks: Mark[] = marks;
+
+      if (!isMasterMarkSet) {
+        const allowed = new Set<string>();
+        for (const g of groups) {
+          for (const id of (g.mark_ids || [])) allowed.add(id);
+        }
+        exportMarks = marks.filter(m => allowed.has(m.mark_id));
+      }
+
+      if (!exportMarks.length) {
+        addToast('No Balloons found for this Inspection Map to export.', 'info');
+        return;
+      }
+
+      const toDraw = applyLabels(exportMarks);
+
       toDraw.forEach(m => {
         const page = doc.getPage(m.page_index);
         const { width, height } = page.getSize();
@@ -1793,7 +1826,17 @@ function EditorContent() {
       const blob = new Blob([pdfBytes as unknown as BlobPart], { type: 'application/pdf' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = 'marked-document.pdf';
+            // ✅ Filename: ID[Inspection Map Name].pdf
+      const safe = (s: string) =>
+        (s || '')
+          .replace(/[\/\\?%*:|"<>]/g, '-')  // Windows-safe
+          .replace(/\s+/g, ' ')
+          .trim();
+
+      const idPart = safe(extIdFromUrl || partNumberFromUrl || 'ID');
+      const mapPart = safe(inspectionMapNameFromUrl || 'Inspection Map');
+
+      a.download = `${idPart}[${mapPart}].pdf`;
       a.click();
       URL.revokeObjectURL(a.href);
 
@@ -1804,7 +1847,8 @@ function EditorContent() {
       console.error(e);
       addToast('Failed to generate PDF', 'error');
     }
-  }, [marks, addToast]);
+}, [marks, groups, isMasterMarkSet, addToast, extIdFromUrl, inspectionMapNameFromUrl, partNumberFromUrl]);
+
 
 
   // Wheel zoom - prevent browser zoom, only zoom PDF (SLOWER SPEED)

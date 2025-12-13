@@ -17,7 +17,7 @@ from settings import get_settings
 logger = logging.getLogger(__name__)
 
 # You can tweak this later; UI will use it for orange border, etc.
-LOW_CONFIDENCE_THRESHOLD = 70.0
+LOW_CONFIDENCE_THRESHOLD = 95.0
 
 
 def _fetch_pdf_bytes(pdf_url: str) -> bytes:
@@ -221,10 +221,12 @@ def extract_required_value_from_pdf_region(
 
         logger.info(f"[vision_ocr] Raw OCR text: {repr(text)[:200]}")
 
-        numeric = _extract_numeric_from_text(text)
+        # NO FILTERING: return full OCR text (only normalize whitespace)
+        cleaned_text = re.sub(r"\s+", " ", text).strip() if text else None
         conf = _estimate_confidence(response)
 
-        return numeric, conf
+        return cleaned_text, conf
+
     except Exception as e:
         logger.exception(f"[vision_ocr] Failed to extract required value: {e}")
         return None, 0.0

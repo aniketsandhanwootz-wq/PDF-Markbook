@@ -26,6 +26,13 @@ from core.email_sender import send_email_with_attachments
 from settings import get_settings
 from core.report_excel import generate_report_excel
 from core.drive_client import upload_report_excel_to_drive
+from core.checkin_sync import (
+    build_checkin_description,
+    sync_checkin_or_alert,
+    send_alert_email,
+    utc_iso,
+    new_uuid,
+)
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -638,22 +645,128 @@ async def _do_generate_and_send_excel_bundle(
             logger.warning(f"Failed to upload report to Google Drive: {e}")
             inspection_doc_url = ""
 
-        # 9b) Create a report history record (inspection_reports) using the SAME report_id
+        # =====================================================
+        # 9b) CheckIn Sync (append into separate confidential sheet)
+        # =====================================================
+        checkin_sync_status = "SKIPPED"
+        checkin_sync_error = ""
+        checkin_id_final = ""
+
+        try:
+            checkin_sheet = (settings.checkin_sheets_spreadsheet_id or "").strip()
+            checkin_tab = (settings.checkin_tab_name or "CheckIn").strip()
+
+            if checkin_sheet:
+                # Count status totals for DESCRIPTION
+                pass_count = 0
+                fail_count = 0
+                doubt_count = 0
+
+                for mid in filtered_ids:
+                    raw = (mark_id_to_status.get(mid, "") or "").strip().upper()
+                    if raw == "PASS":
+                        pass_count += 1
+                    elif raw == "FAIL":
+                        fail_count += 1
+                    elif raw == "DOUBT":
+                        doubt_count += 1
+
+                empty_count = max(0, total_marks - (pass_count + fail_count + doubt_count))
+
+                description = build_checkin_description(
+                    dwg_num=(doc.get("dwg_num", "") or ""),
+                    pass_count=pass_count,
+                    fail_count=fail_count,
+                    doubt_count=doubt_count,
+                    empty_count=empty_count,
+                )
+
+           #     assembly_drawing = (doc.get("assembly_drawing") or doc.get("pdf_url") or "").strip()
+                assembly_drawing = ""  # Clear it out for now
+                checkin_payload = {
+                    "CheckIn ID": (req.report_id or "").strip() or new_uuid(),
+                    "ID": (doc.get("external_id", "") or "").strip(),
+                    "Project name": (doc.get("project_name", "") or "").strip(),
+                    "Part number": (doc.get("part_number", "") or "").strip(),
+                    "Assembly drawing": assembly_drawing,
+                    "Status": "Doubt",
+                    "Description": description,
+                    "Created by": (req.submitted_by or req.email_to or "").strip(),
+                    "Timestamp": utc_iso(),
+                    "Files": (inspection_doc_url or "").strip(),  # Drive download URL
+                }
+
+                ctx = {
+                    "doc_id": req.doc_id,
+                    "qc_mark_set_id": qc_mark_set_id,
+                    "report_id": req.report_id,
+                    "submitted_by": req.submitted_by,
+                    "email_to": req.email_to,
+                    "drive_url": inspection_doc_url,
+                    "counts": {
+                        "pass": pass_count,
+                        "fail": fail_count,
+                        "doubt": doubt_count,
+                        "empty": empty_count,
+                    },
+                }
+
+                res = await sync_checkin_or_alert(
+                    spreadsheet_id_or_url=checkin_sheet,
+                    worksheet_title=checkin_tab,
+                    payload=checkin_payload,
+                    context=ctx,
+                )
+
+                if res.get("ok"):
+                    checkin_sync_status = "SUCCESS"
+                    checkin_id_final = res.get("checkin_id", "") or ""
+                else:
+                    checkin_sync_status = "FAIL"
+                    checkin_sync_error = res.get("error", "") or ""
+                    checkin_id_final = res.get("checkin_id", "") or ""
+
+        except Exception as e:
+            checkin_sync_status = "FAIL"
+            checkin_sync_error = str(e)
+            try:
+                await send_alert_email(
+                    subject="ALERT: CheckIn sync wrapper crashed (Wootz Inspect)",
+                    body_html=f"<p><b>Error:</b> {str(e)}</p>",
+                )
+            except Exception:
+                pass
+
+        # =====================================================
+        # 9c) Create a report history record (inspection_reports)
+        #     AND store CheckIn sync fields
+        # =====================================================
         try:
             if hasattr(storage, "create_report_record"):
-                storage.create_report_record(
+                # Pass optional args only if adapter supports them (safe for non-sheets)
+                params = set(inspect.signature(storage.create_report_record).parameters.keys())
+
+                kwargs = dict(
                     mark_set_id=qc_mark_set_id,
-                    # 🔗 Store the Drive direct-download URL here (can be empty if upload failed)
                     inspection_doc_url=inspection_doc_url or "",
                     created_by=req.submitted_by or req.email_to,
-                    # 🔑 keep this in sync with mark_user_input.report_id
                     report_id=req.report_id,
-                    # store the human-friendly title used in email/Excel
                     report_title=report_name,
                     submitted_by=req.submitted_by or req.email_to,
                 )
+
+                if "checkin_sync_status" in params:
+                    kwargs["checkin_sync_status"] = checkin_sync_status
+                if "checkin_sync_error" in params:
+                    kwargs["checkin_sync_error"] = checkin_sync_error
+                if "checkin_id" in params:
+                    kwargs["checkin_id"] = checkin_id_final
+
+                storage.create_report_record(**kwargs)
+
         except Exception as e:
             logger.warning(f"Failed to create report record: {e}")
+
 
 
 

@@ -110,6 +110,9 @@ HEADERS = {
         "created_at",
         "report_title",   
         "submitted_by",    
+        "checkin_sync_status",     # "SUCCESS" / "FAIL" / "SKIPPED"
+        "checkin_sync_error",      # error text if any
+        "checkin_id",
     ],
 }
 
@@ -1645,28 +1648,40 @@ class SheetsAdapter(StorageAdapter):
         report_id: str | None = None,
         report_title: str | None = None,
         submitted_by: str | None = None,
+        checkin_sync_status: str | None = None,
+        checkin_sync_error: str | None = None,
+        checkin_id: str | None = None,
     ) -> str:
-        """Persist a generated report record.
+        """
+        Persist a generated report record.
 
         If report_id is provided (e.g. from the Viewer), it is reused so that
         inspection_reports.report_id matches mark_user_input.report_id.
         Otherwise, a fresh UUID is generated.
+
+        Also logs CheckIn sync status/error/id if provided.
         """
         rid = report_id or _uuid()
         now = _utc_iso()
-        self._append_rows(
-            "inspection_reports",
-            [[
-                rid,
-                mark_set_id,
-                inspection_doc_url,
-                (created_by or ""),
-                now,
-                (report_title or ""),
-                (submitted_by or ""),
-            ]],
-        )
+
+        data = {
+            "report_id": rid,
+            "mark_set_id": mark_set_id,
+            "inspection_doc_url": inspection_doc_url,
+            "created_by": (created_by or ""),
+            "created_at": now,
+            "report_title": (report_title or ""),
+            "submitted_by": (submitted_by or ""),
+            # ✅ CheckIn fields
+            "checkin_sync_status": (checkin_sync_status or ""),
+            "checkin_sync_error": (checkin_sync_error or ""),
+            "checkin_id": (checkin_id or ""),
+        }
+
+        # Use header-name mapping to avoid column-shift bugs
+        self._append_dict_row("inspection_reports", data)
         return rid
+
 
 
 

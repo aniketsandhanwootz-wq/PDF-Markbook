@@ -106,6 +106,18 @@ const quantize = (z: number) => {
   return q;
 };
 
+// --- Default report title helper ---
+// Generates: Report[DD/MM/YYYY] using Asia/Kolkata timezone
+function getDefaultReportTitle(): string {
+  const date = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  }).format(new Date()); // e.g. "12/12/2025"
+
+  return `Report[${date}]`;
+}
 
 function clampScroll(container: HTMLElement, left: number, top: number) {
   const maxL = Math.max(0, container.scrollWidth - container.clientWidth);
@@ -1132,9 +1144,10 @@ function ViewerContent() {
   // Cache zoom level per group so we don’t recompute on every mark navigation
   const groupZoomCache = useRef<Map<number, number>>(new Map());
 
-  // Report metadata
-  const [reportTitle, setReportTitle] = useState('');
-  const [showReportTitle, setShowReportTitle] = useState(true);
+ // Report metadata
+const [reportTitle, setReportTitle] = useState(() => getDefaultReportTitle());
+const [showReportTitle, setShowReportTitle] = useState(true);
+
 
   const setZoomQ = useCallback(
     (z: number, ref?: MutableRefObject<number>) => {
@@ -1646,6 +1659,10 @@ function ViewerContent() {
     // ✅ NEW: draft handling is per-markset, so reset these too
     setAutosaveEnabled(false);
     setHasHandledInitialDraft(false);
+
+      // Reset title for each new inspection session
+  setReportTitle(getDefaultReportTitle());
+  setShowReportTitle(true);
   }, [markSetId]);
 
 

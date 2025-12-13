@@ -1233,7 +1233,7 @@ if (onPersistMarks) {
                                 // 🔢 OCR helpers (NEW)
                                 const conf = m.required_value_conf ?? null;
                                 const lowConfidence =
-                                    conf !== null && conf < 70; // threshold
+                                    conf !== null && conf < 95; // threshold
                                 const initialRequiredValue =
                                     m.required_value_final ??
                                     m.required_value_ocr ??

@@ -330,7 +330,7 @@ async def generate_report_excel(
                     status_color = "FF9AE096"  # Pass: 154,224,150
                 elif raw_status == "FAIL":
                     status_text = "Fail"
-                    status_color = "FFB02418"  # Fail: 176,36,24
+                    status_color = "FFFD5F67"  # Fail: rgb(253, 95, 103)
                 elif raw_status == "DOUBT":
                     status_text = "Doubt"
                     status_color = "FFE6AC89"  # Doubt: 230,172,137
@@ -429,7 +429,7 @@ async def generate_report_excel(
 
             # Conditional formatting fills (matches your RGBs)
             pass_fill = PatternFill(start_color="FF9AE096", end_color="FF9AE096", fill_type="solid")
-            fail_fill = PatternFill(start_color="FFB02418", end_color="FFB02418", fill_type="solid")
+            fail_fill = PatternFill(start_color="FFFD5F67", end_color="FFFD5F67", fill_type="solid")
             doubt_fill = PatternFill(start_color="FFE6AC89", end_color="FFE6AC89", fill_type="solid")
 
             # Use first cell formula; Excel will apply relative rows across the range
