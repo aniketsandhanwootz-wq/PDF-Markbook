@@ -66,7 +66,15 @@ HEADERS = {
         "created_at",
         "updated_by",
         "updated_at",
+        # 🔴 NEW: OCR + required value fields
+        "required_value_ocr",
+        "required_value_conf",
+        "required_value_final",
     ],
+    "instruments": [
+        "instrument_name",
+    ],
+
     "groups": [
         "group_id",
         "mark_set_id",
@@ -102,6 +110,9 @@ HEADERS = {
         "created_at",
         "report_title",   
         "submitted_by",    
+        "checkin_sync_status",     # "SUCCESS" / "FAIL" / "SKIPPED"
+        "checkin_sync_error",      # error text if any
+        "checkin_id",
     ],
 }
 
@@ -113,6 +124,7 @@ SHEET_TAB_ORDER = [
     "groups",
     "mark_user_input",
     "inspection_reports",
+    "instruments",
 ]
 
 
@@ -139,6 +151,15 @@ def _safe_int(v, default=None):
         return int(float(s))
     except Exception:
         return default
+    
+def _empty_to_none(v) -> Optional[str]:
+    """
+    Convert None / "" / whitespace-only to None. Keep normal strings.
+    """
+    if v is None:
+        return None
+    s = str(v).strip()
+    return s or None
 
 
 def _utc_iso() -> str:
@@ -217,6 +238,8 @@ class SheetsAdapter(StorageAdapter):
         self._doc_cache: dict[str, dict[str, Any]] = {}
         self._pages_by_doc_cache: dict[str, list[dict[str, Any]]] = {}
         self._user_input_cache: dict[str, list[dict[str, Any]]] = {}
+        self._instrument_names_cache: set[str] = set()  # 👈 master instrument names
+
 
     # ========== Worksheet helpers ==========
 
@@ -299,6 +322,71 @@ class SheetsAdapter(StorageAdapter):
             self.ws[tab].update("A1", [header])
         row = [data.get(col, "") for col in header]
         self._append_rows(tab, [row])
+
+    def _dict_to_row(self, tab: str, data: dict[str, Any]) -> list[Any]:
+        """
+        Convert dict -> row aligned to the CURRENT sheet header order.
+        Prevents column-shift bugs when sheet has extra columns.
+        """
+        header = self.ws[tab].row_values(1)
+        if not header:
+            header = HEADERS[tab][:]
+            self.ws[tab].update("A1", [header])
+        return [data.get(col, "") for col in header]
+
+    # ========== Instrument master helpers ==========
+
+    def _load_instrument_names(self) -> set[str]:
+        """
+        Load master instrument names from the `instruments` sheet once
+        and cache them in memory.
+        """
+        if self._instrument_names_cache:
+            return self._instrument_names_cache
+
+        try:
+            rows = self._get_all_dicts("instruments")
+        except Exception:
+            rows = []
+
+        names: set[str] = set()
+        for r in rows:
+            val = (r.get("instrument_name") or "").strip()
+            if val:
+                names.add(val)
+
+        self._instrument_names_cache = names
+        return names
+
+    def _ensure_instrument_names(self, candidates: list[str]) -> None:
+        """
+        Ensure that all given instrument names exist in the `instruments` tab.
+
+        - Ignores blanks.
+        - Case-insensitive (Foo and foo are treated as same).
+        - Only appends truly new names.
+        """
+        if not candidates:
+            return
+
+        existing = self._load_instrument_names()
+        lower_existing = {n.lower() for n in existing}
+
+        new_names: list[str] = []
+        for c in candidates:
+            name = (c or "").strip()
+            if not name:
+                continue
+            if name.lower() in lower_existing:
+                continue
+            lower_existing.add(name.lower())
+            existing.add(name)
+            new_names.append(name)
+
+        if new_names:
+            rows = [[name] for name in new_names]  # single column: instrument_name
+            self._append_rows("instruments", rows)
+            self._instrument_names_cache = existing
 
     # ========== StorageAdapter API ==========
 
@@ -573,8 +661,13 @@ class SheetsAdapter(StorageAdapter):
                         now,
                         (created_by or ""),
                         now,
+                        # 🔴 NEW: required value fields (usually empty at initial creation)
+                        m.get("required_value_ocr", ""),
+                        m.get("required_value_conf", ""),
+                        m.get("required_value_final", ""),
                     ]
                 )
+
             self._append_rows("marks", mrows)
 
         return mark_set_id
@@ -613,14 +706,19 @@ class SheetsAdapter(StorageAdapter):
                         "page_index": pid_to_idx.get(m.get("page_id", ""), 0),
                         "order_index": _safe_int(m.get("order_index"), default=0),
                         "label": (m.get("label", "") or ""),
-                        "instrument": (m.get("instrument", "") or ""),
+                        "instrument": _empty_to_none(m.get("instrument")),
                         "is_required": is_required,
                         "nx": nx,
                         "ny": ny,
                         "nw": nw,
                         "nh": nh,
+                        # 🔴 NEW: required value fields
+                        "required_value_ocr": _empty_to_none(m.get("required_value_ocr")),
+                        "required_value_conf": _safe_float(m.get("required_value_conf"), default=None),
+                        "required_value_final": _empty_to_none(m.get("required_value_final")),
                     }
                 )
+
             except Exception:
                 # Any unexpected row issues? just skip
                 continue
@@ -690,6 +788,15 @@ class SheetsAdapter(StorageAdapter):
         seen_order: set[int] = set()
         new_rows: list[list[Any]] = []
 
+        header = self.ws["marks"].row_values(1) or HEADERS["marks"][:]
+        print("[SheetsAdapter.update_marks] header=", header)
+        print(
+            "[SheetsAdapter.update_marks] required_value_* positions=",
+            {c: (header.index(c) if c in header else None) for c in
+            ("required_value_ocr", "required_value_conf", "required_value_final")},
+        )
+
+
         for m in marks:
             page_index = int(m["page_index"])
 
@@ -713,25 +820,47 @@ class SheetsAdapter(StorageAdapter):
             instrument = m.get("instrument", "") or ""
             is_required = bool(m.get("is_required", True))
 
-            new_rows.append(
-                [
-                    mark_id,  # <-- stable mark_id
-                    mark_set_id,
-                    page_id,
-                    label_val,
-                    instrument,
-                    "TRUE" if is_required else "FALSE",
-                    oi,
-                    float(m["nx"]),
-                    float(m["ny"]),
-                    float(m["nw"]),
-                    float(m["nh"]),
-                    (target.get("created_by") or ""),
-                    now,
-                    (target.get("updated_by") or ""),
-                    now,
-                ]
+            # Normalize conf to a string (Sheets stores cells as strings)
+            val_conf = m.get("required_value_conf", "")
+            if val_conf is None:
+                val_conf = ""
+            elif isinstance(val_conf, (int, float)):
+                val_conf = str(val_conf)
+            else:
+                val_conf = str(val_conf).strip()
+
+            row_dict = {
+                "mark_id": mark_id,
+                "mark_set_id": mark_set_id,
+                "page_id": page_id,
+                "label": label_val,
+                "instrument": instrument,
+                "is_required": "TRUE" if is_required else "FALSE",
+                "order_index": oi,
+                "nx": float(m["nx"]),
+                "ny": float(m["ny"]),
+                "nw": float(m["nw"]),
+                "nh": float(m["nh"]),
+                "created_by": (target.get("created_by") or ""),
+                "created_at": now,
+                "updated_by": (target.get("updated_by") or ""),
+                "updated_at": now,
+                "required_value_ocr": (m.get("required_value_ocr") or ""),
+                "required_value_conf": val_conf,
+                "required_value_final": (m.get("required_value_final") or ""),
+            }
+
+            new_rows.append([row_dict.get(col, "") for col in header])
+
+        # Seed/update instrument master list based on incoming marks
+        try:
+            self._ensure_instrument_names(
+                [(m.get("instrument") or "") for m in marks]
             )
+        except Exception:
+            # Best-effort only; do not fail mark save if this breaks
+            pass
+
 
         # --- 3) Rewrite marks sheet, keeping other mark sets intact ---
         all_marks = self._get_all_dicts("marks")
@@ -752,32 +881,72 @@ class SheetsAdapter(StorageAdapter):
 
     def list_distinct_instruments(self) -> list[str]:
         """
-        Return a sorted list of distinct non-empty instrument names
-        from the marks sheet.
+        Return a sorted list of distinct non-empty instrument names.
+
+        Priority:
+        1) If the dedicated `instruments` tab has any rows, use that as the
+           master list (this is what you can open/download in Sheets).
+        2) Otherwise, fall back to scanning the `marks` sheet once and seed
+           the `instruments` tab from there.
         """
+        names = self._load_instrument_names()
+        if names:
+            return sorted(names, key=lambda s: s.lower())
+
+        # Fallback: derive from marks and seed `instruments` tab
         rows = self._get_all_dicts("marks")
-        instruments: set[str] = set()
+        candidates: list[str] = []
         for m in rows:
             inst = (m.get("instrument") or "").strip()
             if inst:
-                instruments.add(inst)
-        return sorted(instruments, key=lambda s: s.lower())
+                candidates.append(inst)
+
+        self._ensure_instrument_names(candidates)
+        names = self._load_instrument_names()
+        return sorted(names, key=lambda s: s.lower())
+
 
     def patch_mark(self, mark_id: str, updates: dict[str, Any]) -> dict[str, Any]:
         """
         Update mutable mark fields:
         - instrument
         - is_required
+        - required_value_ocr
+        - required_value_conf
+        - required_value_final
         """
         r = self._find_row_by_value("marks", "mark_id", mark_id)
         if not r:
             raise ValueError("MARK_NOT_FOUND")
 
         allowed: dict[str, Any] = {}
+
         if "instrument" in updates and updates["instrument"] is not None:
             allowed["instrument"] = str(updates["instrument"])
+            # ensure this instrument exists in master list
+            try:
+                self._ensure_instrument_names([allowed["instrument"]])
+            except Exception:
+                pass
+
+
+        # is_required
         if "is_required" in updates and updates["is_required"] is not None:
             allowed["is_required"] = "TRUE" if bool(updates["is_required"]) else "FALSE"
+
+        # required_value_ocr
+        if "required_value_ocr" in updates:
+            allowed["required_value_ocr"] = updates["required_value_ocr"] or ""
+
+        # required_value_conf (store as string; list_marks will convert to float)
+        if "required_value_conf" in updates:
+            val = updates["required_value_conf"]
+            allowed["required_value_conf"] = "" if val is None else str(val)
+
+        # required_value_final
+        if "required_value_final" in updates:
+            allowed["required_value_final"] = updates["required_value_final"] or ""
+
         if allowed:
             allowed["updated_at"] = _utc_iso()
             self._update_cells("marks", r, allowed)
@@ -785,6 +954,7 @@ class SheetsAdapter(StorageAdapter):
         header = self.ws["marks"].row_values(1)
         vals = self.ws["marks"].row_values(r)
         return {header[i]: (vals[i] if i < len(vals) else "") for i in range(len(header))}
+
 
     def activate_mark_set(self, mark_set_id: str) -> None:
         r = self._find_row_by_value("mark_sets", "mark_set_id", mark_set_id)
@@ -1000,8 +1170,11 @@ class SheetsAdapter(StorageAdapter):
 
     def clone_mark_set(self, mark_set_id: str, new_label: str, created_by: str | None) -> str:
         """
-        Deep clone a mark set + its marks into a new mark set on the same document.
-        Cloned markset is never master and not active by default.
+        Clone a QC mark set into a new QC mark set on the same document.
+
+        IMPORTANT (your architecture):
+        - Marks are UNIVERSAL (master) for the PDF, so we DO NOT clone marks rows.
+        - We DO clone GROUPS, keeping the same mark_ids inside each group.
         """
         src_ms = None
         for ms in self._get_all_dicts("mark_sets"):
@@ -1021,6 +1194,7 @@ class SheetsAdapter(StorageAdapter):
         except Exception:
             history = []
 
+        # 1) Create the new mark_set row
         self._append_dict_row(
             "mark_sets",
             {
@@ -1031,37 +1205,38 @@ class SheetsAdapter(StorageAdapter):
                 "is_active": "FALSE",
                 "is_master": "FALSE",
                 "created_by": (created_by or src_ms.get("created_by", "")),
-                "created_at": src_ms.get("created_at", now),
+                "created_at": now,  # keep clone time
                 "updated_by": (created_by or src_ms.get("updated_by", "")),
                 "update_history": json.dumps(history),
             },
         )
 
-        src_marks = [m for m in self._get_all_dicts("marks") if m.get("mark_set_id") == mark_set_id]
-        rows = []
-        for m in src_marks:
-            rows.append(
-                [
-                    _uuid(),
-                    new_id,
-                    m.get("page_id", ""),
-                    m.get("label", ""),
-                    m.get("instrument", ""),
-                    m.get("is_required", "TRUE"),
-                    int(_safe_int(m.get("order_index"), 0)),
-                    float(_safe_float(m.get("nx"), 0.0)),
-                    float(_safe_float(m.get("ny"), 0.0)),
-                    float(_safe_float(m.get("nw"), 0.0)),
-                    float(_safe_float(m.get("nh"), 0.0)),
-                    (created_by or m.get("created_by", "")),
-                    now,
-                    (created_by or m.get("updated_by", "")),
-                    now,
-                ]
-            )
-        if rows:
-            self._append_rows("marks", rows)
+        # 2) Clone GROUPS from old QC markset to new QC markset
+        #    group_id will change, but mark_ids remain SAME.
+        try:
+            src_groups = self.list_groups_for_mark_set(mark_set_id)  # returns mark_ids as list[str]
+        except Exception:
+            src_groups = []
+
+        for g in (src_groups or []):
+            try:
+                self.create_group(
+                    mark_set_id=new_id,
+                    page_index=int(g.get("page_index", 0)),
+                    name=(g.get("name") or ""),
+                    nx=float(g.get("nx", 0.0)),
+                    ny=float(g.get("ny", 0.0)),
+                    nw=float(g.get("nw", 0.0)),
+                    nh=float(g.get("nh", 0.0)),
+                    mark_ids=list(g.get("mark_ids") or []),
+                    created_by=(created_by or src_ms.get("created_by", "")),
+                )
+            except Exception:
+                # best-effort: skip a corrupted group row without failing clone
+                continue
+
         return new_id
+
     
     def delete_mark_set(self, mark_set_id: str, requested_by: str | None = None) -> None:
         """
@@ -1473,28 +1648,40 @@ class SheetsAdapter(StorageAdapter):
         report_id: str | None = None,
         report_title: str | None = None,
         submitted_by: str | None = None,
+        checkin_sync_status: str | None = None,
+        checkin_sync_error: str | None = None,
+        checkin_id: str | None = None,
     ) -> str:
-        """Persist a generated report record.
+        """
+        Persist a generated report record.
 
         If report_id is provided (e.g. from the Viewer), it is reused so that
         inspection_reports.report_id matches mark_user_input.report_id.
         Otherwise, a fresh UUID is generated.
+
+        Also logs CheckIn sync status/error/id if provided.
         """
         rid = report_id or _uuid()
         now = _utc_iso()
-        self._append_rows(
-            "inspection_reports",
-            [[
-                rid,
-                mark_set_id,
-                inspection_doc_url,
-                (created_by or ""),
-                now,
-                (report_title or ""),
-                (submitted_by or ""),
-            ]],
-        )
+
+        data = {
+            "report_id": rid,
+            "mark_set_id": mark_set_id,
+            "inspection_doc_url": inspection_doc_url,
+            "created_by": (created_by or ""),
+            "created_at": now,
+            "report_title": (report_title or ""),
+            "submitted_by": (submitted_by or ""),
+            # ✅ CheckIn fields
+            "checkin_sync_status": (checkin_sync_status or ""),
+            "checkin_sync_error": (checkin_sync_error or ""),
+            "checkin_id": (checkin_id or ""),
+        }
+
+        # Use header-name mapping to avoid column-shift bugs
+        self._append_dict_row("inspection_reports", data)
         return rid
+
 
 
 

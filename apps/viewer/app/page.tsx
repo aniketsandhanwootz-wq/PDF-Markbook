@@ -18,6 +18,8 @@ import PDFSearch from '../components/PDFSearch';
 import SlideSidebar from '../components/SlideSidebar';
 import usePinchZoom from '../hooks/usePinchZoom';
 import DrawingSheetPanel from '../components/DrawingSheetPanel'; // ✅ NEW
+import DraftResumeDialog from '../components/DraftResumeDialog';
+import { useQCDraft } from '../hooks/useQCDraft';
 
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
@@ -104,6 +106,18 @@ const quantize = (z: number) => {
   return q;
 };
 
+// --- Default report title helper ---
+// Generates: Report[DD/MM/YYYY] using Asia/Kolkata timezone
+function getDefaultReportTitle(): string {
+  const date = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  }).format(new Date()); // e.g. "12/12/2025"
+
+  return `Report[${date}]`;
+}
 
 function clampScroll(container: HTMLElement, left: number, top: number) {
   const maxL = Math.max(0, container.scrollWidth - container.clientWidth);
@@ -1130,9 +1144,10 @@ function ViewerContent() {
   // Cache zoom level per group so we don’t recompute on every mark navigation
   const groupZoomCache = useRef<Map<number, number>>(new Map());
 
-  // Report metadata
-  const [reportTitle, setReportTitle] = useState('');
-  const [showReportTitle, setShowReportTitle] = useState(true);
+ // Report metadata
+const [reportTitle, setReportTitle] = useState(() => getDefaultReportTitle());
+const [showReportTitle, setShowReportTitle] = useState(true);
+
 
   const setZoomQ = useCallback(
     (z: number, ref?: MutableRefObject<number>) => {
@@ -1213,6 +1228,11 @@ function ViewerContent() {
   const [showReview, setShowReview] = useState(false);
   const [hasVisitedReview, setHasVisitedReview] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Local draft autosave toggle – we enable this only after initial
+  // "resume / start fresh" decision so that old drafts aren't overwritten.
+  const [autosaveEnabled, setAutosaveEnabled] = useState(false);
+
 
 
 
@@ -1507,6 +1527,7 @@ function ViewerContent() {
   const qAssembly = searchParams?.get('assembly_drawing') || '';
   // NEW: optional POC CC list from Glide (comma-separated emails)
   const qPocCc = searchParams?.get('poc_cc') || '';
+  const userEmail = (qUser || '').trim() || null;
 
   // Viewer only needs the business triple; assembly_drawing is optional
   const hasBootstrapKeys = !!(qProject && qExtId && qPartNumber);
@@ -1582,6 +1603,48 @@ function ViewerContent() {
 
   const markSetId = selectedMarkSetId || markSetIdParam;
 
+  // 🔹 Local draft persistence (report title + entries + statuses + cursor)
+  const { draft, hasDraft, clearDraft, loaded } = useQCDraft({
+    enabled: !!markSetId && !showSetup,
+    projectName: qProject || '',
+    extId: qExtId || '',
+    partNumber: qPartNumber || '',
+    markSetId: markSetId || null,
+    userEmail,
+    liveState: {
+      reportTitle,
+      entries,
+      statuses: statuses as Record<string, 'PASS' | 'FAIL' | 'DOUBT' | ''>,
+      currentMarkIndex,
+      // title panel already confirmed = user actually started inspection
+      titleConfirmed: !showReportTitle,
+    },
+    autosave: autosaveEnabled,
+  });
+
+  const [showDraftDialog, setShowDraftDialog] = useState(false);
+  const [hasHandledInitialDraft, setHasHandledInitialDraft] = useState(false);
+
+   // Decide once per markset: either show resume dialog, or enable autosave directly
+  useEffect(() => {
+    if (!markSetId || showSetup) return;
+
+    // ✅ NEW: wait until useQCDraft has actually checked localStorage
+    if (!loaded) return;
+
+    if (hasHandledInitialDraft) return;
+
+    if (draft && hasDraft) {
+      // previous data exists → ask user
+      setShowDraftDialog(true);
+    } else {
+      // no previous data → start autosaving immediately
+      setAutosaveEnabled(true);
+      setHasHandledInitialDraft(true);
+    }
+  }, [draft, hasDraft, hasHandledInitialDraft, markSetId, showSetup, loaded]);
+
+
   // Reset viewer bootstrap state when markset changes
   useEffect(() => {
     hasBootstrappedViewerRef.current = false;
@@ -1592,6 +1655,14 @@ function ViewerContent() {
     setCurrentMarkIndex(0);
     setShowReview(false);
     setHasVisitedReview(false);
+
+    // ✅ NEW: draft handling is per-markset, so reset these too
+    setAutosaveEnabled(false);
+    setHasHandledInitialDraft(false);
+
+      // Reset title for each new inspection session
+  setReportTitle(getDefaultReportTitle());
+  setShowReportTitle(true);
   }, [markSetId]);
 
 
@@ -2756,9 +2827,13 @@ const response = await fetch(`${apiBase}/reports/generate-bundle`, {
         toast.success('✓ Submission processed.', { duration: 3500 });
       }
 
+      // ✅ Clear any saved local draft after successful submit
+      clearDraft();
+
       // Navigate back to the mark-set chooser (reset to generic triple)
       setTimeout(() => {
         const qs =
+
           sessionStorage.getItem('viewerLastSetupParams') ||
           window.location.search.slice(1);
 
@@ -2797,6 +2872,7 @@ const response = await fetch(`${apiBase}/reports/generate-bundle`, {
     marks,
     reportTitle,
     reportId,
+    clearDraft,
   ]);
 
 
@@ -3010,6 +3086,56 @@ const response = await fetch(`${apiBase}/reports/generate-bundle`, {
           { length: Math.max(0, visibleRange[1] - visibleRange[0] + 1) },
           (_, i) => visibleRange[0] + i
         );
+  // --- Local draft: apply or discard ------------------------------------
+
+  const handleResumeDraft = () => {
+    if (!draft) return;
+
+    // Restore entries + statuses
+    setEntries(draft.entries || {});
+    setStatuses(draft.statuses || {});
+
+    // Restore report title
+    if (typeof draft.reportTitle === 'string') {
+      setReportTitle(draft.reportTitle);
+    }
+
+    // Restore whether title panel was already confirmed
+    if (draft.titleConfirmed) {
+      setShowReportTitle(false);
+    }
+
+    // Restore cursor index safely
+    const safeIndex =
+      typeof draft.currentMarkIndex === 'number' &&
+      draft.currentMarkIndex >= 0 &&
+      draft.currentMarkIndex < marks.length
+        ? draft.currentMarkIndex
+        : 0;
+
+    setCurrentMarkIndex(safeIndex);
+
+    // Mark initial decision done + start autosave
+    setShowDraftDialog(false);
+    setAutosaveEnabled(true);
+    setHasHandledInitialDraft(true);
+
+    // Jump camera to that mark (same place user left)
+    if (marks.length && pdf) {
+      pendingSmartFrameRef.current = true; // use smart framing for this jump
+      jumpDirectToMark(safeIndex);
+      // tell bootstrap effect that we've already positioned camera
+      hasBootstrappedViewerRef.current = true;
+    }
+  };
+
+  const handleDiscardDraft = () => {
+    clearDraft();
+    setShowDraftDialog(false);
+    setAutosaveEnabled(true);
+    setHasHandledInitialDraft(true);
+    // entries/statuses stay as freshly initialised blanks from loadMarks()
+  };
 
 
 
@@ -3076,6 +3202,13 @@ const response = await fetch(`${apiBase}/reports/generate-bundle`, {
         }}
       >
         <Toaster position="top-center" />
+        {showDraftDialog && draft && (
+          <DraftResumeDialog
+            updatedAt={draft.updatedAt}
+            onResume={handleResumeDraft}
+            onDiscard={handleDiscardDraft}
+          />
+        )}
 
         <div
           style={{
@@ -3324,6 +3457,14 @@ const response = await fetch(`${apiBase}/reports/generate-bundle`, {
   return (
     <div className="viewer-container">
       <Toaster position="top-center" />
+
+      {showDraftDialog && draft && (
+        <DraftResumeDialog
+          updatedAt={draft.updatedAt}
+          onResume={handleResumeDraft}
+          onDiscard={handleDiscardDraft}
+        />
+      )}
 
       {marks.length > 0 && (
         <SlideSidebar

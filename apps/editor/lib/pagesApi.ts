@@ -62,3 +62,42 @@ export async function bootstrapPagesForDoc(
     throw new Error(`bootstrapPagesForDoc failed: HTTP ${res.status}`);
   }
 }
+
+
+// ---------- OCR: required value for a mark ----------
+
+export type RequiredValueOCRRequestPayload = {
+  mark_set_id: string;
+  page_index: number;
+  nx: number;
+  ny: number;
+  nw: number;
+  nh: number;
+};
+
+export type RequiredValueOCRResponse = {
+  required_value_ocr: string | null;
+  required_value_conf: number;
+};
+
+/**
+ * Call backend /ocr/required-value to OCR the required value
+ * for a given mark bounding box.
+ */
+export async function runRequiredValueOCR(
+  apiBaseUrl: string,
+  payload: RequiredValueOCRRequestPayload
+): Promise<RequiredValueOCRResponse> {
+  const res = await fetch(`${apiBaseUrl}/ocr/required-value`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`runRequiredValueOCR failed: HTTP ${res.status} ${text}`);
+  }
+
+  return (await res.json()) as RequiredValueOCRResponse;
+}

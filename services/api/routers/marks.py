@@ -291,7 +291,18 @@ async def update_marks(
             detail="Marks listing not supported by this backend",
         )
 
-    marks_data = [mark.model_dump() for mark in marks]
+    marks_data = [mark.model_dump(exclude_unset=True) for mark in marks]
+
+    if marks_data:
+        sample = marks_data[0]
+        logger.info(
+            "[PUT marks] sample required_value_ocr=%r conf=%r final=%r keys=%s",
+            sample.get("required_value_ocr"),
+            sample.get("required_value_conf"),
+            sample.get("required_value_final"),
+            list(sample.keys()),
+        )
+
 
     # ---------- MASTER EDITOR FLOW: full rewrite ----------
     if can_full_edit:
@@ -336,16 +347,24 @@ async def update_marks(
         mid = (m.get("mark_id") or "").strip()
 
         if mid and mid in existing_ids:
-            # Existing master mark -> merge instrument / is_required only
+            # Existing master mark -> merge instrument / is_required / required_value_* only
             orig = existing_by_id[mid]
 
-            # normalize original values
+            # --- normalize original values ---
             orig_instr = _normalize_instrument(orig.get("instrument"))
             orig_req = _normalize_bool(orig.get("is_required"))
+
+            # required values stored as strings in Sheets; treat "" as empty
+            orig_rvo = (orig.get("required_value_ocr") or "").strip()
+            orig_rvc = "" if orig.get("required_value_conf") is None else str(orig.get("required_value_conf")).strip()
+            orig_rvf = (orig.get("required_value_final") or "").strip()
 
             # start from original normalized values
             new_instr = orig_instr
             new_req = orig_req
+            new_rvo = orig_rvo
+            new_rvc = orig_rvc
+            new_rvf = orig_rvf
 
             # --- instrument update semantics ---
             if "instrument" in m:
@@ -358,18 +377,37 @@ async def update_marks(
                 if req_val is not None:
                     new_req = _normalize_bool(req_val)
 
-            # only consider it "updated" if something actually changed, after normalization
+            # --- required value OCR (string) ---
+            if "required_value_ocr" in m:
+                new_rvo = (m.get("required_value_ocr") or "").strip()
+
+            # --- required value conf (store as string, SheetsAdapter will not care) ---
+            if "required_value_conf" in m and m.get("required_value_conf") is not None:
+                new_rvc = str(m["required_value_conf"])
+
+            # --- required value final (string) ---
+            if "required_value_final" in m:
+                new_rvf = (m.get("required_value_final") or "").strip()
+
+            # detect changes
             instrument_changed = new_instr != orig_instr
             req_changed = new_req != orig_req
+            rvo_changed = new_rvo != orig_rvo
+            rvc_changed = new_rvc != orig_rvc
+            rvf_changed = new_rvf != orig_rvf
 
-            if instrument_changed or req_changed:
+            if instrument_changed or req_changed or rvo_changed or rvc_changed or rvf_changed:
                 updated = dict(orig)
                 updated["instrument"] = new_instr
                 updated["is_required"] = new_req
+                updated["required_value_ocr"] = new_rvo
+                updated["required_value_conf"] = new_rvc
+                updated["required_value_final"] = new_rvf
                 merged_existing[mid] = updated
         else:
             # Mark without an existing master ID -> treat as NEW
             new_marks.append(m)
+
 
     # Determine current max order_index in master (for NEW marks only)
     if existing_marks:

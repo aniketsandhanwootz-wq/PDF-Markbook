@@ -41,6 +41,7 @@ from adapters.sheets import HEADERS as SHEETS_HEADERS
 from routers import reports, reports_excel
 from typing import Any, Dict  
 from routers import pages as pages_router
+from routers import ocr
 
 # ========== NEW: Request Context for Tracing ==========
 request_id_var = contextvars.ContextVar('request_id', default=None)
@@ -783,6 +784,8 @@ app.include_router(pages_router.router)
 
 from routers import reports_master
 app.include_router(reports_master.router)
+
+app.include_router(ocr.router) 
 # ========== End of Submissions ==========
 
 startup_time = time.time()

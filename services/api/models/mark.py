@@ -1,5 +1,4 @@
 # services/api/models/mark.py
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -9,6 +8,18 @@ from uuid import uuid4
 
 def _gen_id() -> str:
   return f"m-{uuid4().hex[:10]}"
+
+
+def _safe_float(val: Any) -> Optional[float]:
+  try:
+    if val is None:
+      return None
+    s = str(val).strip()
+    if not s:
+      return None
+    return float(s)
+  except Exception:
+    return None
 
 
 # ---------- low-level transformers (page size / rotation) ----------
@@ -26,13 +37,7 @@ def _normalize_rect_top_left(
   Convert from ABSOLUTE px rect (x,y,w,h) in a *top-left* origin
   coordinate system to normalized [0..1] coords, accounting for
   rotation (0, 90, 180, 270) in the human-view orientation.
-
-  IMPORTANT:
-  - This assumes your input (x,y) is measured from TOP-LEFT of the
-    rendered page (like HTML canvas), not bottom-left PDF user space.
-  - For real PDF bottom-left coords, convert to top-left first.
   """
-
   rot = rotation_deg % 360
 
   if page_width <= 0 or page_height <= 0:
@@ -44,8 +49,6 @@ def _normalize_rect_top_left(
     nw = w / page_width
     nh = h / page_height
   elif rot == 90:
-    # Page visually rotated: width/height swap in human view
-    # Treat (x,y) as if measured on rotated surface.
     nx = y / page_height
     ny = (page_width - (x + w)) / page_width
     nw = h / page_height
@@ -79,11 +82,7 @@ def _denormalize_rect_top_left(
   Convert from normalized [0..1] coordinates back to absolute px rect
   (x,y,w,h) in a top-left origin coordinate system, accounting for
   rotation (0, 90, 180, 270) in human-view orientation.
-
-  This is the inverse of _normalize_rect_top_left with the same
-  assumptions: top-left origin, not raw PDF user space.
   """
-
   rot = rotation_deg % 360
 
   if page_width <= 0 or page_height <= 0:
@@ -95,7 +94,6 @@ def _denormalize_rect_top_left(
     w = nw * page_width
     h = nh * page_height
   elif rot == 90:
-    # Invert the 90° mapping above
     h = nw * page_height
     w = nh * page_width
     x = page_width - (ny * page_width + w)
@@ -142,6 +140,11 @@ class Mark:
   instrument: Optional[str] = None
   is_required: bool = True
 
+  # 🔴 NEW: required value fields (OCR + user-confirmed)
+  required_value_ocr: Optional[str] = None
+  required_value_conf: Optional[float] = None  # 0–100
+  required_value_final: Optional[str] = None
+
   # --------------------
   # Validation
   # --------------------
@@ -166,7 +169,6 @@ class Mark:
     if self.zoom_hint is not None and self.zoom_hint <= 0.0:
       raise ValueError("zoom_hint, if provided, must be > 0")
 
-    # name can be blank (UI allows it), but trim junk
     if self.name is None:
       raise ValueError("name must not be None (use empty string instead)")
 
@@ -192,15 +194,10 @@ class Mark:
     label: Optional[str] = None,
     instrument: Optional[str] = None,
     is_required: bool = True,
+    required_value_ocr: Optional[str] = None,
+    required_value_conf: Optional[float] = None,
+    required_value_final: Optional[str] = None,
   ) -> "Mark":
-    """
-    Build a Mark from ABSOLUTE px rect coordinates in a top-left
-    origin coordinate system (e.g., from a canvas or PDF viewport),
-    normalizing against page size + rotation.
-
-    If your source coordinates are in bottom-left PDF user space,
-    convert them to top-left first, THEN call this helper.
-    """
     nx, ny, nw, nh = _normalize_rect_top_left(
       x=x,
       y=y,
@@ -225,6 +222,9 @@ class Mark:
       label=label,
       instrument=instrument,
       is_required=is_required,
+      required_value_ocr=required_value_ocr,
+      required_value_conf=required_value_conf,
+      required_value_final=required_value_final,
     )
     mark.validate()
     return mark
@@ -235,13 +235,6 @@ class Mark:
     page_height: float,
     rotation_deg: int = 0,
   ) -> Dict[str, float]:
-    """
-    Convert this Mark's normalized rect back to ABSOLUTE px coordinates
-    in a top-left origin coordinate system (x,y,w,h).
-
-    If the renderer expects bottom-left PDF user space, do the final
-    flip outside this method.
-    """
     x, y, w, h = _denormalize_rect_top_left(
       nx=self.nx,
       ny=self.ny,
@@ -276,6 +269,9 @@ class Mark:
       label=row.get("label"),
       instrument=row.get("instrument"),
       is_required=bool(row.get("is_required", True)),
+      required_value_ocr=row.get("required_value_ocr"),
+      required_value_conf=_safe_float(row.get("required_value_conf")),
+      required_value_final=row.get("required_value_final"),
     )
     mark.validate()
     return mark
@@ -299,6 +295,9 @@ class Mark:
       "label": self.label,
       "instrument": self.instrument,
       "is_required": self.is_required,
+      "required_value_ocr": self.required_value_ocr,
+      "required_value_conf": self.required_value_conf,
+      "required_value_final": self.required_value_final,
     }
 
   # --------------------
@@ -324,6 +323,9 @@ class Mark:
       label=data.get("label"),
       instrument=data.get("instrument"),
       is_required=bool(data.get("is_required", True)),
+      required_value_ocr=data.get("required_value_ocr"),
+      required_value_conf=_safe_float(data.get("required_value_conf")),
+      required_value_final=data.get("required_value_final"),
     )
     mark.validate()
     return mark
@@ -347,31 +349,24 @@ class Mark:
       "label": self.label,
       "instrument": self.instrument,
       "is_required": self.is_required,
+      "required_value_ocr": self.required_value_ocr,
+      "required_value_conf": self.required_value_conf,
+      "required_value_final": self.required_value_final,
     }
 
 
 # ------------ helpers on whole lists ------------
 
 def normalize_order_and_labels(marks: List[Mark]) -> List[Mark]:
-  """
-  Re-index order_index in array order (0..N-1).
-
-  Labeling is handled in the editor (applying A/B/C… from order_index),
-  so here we ONLY normalize order_index at domain level.
-  """
   for idx, m in enumerate(marks):
     m.order_index = idx
   return marks
 
 
 def validate_mark_list(marks: List[Mark]) -> None:
-  """
-  Validate all marks & ensure no obvious nonsense.
-  """
   for m in marks:
     m.validate()
 
-  # Enforce unique mark_id within a list
   seen_ids = set()
   for m in marks:
     if m.mark_id in seen_ids:

@@ -4,7 +4,7 @@ from pydantic import ConfigDict, Field
 import os
 import base64
 from typing import List, Optional
-
+from pathlib import Path
 
 class Settings(BaseSettings):
     # Storage settings
@@ -14,6 +14,20 @@ class Settings(BaseSettings):
     google_sa_json_base64: str = ""
     sheets_spreadsheet_id: str = ""
     db_url: str = "sqlite:///data/markbook.db"
+    # ===== CheckIn Sync (secondary confidential sheet) =====
+    # Can be spreadsheet_id OR full URL. Example:
+    # CHECKIN_SHEETS_SPREADSHEET_ID=https://docs.google.com/spreadsheets/d/<ID>/edit
+    checkin_sheets_spreadsheet_id: str = ""
+
+    # Worksheet/tab name to append
+    checkin_tab_name: str = "CheckIn"
+
+    # Comma-separated alert recipients for failures (checkin/report/drive)
+    checkin_alert_emails: Optional[str] = Field(
+        default="aniket.sandhan@wootz.work,vinay.jadon@wootz.work,ayush@wootz.work",
+        description="Comma-separated emails to alert on checkin/report/drive failures",
+    )
+
     
     # CORS settings
     allowed_origins: str = "http://localhost:3001,http://localhost:3002,http://localhost:8000,http://localhost:3000"
@@ -49,9 +63,11 @@ class Settings(BaseSettings):
     max_parallel_reports: int = 1
 
     model_config = ConfigDict(
-        env_file=".env",
-        extra='ignore'  # Changed from 'forbid' to 'ignore'
+        # Always load .env from the same folder as this settings.py
+        env_file=str(Path(__file__).resolve().parent / ".env"),
+        extra="ignore",
     )
+
     
     def resolved_google_sa_json(self) -> str:
         """

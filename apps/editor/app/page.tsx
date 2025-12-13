@@ -33,7 +33,13 @@ type Mark = {
   label?: string;          // A, B, C...
   instrument?: string;     // Vernier, Micrometer, etc.
   is_required?: boolean;   // true = mandatory, false = optional
+
+  // 🔢 OCR fields (NEW – must be here too!)
+  required_value_ocr?: string | null;
+  required_value_conf?: number | null;
+  required_value_final?: string | null;
 };
+
 
 type Group = {
   group_id: string;
@@ -245,7 +251,7 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
     }
   };
 
-  const handleOpenMarkset = (markSetId: string, isMaster: boolean) => {
+  const handleOpenMarkset = (markSetId: string, isMaster: boolean, inspectionMapName?: string) => {
     if (!boot?.document?.pdf_url) {
       setErr('No PDF URL on document.');
       return;
@@ -274,6 +280,9 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
     search.set('mark_set_id', markSetId);
     search.set('is_master', isMaster ? '1' : '0');
     search.set('master_mark_set_id', masterForViewer);
+    // ✅ pass ID and Inspection Map Name for export filename
+    if (extId) search.set('id', extId);
+    if (inspectionMapName) search.set('inspection_map_name', inspectionMapName);
 
     // 👉 pass part_number so editor sidebar can show it
     if (boot.document.part_number) {
@@ -478,7 +487,14 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
         {!isEditing && (
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <button
-              onClick={() => handleOpenMarkset(ms.mark_set_id, ms.is_master)}
+              onClick={() =>
+  handleOpenMarkset(
+    ms.mark_set_id,
+    ms.is_master,
+    ms.is_master ? 'MASTER' : ms.label
+  )
+}
+
               style={btn}
             >
               Open
@@ -787,6 +803,10 @@ function EditorContent() {
   // Part number passed from SetupScreen URL
   const partNumberFromUrl = searchParams?.get('part_number') || '';
   const dwgNumFromUrl = searchParams?.get('dwg_num') || '';   // 🔥 NEW
+
+    // ✅ Used for Map PDF filename
+  const extIdFromUrl = searchParams?.get('id') || '';
+  const inspectionMapNameFromUrl = searchParams?.get('inspection_map_name') || '';
 
 
   const [showSetup, setShowSetup] = useState(true);
@@ -1346,10 +1366,17 @@ function EditorContent() {
       const url = `${apiBase}/mark-sets/${targetId}/marks${userMail ? `?user_mail=${encodeURIComponent(userMail)}` : ''
         }`;
 
+      // ✅ Ensure required_value_* keys are ALWAYS present in JSON (prevents refresh-loss)
+     const payload = applyLabels(marks).map((m) => ({
+       ...m,
+       required_value_ocr: m.required_value_ocr ?? '',
+      required_value_conf: m.required_value_conf ?? 0,
+      required_value_final: m.required_value_final ?? '',
+     }));
       const res = await fetch(url, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(applyLabels(marks)),
+        body: JSON.stringify(payload),
       });
 
       if (!res.ok) {
@@ -1377,6 +1404,46 @@ function EditorContent() {
       addToast('Failed to save marks', 'error');
     }
   }, [marks, isDemo, addToast, isMasterMarkSet, userMail]);
+
+    // ✅ PATCH 4: used by GroupEditor to persist FULL marks array into MASTER pool
+  const persistMasterMarks = useCallback(async () => {
+    if (isDemo) return;
+
+    // In QC editor: persist to MASTER mark-set (universal pool)
+    // In MASTER editor: persist to itself
+    const targetId = isMasterMarkSet
+      ? markSetId.current
+      : marksSourceMarkSetId.current;
+
+    if (!targetId) throw new Error('Missing masterMarkSetId (targetId)');
+    if (!userMail) throw new Error('Missing userMail');
+
+    const apiBase =
+      process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
+
+    const url = `${apiBase}/mark-sets/${targetId}/marks?user_mail=${encodeURIComponent(
+      userMail
+    )}`;
+
+    // ✅ keep OCR keys always present (prevents refresh-loss)
+    const payload = applyLabels(marks).map((m) => ({
+      ...m,
+      required_value_ocr: m.required_value_ocr ?? '',
+      required_value_conf: m.required_value_conf ?? 0,
+      required_value_final: m.required_value_final ?? '',
+    }));
+
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload), // ✅ FULL marks array
+    });
+
+    if (!res.ok) {
+      const txt = await res.text();
+      throw new Error(txt || 'PUT marks failed');
+    }
+  }, [marks, isDemo, isMasterMarkSet, userMail]);
 
   // Save marks + close window (old "Save & Submit" behaviour)
   const saveAndSubmit = useCallback(async () => {
@@ -1515,6 +1582,19 @@ function EditorContent() {
       if (typeof updates.is_required === 'boolean') {
         patch.is_required = updates.is_required;
       }
+      // --- required value fields ---
+      if (updates.required_value_ocr !== undefined) {
+        patch.required_value_ocr = (updates.required_value_ocr ?? '').toString();
+      }
+
+      if (updates.required_value_conf !== undefined) {
+        patch.required_value_conf =
+          updates.required_value_conf === null ? null : Number(updates.required_value_conf);
+      }
+
+      if (updates.required_value_final !== undefined) {
+        patch.required_value_final = (updates.required_value_final ?? '').toString();
+      }
 
       // If nothing relevant changed (e.g. only geometry), skip API call
       if (Object.keys(patch).length === 0) {
@@ -1522,6 +1602,12 @@ function EditorContent() {
           // geometry-only / no server change
           addToast('Mark updated', 'success');
         }
+        return;
+      }
+      // ✅ If mark is not persisted yet, DO NOT PATCH backend (prevents /marks/group-* 404 spam)
+      // These get persisted later via final PUT /mark-sets/{id}/marks
+      if (markId.startsWith('group-') || markId.startsWith('temp-')) {
+        if (!silent) addToast('Mark updated', 'success');
         return;
       }
 
@@ -1654,7 +1740,26 @@ function EditorContent() {
       const doc = await PDFDocument.load(srcBytes);
       const font = await doc.embedFont(StandardFonts.Helvetica);
 
-      const toDraw = applyLabels(marks);
+            // ✅ Export marks:
+      // - MASTER: export all marks
+      // - QC: export ONLY marks that are included in this Inspection Map (union of group.mark_ids)
+      let exportMarks: Mark[] = marks;
+
+      if (!isMasterMarkSet) {
+        const allowed = new Set<string>();
+        for (const g of groups) {
+          for (const id of (g.mark_ids || [])) allowed.add(id);
+        }
+        exportMarks = marks.filter(m => allowed.has(m.mark_id));
+      }
+
+      if (!exportMarks.length) {
+        addToast('No Balloons found for this Inspection Map to export.', 'info');
+        return;
+      }
+
+      const toDraw = applyLabels(exportMarks);
+
       toDraw.forEach(m => {
         const page = doc.getPage(m.page_index);
         const { width, height } = page.getSize();
@@ -1721,7 +1826,17 @@ function EditorContent() {
       const blob = new Blob([pdfBytes as unknown as BlobPart], { type: 'application/pdf' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = 'marked-document.pdf';
+            // ✅ Filename: ID[Inspection Map Name].pdf
+      const safe = (s: string) =>
+        (s || '')
+          .replace(/[\/\\?%*:|"<>]/g, '-')  // Windows-safe
+          .replace(/\s+/g, ' ')
+          .trim();
+
+      const idPart = safe(extIdFromUrl || partNumberFromUrl || 'ID');
+      const mapPart = safe(inspectionMapNameFromUrl || 'Inspection Map');
+
+      a.download = `${idPart}[${mapPart}].pdf`;
       a.click();
       URL.revokeObjectURL(a.href);
 
@@ -1732,7 +1847,8 @@ function EditorContent() {
       console.error(e);
       addToast('Failed to generate PDF', 'error');
     }
-  }, [marks, addToast]);
+}, [marks, groups, isMasterMarkSet, addToast, extIdFromUrl, inspectionMapNameFromUrl, partNumberFromUrl]);
+
 
 
   // Wheel zoom - prevent browser zoom, only zoom PDF (SLOWER SPEED)
@@ -2345,6 +2461,7 @@ function EditorContent() {
             ownerMarkSetId={ownerMarkSetId.current}
             nextGroupNumber={groups.length + 1}
             originalMarkIds={originalMarksRef.current.map((m) => m.mark_id)}
+            onPersistMarks={persistMasterMarks}
 
             onUpdateMark={(markId, updates) => updateMark(markId, updates, true)}
             // ❌ only these marks (created in this GroupEditor session) can be deleted via "×"

@@ -8,17 +8,64 @@ import React, {
     useCallback,
 } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
+import { runRequiredValueOCR } from '../lib/pagesApi'; // 👈 NEW
+
+// Simple in-memory cache for instrument suggestions so we only hit
+// /instruments/suggestions once per browser session.
+let globalInstrumentCache: string[] | null = null;
+
+// --- fuzzy / subsequence match helpers for instrument search ---
+
+function isSubsequence(query: string, target: string): boolean {
+    let i = 0;
+    let j = 0;
+    const q = query.toLowerCase();
+    const t = target.toLowerCase();
+
+    while (i < q.length && j < t.length) {
+        if (q[i] === t[j]) {
+            i++;
+        }
+        j++;
+    }
+    return i === q.length;
+}
+
+function scoreInstrument(query: string, candidate: string): number {
+    const q = query.toLowerCase();
+    const c = candidate.toLowerCase();
+    if (!q) return 0;
+
+    const idx = c.indexOf(q);
+    if (idx !== -1) {
+        // direct substring match, earlier index is better
+        return idx;
+    }
+    if (isSubsequence(q, c)) {
+        // subsequence match but not contiguous; push slightly later
+        return 100 + c.length;
+    }
+    return Number.POSITIVE_INFINITY; // no match
+}
 
 type Mark = {
     mark_id: string;
     label?: string;
     instrument?: string;
     is_required?: boolean;
+
+    // Normalized bbox (existing)
     nx: number;
     ny: number;
     nw: number;
     nh: number;
+
+    // 🔢 OCR fields (NEW)
+    required_value_ocr?: string | null;
+    required_value_conf?: number | null;
+    required_value_final?: string | null;
 };
+
 
 type GroupEditorProps = {
     isOpen: boolean;
@@ -43,6 +90,8 @@ type GroupEditorProps = {
     originalMarkIds?: string[];
     onClose: () => void;
     onSaved: () => void;
+onPersistMarks?: () => Promise<void>; // 👈 NEW: persist master marks
+ 
     onUpdateMark: (markId: string, updates: Partial<Mark>) => void;
     onFocusMark: (markId: string) => void;
     // Optional: create marks directly from the preview
@@ -133,6 +182,169 @@ function applySharpenFilter(
   ctx.putImageData(imageData, 0, 0);
 }
 
+type InstrumentComboProps = {
+    value: string;
+    allInstruments: string[];
+    onChange: (next: string) => void;
+    onAddNewLocal: (next: string) => void;
+};
+
+function InstrumentCombo({
+    value,
+    allInstruments,
+    onChange,
+    onAddNewLocal,
+}: InstrumentComboProps) {
+    const [inputValue, setInputValue] = useState<string>(value || '');
+    const [isOpen, setIsOpen] = useState(false);
+    const containerRef = useRef<HTMLDivElement | null>(null);
+
+    // Keep local input in sync if mark.instrument changes from outside
+    useEffect(() => {
+        setInputValue(value || '');
+    }, [value]);
+
+    const matches = useMemo(() => {
+        const q = inputValue.trim();
+        if (!q) {
+            // Show top instruments when empty
+            return allInstruments
+                .slice(0, 20)
+                .map((name) => ({ name, score: 0 }));
+        }
+        return allInstruments
+            .map((name) => ({ name, score: scoreInstrument(q, name) }))
+            .filter((x) => x.score !== Number.POSITIVE_INFINITY)
+            .sort((a, b) => a.score - b.score)
+            .slice(0, 20);
+    }, [inputValue, allInstruments]);
+
+    const hasExact = useMemo(() => {
+        const q = inputValue.trim().toLowerCase();
+        if (!q) return false;
+        return allInstruments.some(
+            (name) => name.toLowerCase() === q,
+        );
+    }, [inputValue, allInstruments]);
+
+    // Close on outside click
+    useEffect(() => {
+        if (!isOpen) return;
+
+        function handleClickOutside(e: MouseEvent) {
+            if (!containerRef.current) return;
+            if (!containerRef.current.contains(e.target as Node)) {
+                setIsOpen(false);
+            }
+        }
+
+        window.addEventListener('mousedown', handleClickOutside);
+        return () => window.removeEventListener('mousedown', handleClickOutside);
+    }, [isOpen]);
+
+    const handleSelect = (name: string) => {
+        setInputValue(name);
+        onChange(name);
+        setIsOpen(false);
+    };
+
+    const handleAddNew = () => {
+        const trimmed = inputValue.trim();
+        if (!trimmed) return;
+        onAddNewLocal(trimmed);
+        handleSelect(trimmed);
+    };
+
+    return (
+        <div
+            ref={containerRef}
+            style={{ position: 'relative', flex: 1, minWidth: 115, maxWidth: 190 }}
+        >
+            <input
+                type="text"
+                value={inputValue}
+                onFocus={() => setIsOpen(true)}
+                onChange={(e) => {
+                    const v = e.target.value;
+                    setInputValue(v);
+                    setIsOpen(true);
+                    onChange(v);
+                }}
+                placeholder="Instrument..."
+                style={{
+                    border: '1px solid #ddd',
+                    borderRadius: 4,
+                    fontSize: 12,
+                    padding: '4px 6px',
+                    width: '100%',
+                    boxSizing: 'border-box',
+                }}
+            />
+
+            {isOpen &&
+                (matches.length > 0 ||
+                    (!hasExact && inputValue.trim())) && (
+                    <div
+                        style={{
+                            position: 'absolute',
+                            zIndex: 10,
+                            top: '100%',
+                            left: 0,
+                            right: 0,
+                            marginTop: 2,
+                            maxHeight: 180,
+                            overflowY: 'auto',
+                            background: '#fff',
+                            border: '1px solid #ddd',
+                            borderRadius: 4,
+                            boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
+                            fontSize: 12,
+                        }}
+                    >
+                        {matches.map((m) => (
+                            <div
+                                key={m.name}
+                                onMouseDown={(e) => {
+                                    e.preventDefault(); // don't blur input
+                                    handleSelect(m.name);
+                                }}
+                                style={{
+                                    padding: '4px 8px',
+                                    cursor: 'pointer',
+                                    whiteSpace: 'nowrap',
+                                    textOverflow: 'ellipsis',
+                                    overflow: 'hidden',
+                                }}
+                            >
+                                {m.name}
+                            </div>
+                        ))}
+
+                        {!hasExact && inputValue.trim() && (
+                            <div
+                                onMouseDown={(e) => {
+                                    e.preventDefault();
+                                    handleAddNew();
+                                }}
+                                style={{
+                                    padding: '4px 8px',
+                                    cursor: 'pointer',
+                                    borderTop: matches.length
+                                        ? '1px solid #eee'
+                                        : 'none',
+                                    fontStyle: 'italic',
+                                    background: '#f5f5f5',
+                                }}
+                            >
+                                Add “{inputValue.trim()}” Instrument
+                            </div>
+                        )}
+                    </div>
+                )}
+        </div>
+    );
+}
+
 export default function GroupEditor({
     isOpen,
     pdf,
@@ -146,8 +358,9 @@ export default function GroupEditor({
     initialName,
     initialSelectedMarkIds,
     originalMarkIds,
-    onClose,
+    onClose, 
     onSaved,
+    onPersistMarks,
     onUpdateMark,
     onFocusMark,
     onCreateMarkInGroup,
@@ -189,12 +402,46 @@ export default function GroupEditor({
     );
     const [currentRect, setCurrentRect] = useState<DrawRect>(null);
 
-    // instrument suggestions (same API as MarkList)
-    const [instrumentQuery, setInstrumentQuery] = useState<string>('');
-    const [instrumentSuggestions, setInstrumentSuggestions] = useState<string[]>(
-        []
-    );
-    const suggestionsAbortRef = useRef<AbortController | null>(null);
+    // All known instruments for autocomplete (fetched once then cached)
+    const [allInstruments, setAllInstruments] = useState<string[]>([]);
+
+
+const runOcrForMark = useCallback(
+    async (
+        markId: string,
+        normRect: { nx: number; ny: number; nw: number; nh: number }
+    ) => {
+        if (!ownerMarkSetId) {
+            return;
+        }
+
+        try {
+            const resp = await runRequiredValueOCR(apiBase, {
+                mark_set_id: ownerMarkSetId,
+                page_index: pageIndex,
+                nx: normRect.nx,
+                ny: normRect.ny,
+                nw: normRect.nw,
+                nh: normRect.nh,
+            });
+// Always store something in state so it survives until PUT save.
+// If OCR returns nothing, keep empty string and 0 confidence.
+const requiredValue = (resp.required_value_ocr ?? "").toString();
+const conf = Number(resp.required_value_conf ?? 0);
+
+onUpdateMark(markId, {
+    required_value_ocr: requiredValue,
+    required_value_conf: conf,               // <-- keep 0, don't make it undefined
+    required_value_final: requiredValue,     // <-- user can edit later
+});
+
+        } catch (e) {
+            console.warn('OCR for required value failed', e);
+            // If OCR fails, we simply leave it blank and user can type manually
+        }
+    },
+    [ownerMarkSetId, pageIndex, onUpdateMark]
+);
 
     useEffect(() => {
         if (!isOpen) return;
@@ -240,37 +487,50 @@ export default function GroupEditor({
         });
     };
 
-    const fetchSuggestions = useCallback(async (q: string) => {
+    const loadInstrumentSuggestions = useCallback(async () => {
+        // If we already have a cached list, reuse it and avoid a network call
+        if (globalInstrumentCache && globalInstrumentCache.length > 0) {
+            setAllInstruments(globalInstrumentCache);
+            return;
+        }
+
         try {
-            if (suggestionsAbortRef.current) {
-                suggestionsAbortRef.current.abort();
-            }
-            const ctrl = new AbortController();
-            suggestionsAbortRef.current = ctrl;
-
-            const url = q.trim()
-                ? `${apiBase}/instruments/suggestions?q=${encodeURIComponent(
-                    q.trim()
-                )}`
-                : `${apiBase}/instruments/suggestions`;
-
-            const res = await fetch(url, { signal: ctrl.signal });
+            const res = await fetch(`${apiBase}/instruments/suggestions`);
             if (!res.ok) return;
             const data = await res.json();
             if (Array.isArray(data)) {
-                setInstrumentSuggestions(data as string[]);
+                globalInstrumentCache = data as string[];
+                setAllInstruments(globalInstrumentCache);
             }
-        } catch (e: any) {
-            if (e?.name === 'AbortError') return;
+        } catch (e) {
             console.warn('Failed to fetch instrument suggestions', e);
         }
     }, []);
 
-    // Prefetch suggestions when dialog opens
+    // Prefetch suggestions when dialog opens (only first time hits backend)
     useEffect(() => {
         if (!isOpen) return;
-        fetchSuggestions('');
-    }, [isOpen, fetchSuggestions]);
+        loadInstrumentSuggestions();
+    }, [isOpen, loadInstrumentSuggestions]);
+
+    // When user adds a brand-new instrument, keep it in local + global cache
+    const rememberInstrumentLocally = useCallback((name: string) => {
+        const trimmed = name.trim();
+        if (!trimmed) return;
+
+        setAllInstruments((prev) => {
+            if (
+                prev.some(
+                    (i) => i.toLowerCase() === trimmed.toLowerCase(),
+                )
+            ) {
+                return prev;
+            }
+            const next = [...prev, trimmed];
+            globalInstrumentCache = next;
+            return next;
+        });
+    }, []);
 
     /**
     * High-res preview of ONLY the selected area.
@@ -512,6 +772,9 @@ setOverlaySize({ w: cssWidth, h: cssHeight });
                 onUpdateMark(newId, { is_required: false });
             }
 
+            // 🔍 Immediately trigger OCR for required value
+            runOcrForMark(newId, markRect);
+
             // user interacted with selection
             userSelectionTouchedRef.current = true;
 
@@ -525,6 +788,7 @@ setOverlaySize({ w: cssWidth, h: cssHeight });
             // and focus it visually (yellow border + list highlight)
             setHighlightedMarkId(newId);
         }
+
 
 
         setIsDrawing(false);
@@ -556,6 +820,18 @@ setOverlaySize({ w: cssWidth, h: cssHeight });
 
         try {
             setSaving(true);
+// 1) Persist marks first (so instrument/required_value changes survive refresh)
+if (onPersistMarks) {
+    try {
+        await onPersistMarks();
+    } catch (e) {
+        console.error('Persist marks failed', e);
+        window.alert('Failed to save mark changes (instrument / required value). Group not saved.');
+        return;
+    }
+} else {
+    console.warn('onPersistMarks not provided — mark edits will not persist on refresh.');
+}
 
             const payload: any = {
                 page_index: pageIndex,
@@ -916,14 +1192,15 @@ setOverlaySize({ w: cssWidth, h: cssHeight });
                                 border: '1px solid #eee',
                                 borderRadius: 4,
                                 padding: 6,
-                                minHeight: 140,
-                                maxHeight: 300,
-                                overflow: 'auto',
+                                flex: 1,          // 👈 take all remaining height
+                                minHeight: 0,     // 👈 allow flexbox to shrink properly
+                                overflow: 'auto', // 👈 still scroll when content is taller
                                 background: '#fafafa',
                                 width: '100%',
                                 boxSizing: 'border-box',
                             }}
                         >
+
 
                             {marksInArea.length === 0 && (
                                 <div
@@ -942,7 +1219,6 @@ setOverlaySize({ w: cssWidth, h: cssHeight });
                                 </div>
                             )}
 
-
                             {marksInArea.map((m) => {
                                 const required = m.is_required !== false;
                                 const isSelected = selected.has(m.mark_id);
@@ -953,6 +1229,16 @@ setOverlaySize({ w: cssWidth, h: cssHeight });
                                     !originalMarkIds || originalMarkIds.length === 0
                                         ? true
                                         : !originalMarkIds.includes(m.mark_id);
+
+                                // 🔢 OCR helpers (NEW)
+                                const conf = m.required_value_conf ?? null;
+                                const lowConfidence =
+                                    conf !== null && conf < 95; // threshold
+                                const initialRequiredValue =
+                                    m.required_value_final ??
+                                    m.required_value_ocr ??
+                                    '';
+
 
                                 return (
                                     <div
@@ -989,53 +1275,75 @@ setOverlaySize({ w: cssWidth, h: cssHeight });
                                             }}
                                         />
 
-                                        {/* Label + instrument + actions all on one line */}
-                                        <div
-                                            style={{
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                gap: 6,
-                                                flex: 1,
-                                            }}
-                                        >
-                                            <span
-                                                style={{
-                                                    display: 'inline-flex',
-                                                    alignItems: 'center',
-                                                    justifyContent: 'center',
-                                                    minWidth: 20,
-                                                    height: 20,
-                                                    borderRadius: '999px',
-                                                    border: '1px solid #000',
-                                                    fontSize: 12,
-                                                    fontWeight: 700,
-                                                }}
-                                            >
-                                                {m.label || '—'}
-                                            </span>
+        {/* Label + required value + instrument + actions all on one line */}
+    <div
+        style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            flex: 1,
+    minWidth: 0,  
+        }}
+    >
+        <span
+            style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                minWidth: 20,
+                height: 20,
+                borderRadius: '999px',
+                border: '1px solid #000',
+                fontSize: 12,
+                fontWeight: 700,
+            }}
+        >
+            {m.label || '—'}
+        </span>
 
-                                            <input
-                                                type="text"
-                                                list="ge-instrument-suggestions"
-                                                defaultValue={m.instrument || ''}
-                                                onChange={(e) => {
-                                                    const v = e.target.value;
-                                                    setInstrumentQuery(v);
-                                                    fetchSuggestions(v);
-                                                    onUpdateMark(m.mark_id, {
-                                                        instrument: v || undefined,
-                                                    });
-                                                }}
-                                                placeholder="Instrument..."
-                                                style={{
-                                                    border: '1px solid #ddd',
-                                                    borderRadius: 4,
-                                                    fontSize: 12,
-                                                    padding: '4px 6px',
-                                                    minWidth: 160,
-                                                    flex: 1,
-                                                }}
-                                            />
+        {/* 🔢 Required Value input (left of instrument) */}
+        <input
+            type="text"
+            value={initialRequiredValue}
+            onChange={(e) => {
+                const v = e.target.value;
+                onUpdateMark(m.mark_id, {
+                    required_value_final: v,
+                });
+
+            }}
+            placeholder="Req. value"
+            style={{
+                border: '1px solid',
+                borderColor: lowConfidence
+                    ? '#ff9800' // orange for low confidence
+                    : '#ddd',
+                borderRadius: 4,
+                fontSize: 12,
+                padding: '4px 6px',
+                minWidth: 50,
+                flex: '0 0 30%',
+                maxWidth: '30%',
+                boxSizing: 'border-box',
+            }}
+            title={
+                conf !== null
+                    ? `OCR confidence: ${conf.toFixed(1)}%`
+                    : 'Required value'
+            }
+        />
+
+         <InstrumentCombo
+            value={m.instrument || ''}
+            allInstruments={allInstruments}
+            onChange={(val) => {
+                onUpdateMark(m.mark_id, {
+                    instrument: val || undefined,
+                });
+            }}
+            onAddNewLocal={rememberInstrumentLocally}
+        />
+
 
                                             {/* Cross immediately after instrument box, only for NEW balloons */}
                                             {onDeleteMark && isNew && (
@@ -1094,13 +1402,6 @@ setOverlaySize({ w: cssWidth, h: cssHeight });
                                 );
                             })}
 
-
-
-                            <datalist id="ge-instrument-suggestions">
-                                {instrumentSuggestions.map((opt) => (
-                                    <option key={opt} value={opt} />
-                                ))}
-                            </datalist>
                         </div>
                     </div>
                 </div>
