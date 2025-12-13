@@ -156,7 +156,7 @@ async def clone_mark_set(
     storage = Depends(get_storage),
 ):
     """
-    Deep-clone a **QC** mark set (rows in marks + mark_sets) on Google Sheets.
+    Deep-clone a **QC** mark set (mark_sets + groups; marks are universal/master) on Google Sheets.
     Returns the new mark_set_id.
 
     Permissions:

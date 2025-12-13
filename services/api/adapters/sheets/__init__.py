@@ -1170,8 +1170,11 @@ class SheetsAdapter(StorageAdapter):
 
     def clone_mark_set(self, mark_set_id: str, new_label: str, created_by: str | None) -> str:
         """
-        Deep clone a mark set + its marks into a new mark set on the same document.
-        Cloned markset is never master and not active by default.
+        Clone a QC mark set into a new QC mark set on the same document.
+
+        IMPORTANT (your architecture):
+        - Marks are UNIVERSAL (master) for the PDF, so we DO NOT clone marks rows.
+        - We DO clone GROUPS, keeping the same mark_ids inside each group.
         """
         src_ms = None
         for ms in self._get_all_dicts("mark_sets"):
@@ -1191,6 +1194,7 @@ class SheetsAdapter(StorageAdapter):
         except Exception:
             history = []
 
+        # 1) Create the new mark_set row
         self._append_dict_row(
             "mark_sets",
             {
@@ -1201,42 +1205,38 @@ class SheetsAdapter(StorageAdapter):
                 "is_active": "FALSE",
                 "is_master": "FALSE",
                 "created_by": (created_by or src_ms.get("created_by", "")),
-                "created_at": src_ms.get("created_at", now),
+                "created_at": now,  # keep clone time
                 "updated_by": (created_by or src_ms.get("updated_by", "")),
                 "update_history": json.dumps(history),
             },
         )
 
-        src_marks = [m for m in self._get_all_dicts("marks") if m.get("mark_set_id") == mark_set_id]
-        rows = []
-        for m in src_marks:
-            rows.append(
-                [
-                    _uuid(),
-                    new_id,
-                    m.get("page_id", ""),
-                    m.get("label", ""),
-                    m.get("instrument", ""),
-                    m.get("is_required", "TRUE"),
-                    int(_safe_int(m.get("order_index"), 0)),
-                    float(_safe_float(m.get("nx"), 0.0)),
-                    float(_safe_float(m.get("ny"), 0.0)),
-                    float(_safe_float(m.get("nw"), 0.0)),
-                    float(_safe_float(m.get("nh"), 0.0)),
-                    (created_by or m.get("created_by", "")),
-                    now,
-                    (created_by or m.get("updated_by", "")),
-                    now,
-                    # 🔴 NEW: copy OCR + required fields on clone
-                    m.get("required_value_ocr", ""),
-                    m.get("required_value_conf", ""),
-                    m.get("required_value_final", ""),
-                ]
-            )
+        # 2) Clone GROUPS from old QC markset to new QC markset
+        #    group_id will change, but mark_ids remain SAME.
+        try:
+            src_groups = self.list_groups_for_mark_set(mark_set_id)  # returns mark_ids as list[str]
+        except Exception:
+            src_groups = []
 
-        if rows:
-            self._append_rows("marks", rows)
+        for g in (src_groups or []):
+            try:
+                self.create_group(
+                    mark_set_id=new_id,
+                    page_index=int(g.get("page_index", 0)),
+                    name=(g.get("name") or ""),
+                    nx=float(g.get("nx", 0.0)),
+                    ny=float(g.get("ny", 0.0)),
+                    nw=float(g.get("nw", 0.0)),
+                    nh=float(g.get("nh", 0.0)),
+                    mark_ids=list(g.get("mark_ids") or []),
+                    created_by=(created_by or src_ms.get("created_by", "")),
+                )
+            except Exception:
+                # best-effort: skip a corrupted group row without failing clone
+                continue
+
         return new_id
+
     
     def delete_mark_set(self, mark_set_id: str, requested_by: str | None = None) -> None:
         """
