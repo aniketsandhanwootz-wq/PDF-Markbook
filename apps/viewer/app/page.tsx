@@ -1526,8 +1526,22 @@ const [showReportTitle, setShowReportTitle] = useState(true);
   const qUser = searchParams?.get('user_mail') || '';
   const qAssembly = searchParams?.get('assembly_drawing') || '';
   // NEW: optional POC CC list from Glide (comma-separated emails)
-  const qPocCc = searchParams?.get('poc_cc') || '';
+const qPocCc = searchParams?.get('poc_cc') || searchParams?.get('poc') || '';
   const userEmail = (qUser || '').trim() || null;
+
+  // ✅ PATCH: Save the initial querystring once (includes poc / poc_cc)
+// so that later "open markset" doesn't lose it.
+useEffect(() => {
+  if (typeof window === 'undefined') return;
+
+  const cur = window.location.search.slice(1); // no '?'
+  if (!cur) return;
+
+  const existing = sessionStorage.getItem('viewerLastSetupParams');
+  if (!existing) {
+    sessionStorage.setItem('viewerLastSetupParams', cur);
+  }
+}, []);
 
   // Viewer only needs the business triple; assembly_drawing is optional
   const hasBootstrapKeys = !!(qProject && qExtId && qPartNumber);
@@ -1560,33 +1574,45 @@ const [showReportTitle, setShowReportTitle] = useState(true);
   const effectivePdfUrl = selectedPdfUrl || pdfUrlParam;
 
 
-  const handleSetupComplete = (url: string, setId: string, dwgNum?: string | null) => {
-    const prevQs =
-      sessionStorage.getItem('viewerLastSetupParams') ||
-      window.location.search.slice(1); // drop '?'
-    const params = new URLSearchParams(prevQs);
+const handleSetupComplete = (url: string, setId: string, dwgNum?: string | null) => {
+  // ✅ Always start from CURRENT URL first (most reliable),
+  // fallback to stored baseline only if needed.
+  const baseQs =
+    window.location.search.slice(1) ||
+    sessionStorage.getItem('viewerLastSetupParams') ||
+    '';
 
-    // keep existing bootstrap params (project_name, id, part_number, user_mail, assembly_drawing)
-    params.set('pdf_url', url);
-    if (setId) params.set('mark_set_id', setId);
-    if (dwgNum && dwgNum.trim()) {
-      params.set('dwg_num', dwgNum.trim());
-    } else {
-      params.delete('dwg_num');
-    }
+  const params = new URLSearchParams(baseQs);
 
-    const qsString = params.toString();
-    sessionStorage.setItem('viewerLastSetupParams', qsString);
+  // ✅ Support poc alias: if URL has poc but not poc_cc, convert it
+  if (!params.get('poc_cc') && params.get('poc')) {
+    params.set('poc_cc', params.get('poc')!);
+  }
 
-    // 🔹 NEW: stay on the same page, just flip into viewer mode
-    setSelectedPdfUrl(url);
-    setSelectedMarkSetId(setId || null);
-    setShowSetup(false);
+  // Keep existing bootstrap params + add viewer-specific params
+  params.set('pdf_url', url);
+  if (setId) params.set('mark_set_id', setId);
 
-    // 🔹 Keep URL sharable without full reload
-    const newUrl = `${window.location.pathname}?${qsString}`;
-    router.push(newUrl, { scroll: false });
-  };
+  if (dwgNum && dwgNum.trim()) {
+    params.set('dwg_num', dwgNum.trim());
+  } else {
+    params.delete('dwg_num');
+  }
+
+  const qsString = params.toString();
+
+  // ✅ Update storage so future flows (submit/reset) retain poc_cc too
+  sessionStorage.setItem('viewerLastSetupParams', qsString);
+
+  // Stay on same page, switch to viewer mode
+  setSelectedPdfUrl(url);
+  setSelectedMarkSetId(setId || null);
+  setShowSetup(false);
+
+  // Keep URL sharable without full reload
+  const newUrl = `${window.location.pathname}?${qsString}`;
+  router.push(newUrl, { scroll: false });
+};
 
 
   const rawPdfUrl = cleanPdfUrl(

@@ -167,19 +167,18 @@ async def send_alert_email(
 def build_checkin_description(
     *,
     dwg_num: str,
-    pass_count: int,
-    fail_count: int,
-    doubt_count: int,
-    empty_count: int,
+    filled_count: int,
+    unfilled_count: int,
+    total_count: int,
 ) -> str:
     dwg = (dwg_num or "").strip() or "-"
     return (
         f"Dimensional inspection report submitted for Assembly ({dwg})\n\n"
-        f"Doubts: {doubt_count}\n"
-        f"Pass: {pass_count}\n"
-        f"Fail: {fail_count}\n"
-        f"Empty: {empty_count}\n"
+        f"Marks Filled: {filled_count}\n"
+        f"Marks Unfilled: {unfilled_count}\n"
+        f"Total Marks: {total_count}\n"
     )
+
 
 
 async def append_checkin_row_safe(

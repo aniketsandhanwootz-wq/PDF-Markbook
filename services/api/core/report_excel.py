@@ -352,15 +352,22 @@ async def generate_report_excel(
                 # ✅ G: Instrument
                 _write_merged(ws, f"G{r}", instrument)
 
-                # ✅ H: Status – write text + apply fill (no dropdown)
+                # ✅ H: Status – write text + apply fill
                 status_cell = ws.cell(row=r, column=8)  # col 8 = H
                 status_cell.value = status_text
+
+                # IMPORTANT:
+                # Template row styling may carry a default fill (often green).
+                # If status is empty, force clear fill so it stays blank.
+                status_cell.fill = PatternFill()  # clears any copied fill
+
                 if status_color:
                     status_cell.fill = PatternFill(
                         start_color=status_color,
                         end_color=status_color,
                         fill_type="solid",
                     )
+
 
 
                 ws.row_dimensions[r].height = 75         # row height for thumbnail
