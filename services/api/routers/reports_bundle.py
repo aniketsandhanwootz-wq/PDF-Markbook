@@ -617,7 +617,7 @@ async def _do_generate_and_send_excel_bundle(
                 part_number=doc.get("part_number", "") or "",
                 external_id=doc.get("external_id", "") or "",
                 report_title=req.report_name or "",
-                padding_pct=0.25,
+                padding_pct=0.0,
                 logo_url="https://res.cloudinary.com/dbwg6zz3l/image/upload/v1753101276/Black_Blue_ctiycp.png",
                 statuses=mark_id_to_status,  # 🔹 NEW: pass per-mark statuses into Excel
             )
@@ -656,32 +656,27 @@ async def _do_generate_and_send_excel_bundle(
             checkin_sheet = (settings.checkin_sheets_spreadsheet_id or "").strip()
             checkin_tab = (settings.checkin_tab_name or "CheckIn").strip()
 
-            if checkin_sheet:
-                # Count status totals for DESCRIPTION
-                pass_count = 0
-                fail_count = 0
-                doubt_count = 0
-
+            if not checkin_sheet:
+                checkin_sync_status = "SKIPPED"
+                checkin_sync_error = "CHECKIN_SHEET_NOT_CONFIGURED"
+            else:
+                # Count FILLED / UNFILLED balloons (marks) for DESCRIPTION
+                # Rule: Filled = non-empty observed value AND not "NA"
+                filled_count = 0
                 for mid in filtered_ids:
-                    raw = (mark_id_to_status.get(mid, "") or "").strip().upper()
-                    if raw == "PASS":
-                        pass_count += 1
-                    elif raw == "FAIL":
-                        fail_count += 1
-                    elif raw == "DOUBT":
-                        doubt_count += 1
+                    v = (mark_id_to_value.get(mid, "") or "").strip()
+                    if v and v.upper() != "NA":
+                        filled_count += 1
 
-                empty_count = max(0, total_marks - (pass_count + fail_count + doubt_count))
+                unfilled_count = max(0, total_marks - filled_count)
 
                 description = build_checkin_description(
                     dwg_num=(doc.get("dwg_num", "") or ""),
-                    pass_count=pass_count,
-                    fail_count=fail_count,
-                    doubt_count=doubt_count,
-                    empty_count=empty_count,
+                    filled_count=filled_count,
+                    unfilled_count=unfilled_count,
+                    total_count=total_marks,
                 )
 
-           #     assembly_drawing = (doc.get("assembly_drawing") or doc.get("pdf_url") or "").strip()
                 assembly_drawing = ""  # Clear it out for now
                 checkin_payload = {
                     "CheckIn ID": (req.report_id or "").strip() or new_uuid(),
@@ -704,10 +699,9 @@ async def _do_generate_and_send_excel_bundle(
                     "email_to": req.email_to,
                     "drive_url": inspection_doc_url,
                     "counts": {
-                        "pass": pass_count,
-                        "fail": fail_count,
-                        "doubt": doubt_count,
-                        "empty": empty_count,
+                        "filled": filled_count,
+                        "unfilled": unfilled_count,
+                        "total": total_marks,
                     },
                 }
 
@@ -725,6 +719,7 @@ async def _do_generate_and_send_excel_bundle(
                     checkin_sync_status = "FAIL"
                     checkin_sync_error = res.get("error", "") or ""
                     checkin_id_final = res.get("checkin_id", "") or ""
+
 
         except Exception as e:
             checkin_sync_status = "FAIL"
