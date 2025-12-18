@@ -2211,9 +2211,28 @@ function EditorContent() {
     );
   }
 
-  // QC with no groups: don't show marks yet
-  const hideMarksForQcWithoutGroups = !isMasterMarkSet && groups.length === 0;
-  const marksForSidebar = hideMarksForQcWithoutGroups ? [] : marks;
+const includedMarkIdSet: Set<string> | null = (() => {
+  if (isMasterMarkSet) return null; // master shows everything
+  const s = new Set<string>();
+  for (const g of groups) {
+    for (const id of (g.mark_ids || [])) {
+      if (id) s.add(id);
+    }
+  }
+  return s;
+})();
+
+
+// QC with no groups: don't show marks yet
+const hideMarksForQcWithoutGroups = !isMasterMarkSet && groups.length === 0;
+
+// Sidebar: show only included marks in QC (safer + consistent)
+const marksForSidebar = hideMarksForQcWithoutGroups
+  ? []
+  : isMasterMarkSet
+    ? marks
+    : marks.filter(m => (includedMarkIdSet ? includedMarkIdSet.has(m.mark_id) : false));
+
 
   return (
     <div className="editor-container">
@@ -2344,18 +2363,23 @@ function EditorContent() {
                 )}
                 {markOverlays
                   .filter((overlay) => overlay.pageIndex === pageNum - 1)
-                  .filter((overlay) => {
-                    // QC mark-set with no groups yet → hide all marks
-                    if (!isMasterMarkSet && groups.length === 0) return false;
+                    .filter((overlay) => {
+    // QC mark-set with no groups yet → hide all marks
+    if (!isMasterMarkSet && groups.length === 0) return false;
 
-                    // In QC mode, if a group is selected, only show that group's marks
-                    if (isMasterMarkSet || !selectedGroupId) return true;
-                    const g = groups.find(
-                      (gg) => gg.group_id === selectedGroupId
-                    );
-                    if (!g) return true;
-                    return (g.mark_ids || []).includes(overlay.markId);
-                  })
+    // ✅ QC mode: if no group selected, show ONLY marks included in ANY group
+    if (!isMasterMarkSet && !selectedGroupId) {
+      return includedMarkIdSet ? includedMarkIdSet.has(overlay.markId) : false;
+    }
+
+    // In QC mode, if a group is selected, only show that group's marks
+    if (isMasterMarkSet) return true;
+
+    const g = groups.find((gg) => gg.group_id === selectedGroupId);
+    if (!g) return false; // if selected group not found, show nothing
+    return (g.mark_ids || []).includes(overlay.markId);
+  })
+
                   .map((overlay) => {
 
 

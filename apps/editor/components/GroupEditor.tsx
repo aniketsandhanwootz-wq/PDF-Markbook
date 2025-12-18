@@ -1245,10 +1245,11 @@ if (onPersistMarks) {
                                 const isHighlighted = highlightedMarkId === m.mark_id;
 
                                 // mark is "new" if it's NOT in the original DB mark list
-                                const isNew =
-                                    !originalMarkIds || originalMarkIds.length === 0
-                                        ? true
-                                        : !originalMarkIds.includes(m.mark_id);
+                                // Delete icon should ONLY show for marks that are explicitly deletable.
+// This prevents "stale edit-mode state" from showing cross even after saving.
+const isDeletable =
+    Array.isArray(deletableMarkIds) && deletableMarkIds.includes(m.mark_id);
+
 
                                 // 🔢 OCR helpers (NEW)
                                 const conf = m.required_value_conf ?? null;
@@ -1388,7 +1389,7 @@ if (onPersistMarks) {
 
 
                                             {/* Cross immediately after instrument box, only for NEW balloons */}
-                                            {onDeleteMark && isNew && (
+                                            {onDeleteMark && isDeletable && (
                                                 <button
                                                     type="button"
                                                     onClick={(e) => {
