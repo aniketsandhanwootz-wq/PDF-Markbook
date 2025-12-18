@@ -461,17 +461,26 @@ onUpdateMark(markId, {
                 return next;
             }
 
-            // Before user interaction → initial selection
-            let base: Set<string>;
-            if (initialSelectedMarkIds && initialSelectedMarkIds.length > 0) {
-                base = new Set(
-                    initialSelectedMarkIds.filter((id) => idsInArea.has(id))
-                );
-            } else {
-                // create mode default: everything in area selected
-                base = new Set(idsInArea);
-            }
-            return base;
+// Before user interaction → initial selection
+if (mode === 'edit') {
+    // Edit mode:
+    // 1) If backend provided initialSelectedMarkIds -> trust it
+    if (initialSelectedMarkIds && initialSelectedMarkIds.length > 0) {
+        return new Set(initialSelectedMarkIds.filter((id) => idsInArea.has(id)));
+    }
+
+    // 2) If not provided, do NOT auto-select everything.
+    // Keep whatever selection we already had (prev), but drop ids not in this area.
+    const next = new Set<string>();
+    prev.forEach((id) => {
+        if (idsInArea.has(id)) next.add(id);
+    });
+    return next;
+}
+
+// Create mode default: everything in area selected
+return new Set(idsInArea);
+
         });
     }, [isOpen, marksInArea, initialSelectedMarkIds]);
 
@@ -926,10 +935,21 @@ if (onPersistMarks) {
                 >
                     <div>
                         <div style={{ fontSize: 16, fontWeight: 700 }}>
-                            {mode === 'edit' ? 'Edit Group - Select/Deselect balloons' : 'Select dimensions to create balloons for'}
-                            {/* – Page{' '} */}
-                            {/* {pageIndex + 1} */}
-                        </div>
+  {mode === 'edit' ? (
+    <>
+      <span style={{ color: '#1976d2' }}>Edit Group</span>
+      <span>{' - Select/Deselect balloons'}</span>
+    </>
+  ) : (
+    <>
+      <span style={{ color: '#1976d2' }}>Select dimensions</span>
+      <span>{' to create balloons for'}</span>
+    </>
+  )}
+  {/* – Page{' '} */}
+  {/* {pageIndex + 1} */}
+</div>
+
                         {/* <div
               style={{
                 fontSize: 12,
@@ -1225,10 +1245,11 @@ if (onPersistMarks) {
                                 const isHighlighted = highlightedMarkId === m.mark_id;
 
                                 // mark is "new" if it's NOT in the original DB mark list
-                                const isNew =
-                                    !originalMarkIds || originalMarkIds.length === 0
-                                        ? true
-                                        : !originalMarkIds.includes(m.mark_id);
+                                // Delete icon should ONLY show for marks that are explicitly deletable.
+// This prevents "stale edit-mode state" from showing cross even after saving.
+const isDeletable =
+    Array.isArray(deletableMarkIds) && deletableMarkIds.includes(m.mark_id);
+
 
                                 // 🔢 OCR helpers (NEW)
                                 const conf = m.required_value_conf ?? null;
@@ -1263,17 +1284,39 @@ if (onPersistMarks) {
                                         }}
                                     >
                                         {/* Checkbox */}
-                                        <input
-                                            type="checkbox"
-                                            checked={isSelected}
-                                            onChange={(e) => {
-                                                e.stopPropagation();
-                                                toggleMarkSelected(m.mark_id);
-                                            }}
-                                            style={{
-                                                accentColor: '#2e7d32', // green checkbox
-                                            }}
-                                        />
+                                        {/* Select toggle (Eye icon) */}
+<button
+  type="button"
+  onClick={(e) => {
+    e.stopPropagation();
+    toggleMarkSelected(m.mark_id);
+  }}
+  title={isSelected ? 'Selected' : 'Not selected'}
+  style={{
+    border: 'none',
+    background: 'transparent',
+    padding: 0,
+    cursor: 'pointer',
+    width: 22,
+    height: 22,
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  }}
+>
+  <img
+    src="/icons/eye.png"
+    alt="Select"
+    style={{
+      width: 18,
+      height: 18,
+      filter: isSelected
+    ? 'invert(33%) sepia(93%) saturate(1770%) hue-rotate(189deg) brightness(93%) contrast(92%)' // blue-ish (#1976d2 feel)
+    : 'grayscale(100%) opacity(0.55)',
+    }}
+  />
+</button>
+
 
         {/* Label + required value + instrument + actions all on one line */}
     <div
@@ -1346,7 +1389,7 @@ if (onPersistMarks) {
 
 
                                             {/* Cross immediately after instrument box, only for NEW balloons */}
-                                            {onDeleteMark && isNew && (
+                                            {onDeleteMark && isDeletable && (
                                                 <button
                                                     type="button"
                                                     onClick={(e) => {
@@ -1373,29 +1416,38 @@ if (onPersistMarks) {
 
                                             {/* Required toggle at far right of the line */}
                                             <button
-                                                type="button"
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    onUpdateMark(m.mark_id, {
-                                                        is_required: !required,
-                                                    });
-                                                }}
-                                                title={
-                                                    required
-                                                        ? 'Required measurement'
-                                                        : 'Optional measurement'
-                                                }
-                                                style={{
-                                                    border: 'none',
-                                                    background: 'transparent',
-                                                    cursor: 'pointer',
-                                                    fontSize: 18,
-                                                    color: required ? '#910404ff' : '#ccc',
-                                                    fontWeight: 'bolder',
-                                                }}
-                                            >
-                                                ⓘ
-                                            </button>
+  type="button"
+  onClick={(e) => {
+    e.stopPropagation();
+    onUpdateMark(m.mark_id, {
+      is_required: !required,
+    });
+  }}
+  title={required ? 'Required measurement' : 'Optional measurement'}
+  style={{
+    border: 'none',
+    background: 'transparent',
+    cursor: 'pointer',
+    padding: 0,
+    width: 22,
+    height: 22,
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  }}
+>
+  <img
+    src="/icons/hash.png"
+    alt="Critical"
+    style={{
+      width: 16,
+      height: 16,
+      filter: required
+        ? 'invert(14%) sepia(98%) saturate(5000%) hue-rotate(350deg) brightness(90%) contrast(95%)'
+        : 'grayscale(100%) opacity(0.45)',
+    }}
+  />
+</button>
 
                                         </div>
                                     </div>
