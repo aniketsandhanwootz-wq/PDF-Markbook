@@ -11,7 +11,7 @@ from openpyxl import load_workbook
 from openpyxl.drawing.image import Image as OpenpyxlImage
 from openpyxl.cell.cell import MergedCell
 from openpyxl.worksheet.worksheet import Worksheet
-from openpyxl.styles import PatternFill
+from openpyxl.styles import PatternFill, Alignment, Font
 from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.formatting.rule import FormulaRule
 
@@ -20,7 +20,7 @@ from core.report_pdf import _require_pdfium, _fetch_pdf_bytes
 
 from collections import defaultdict
 import gc
-from PIL import Image  # for type hints / safety
+from PIL import Image, ImageDraw, ImageFont
 from settings import get_settings
 
 
@@ -83,6 +83,218 @@ def _crop_from_page_image(
 
     crop = pil_page.crop((x0, y0, x1, y1))
     return crop.convert("RGB")
+
+def _is_filled_value(v: Optional[str]) -> bool:
+    """
+    A mark is considered 'filled' if observed value is:
+      - not empty
+      - not 'NA' (case-insensitive)
+    """
+    if v is None:
+        return False
+    s = str(v).strip()
+    if not s:
+        return False
+    return s.upper() != "NA"
+
+
+def _map_get(d: Optional[Dict[str, Any]], key: Any) -> Any:
+    """
+    Safe getter for dicts where mark_id might have whitespace issues.
+    Tries raw key, str(key), stripped str(key).
+    """
+    if not d or key is None:
+        return None
+
+    try:
+        if key in d:
+            return d.get(key)
+    except Exception:
+        pass
+
+    s = str(key)
+    if s in d:
+        return d.get(s)
+
+    ss = s.strip()
+    if ss in d:
+        return d.get(ss)
+
+    return None
+
+
+def _excel_hyperlink_formula(url: str, display_text: str) -> str:
+    u = (url or "").replace('"', '""')
+    t = (display_text or "").replace('"', '""')
+    return f'=HYPERLINK("{u}", "{t}")'
+
+
+def _setup_right_side_area(ws: Worksheet) -> None:
+    """
+    Make columns K..P usable for page images.
+    K is main anchor column.
+    """
+    # Make K wide; keep rest narrow (image will overflow across columns anyway)
+    ws.column_dimensions["K"].width = 160
+    for col in ["L", "M", "N", "O", "P"]:
+        ws.column_dimensions[col].width = 3
+
+
+def _draw_marks_on_page_image(
+    page_img: Image.Image,
+    marks_on_page: List[Dict[str, Any]],
+) -> Image.Image:
+    """
+    Draw editor-like overlay:
+      - green rectangle around mark region
+      - yellow circular balloon label (A/B/C/...) with a small leader line
+    """
+    img = page_img.convert("RGB")
+    draw = ImageDraw.Draw(img)
+    W, H = img.size
+
+    def _idx_to_letters(i: int) -> str:
+        # 0 -> A, 1 -> B, ... 25 -> Z, 26 -> AA ...
+        i = int(i)
+        s = ""
+        while True:
+            i, rem = divmod(i, 26)
+            s = chr(ord("A") + rem) + s
+            if i == 0:
+                break
+            i -= 1
+        return s
+
+    def _load_bold_font(size: int) -> ImageFont.ImageFont:
+        # Try common DejaVu paths (Linux) and local fallback
+        candidates = [
+            "DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+        ]
+        for p in candidates:
+            try:
+                return ImageFont.truetype(p, size=size)
+            except Exception:
+                continue
+        # last resort
+        return ImageFont.load_default()
+
+    # Slightly thinner boxes, but still visible after Excel scaling
+    base = min(W, H)
+    rect_stroke = max(2, int(base * 0.0020))      # slightly thinner box
+    leader_stroke = max(2, int(base * 0.0020))
+    circle_stroke = max(3, int(base * 0.0032))    # thicker circle border
+
+
+    green = (0, 180, 0)
+    black = (0, 0, 0)
+    yellow = (255, 235, 59)  # strong yellow
+
+    # Sort marks so labels are stable (A,B,C...) for the page
+    marks_sorted = sorted(
+        marks_on_page,
+        key=lambda m: (int(m.get("order_index", 0)), str(m.get("name", ""))),
+    )
+
+    for idx, m in enumerate(marks_sorted):
+        try:
+            nx = float(m["nx"])
+            ny = float(m["ny"])
+            nw = float(m["nw"])
+            nh = float(m["nh"])
+        except Exception:
+            continue
+
+        # rectangle coords (pixel)
+        rx = int(nx * W)
+        ry = int(ny * H)
+        rw = int(nw * W)
+        rh = int(nh * H)
+
+        x0, y0 = rx, ry
+        x1, y1 = rx + rw, ry + rh
+
+        # draw green rectangle (slightly thinner)
+        draw.rectangle([x0, y0, x1, y1], outline=green, width=rect_stroke)
+
+        # --- Label text ---
+        # Prefer stored label if it's already A/B/C style, else use A,B,C.. by order
+        raw_label = (m.get("label") or "").strip()
+        if raw_label and len(raw_label) <= 3:
+            label = raw_label
+        else:
+            label = _idx_to_letters(idx)
+
+        # --- Bubble sizing (bigger + editor-like) ---
+        # Tie bubble size to mark size so it stays visible even after resize
+        #r = max(18, min(40, int(min(rw, rh) * 0.45)))  # smaller bubble
+        r = 12
+        pad = 6
+
+
+        # Candidate positions like editor: outside top-left, else top-right, else mid-left
+        cx = x0 - (r + pad)
+        cy = y0 - (r + pad)
+
+        if cx - r < 0:
+            cx = x1 + (r + pad)
+            cy = y0 - (r + pad)
+
+        if cy - r < 0:
+            cx = x0 - (r + pad)
+            cy = y0 + int(rh * 0.2)
+
+        # Clamp inside page
+        cx = max(r + 2, min(cx, W - r - 2))
+        cy = max(r + 2, min(cy, H - r - 2))
+
+        # Leader line target corner nearest to circle
+        target_x = x0 if cx < (x0 + x1) / 2 else x1
+        target_y = y0 if cy < (y0 + y1) / 2 else y1
+        draw.line([(cx, cy), (target_x, target_y)], fill=black, width=leader_stroke)
+
+        # Draw circle
+        draw.ellipse(
+            [cx - r, cy - r, cx + r, cy + r],
+            fill=yellow,
+            outline=black,
+            width=circle_stroke,
+        )
+
+        # --- Font sizing: fit inside the circle ---
+        font_size = max(14, int(r * 1.45))  # bold + readable
+        font = _load_bold_font(font_size)
+
+        # shrink until it fits
+        for _ in range(10):
+            bbox = draw.textbbox((0, 0), label, font=font)
+            tw = bbox[2] - bbox[0]
+            th = bbox[3] - bbox[1]
+            if tw <= int(1.45 * r) and th <= int(1.20 * r):
+                break
+            font_size = max(10, int(font_size * 0.88))
+            font = _load_bold_font(font_size)
+
+        # Center text
+        bbox = draw.textbbox((0, 0), label, font=font)
+        tw = bbox[2] - bbox[0]
+        th = bbox[3] - bbox[1]
+        tx = cx - tw / 2
+        ty = cy - th / 2
+
+        # draw text with stroke so it stays readable after downscale
+        draw.text(
+            (tx, ty),
+            label,
+            fill=black,
+            font=font,
+            stroke_width=max(1, int(r * 0.04)),  # reduce stroke so bold font shows
+            stroke_fill=(255, 255, 255),
+        )
+
+
+    return img
 
 
 async def generate_report_excel(
@@ -413,6 +625,102 @@ async def generate_report_excel(
             if page_img is not None:
                 del page_img
                 gc.collect()
+
+        # =====================================================
+        # RIGHT SIDE (Template): K1 has "To view complete PDF click:"
+        # We will:
+        # 1) Put hyperlink in K1
+        # 2) Insert ONLY pages where at least 1 mark is filled
+        # 3) Draw ONLY filled marks on those pages
+        # =====================================================
+
+        # Build filled_marks_by_page (page_index -> marks that are filled)
+        filled_marks_by_page: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
+        for m in marks_sorted:
+            mid = m.get("mark_id")
+            observed_val = _map_get(entries, mid)
+            if _is_filled_value(observed_val):
+                try:
+                    pidx = int(m.get("page_index", 0))
+                except Exception:
+                    pidx = 0
+                filled_marks_by_page[pidx].append(m)
+
+        pages_with_filled_marks = sorted(filled_marks_by_page.keys())
+
+        # 1) Hyperlink in K1 (your template text cell)
+        try:
+            _write_merged(ws, "K1", _excel_hyperlink_formula(pdf_url, "To view complete PDF click"))
+            c = ws["K1"]
+            c.alignment = Alignment(wrap_text=True, vertical="center")
+            c.font = Font(color="0000EE", underline="single")
+        except Exception as e:
+            print(f"Failed to set PDF hyperlink in K1: {e}")
+
+        # 2) Setup right side columns
+        _setup_right_side_area(ws)
+
+        # 3) Insert annotated pages starting from K2
+        right_row = 2
+        TARGET_W = 1100 # standard width for page image
+
+        if pages_with_filled_marks:
+            for pidx in pages_with_filled_marks:
+                try:
+                    page = doc[pidx]
+                    # Render right-side pages at higher scale so Excel image stays crisp
+                    RIGHT_RENDER_ZOOM = max(render_zoom, 20.0)
+                    full_img = page.render(scale=RIGHT_RENDER_ZOOM).to_pil()
+
+                except Exception as e:
+                    print(f"Failed to render full page {pidx}: {e}")
+                    right_row += 5
+                    continue
+
+                try:
+                    marks_for_overlay = filled_marks_by_page.get(pidx, [])
+
+                    # ✅ Resize FIRST to final width (keeps quality + text won't vanish)
+                    if full_img.size[0] != TARGET_W:
+                        ratio = TARGET_W / float(full_img.size[0])
+                        target_h = max(50, int(full_img.size[1] * ratio))
+                        page_for_excel = full_img.resize((TARGET_W, target_h), resample=Image.LANCZOS)
+                    else:
+                        page_for_excel = full_img
+
+                    # ✅ Draw overlays on the resized image (final resolution)
+                    annotated = _draw_marks_on_page_image(page_for_excel, marks_for_overlay)
+
+                    bio = io.BytesIO()
+                    annotated.save(bio, format="PNG")
+                    png_bytes = bio.getvalue()
+
+                    page_img_path = _bytes_to_tempfile(png_bytes, suffix=".png")
+                    _tempfiles.append(page_img_path)
+
+                    ximg = OpenpyxlImage(page_img_path)
+                    ximg.width = annotated.size[0]
+                    ximg.height = annotated.size[1]
+
+                    ws.add_image(ximg, f"K{right_row}")
+
+                    rows_needed = max(20, int(ximg.height / 20) + 6)
+                    right_row += rows_needed
+
+                    del annotated
+                    del ximg
+                    del bio
+                    if page_for_excel is not full_img:
+                        del page_for_excel
+                except Exception as e:
+                    print(f"Right-side insert failed for page {pidx}: {e}")
+                    right_row += 5
+                finally:
+                    try:
+                        del full_img
+                    except Exception:
+                        pass
+                    gc.collect()
 
         # =====================================================
         # =====================================================
