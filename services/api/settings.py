@@ -61,6 +61,17 @@ class Settings(BaseSettings):
     # Optional: if you create the root folder manually & share it, put its ID here
     gdrive_root_folder_id: str = ""
 
+    # ---- Annotated map (balloon PDF) settings ----
+
+    # Subfolder under <dwg_num>/ to store annotated PDFs
+    # Example final path:
+    # Wootz_Markbook/<part__ext__project>/<dwg_num>/Annotated_Maps/<file>.pdf
+    gdrive_annotated_maps_subfolder: str = "Annotated_Maps"
+
+    # If TRUE and markset is MASTER, we try to overwrite existing annotated PDF file
+    # (keeps same Drive file id/link) when possible.
+    gdrive_overwrite_master_annotated_pdf: bool = True
+
     # Report / generation limits
     # Max number of marks that will be included in a single report (Excel/PDF).
     # This protects against OOM if a map accidentally has too many marks.

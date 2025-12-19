@@ -48,6 +48,10 @@ HEADERS = {
         "created_at",
         "updated_by",
         "update_history",
+        "content_rev",
+        "annotated_pdf_rev",
+        "annotated_pdf_url",
+        "annotated_pdf_updated_at",
     ],
     # MASTER marks only
     "marks": [
@@ -619,6 +623,10 @@ class SheetsAdapter(StorageAdapter):
                 "created_at": now,
                 "updated_by": (created_by or ""),
                 "update_history": json.dumps([]),
+                "content_rev": "0",
+                "annotated_pdf_rev": "0",
+                "annotated_pdf_url": "",
+                "annotated_pdf_updated_at": "",
             },
         )
 
@@ -1168,6 +1176,66 @@ class SheetsAdapter(StorageAdapter):
 
         self._update_cells("mark_sets", row_idx, updates)
 
+    def get_mark_set_row(self, mark_set_id: str) -> dict[str, Any] | None:
+        """
+        Fetch a single mark set row as dict (raw strings from Sheets).
+        Useful for Save & Finish logic (content_rev vs annotated_pdf_rev).
+        """
+        r = self._find_row_by_value("mark_sets", "mark_set_id", mark_set_id)
+        if not r:
+            return None
+        header = self.ws["mark_sets"].row_values(1)
+        vals = self.ws["mark_sets"].row_values(r)
+        return {header[i]: (vals[i] if i < len(vals) else "") for i in range(len(header))}
+
+    def bump_mark_set_content_rev(self, mark_set_id: str, updated_by: str | None = None) -> int:
+        """
+        content_rev += 1 (called whenever marks/groups are saved).
+        Returns the new content_rev.
+        """
+        row_idx = self._find_row_by_value("mark_sets", "mark_set_id", mark_set_id)
+        if not row_idx:
+            raise ValueError("MARK_SET_NOT_FOUND")
+
+        # Read current content_rev safely
+        header = self.ws["mark_sets"].row_values(1)
+        vals = self.ws["mark_sets"].row_values(row_idx)
+        row = {header[i]: (vals[i] if i < len(vals) else "") for i in range(len(header))}
+        cur = _safe_int(row.get("content_rev"), default=0) or 0
+        nxt = cur + 1
+
+        updates: dict[str, Any] = {"content_rev": nxt}
+        if updated_by is not None:
+            updates["updated_by"] = (updated_by or "")
+
+        self._update_cells("mark_sets", row_idx, updates)
+        return nxt
+
+    def set_mark_set_annotated_pdf(
+        self,
+        mark_set_id: str,
+        *,
+        annotated_pdf_url: str,
+        annotated_pdf_rev: int,
+        updated_by: str | None = None,
+    ) -> None:
+        """
+        Persist the latest annotated PDF metadata after upload.
+        """
+        row_idx = self._find_row_by_value("mark_sets", "mark_set_id", mark_set_id)
+        if not row_idx:
+            raise ValueError("MARK_SET_NOT_FOUND")
+
+        updates: dict[str, Any] = {
+            "annotated_pdf_url": (annotated_pdf_url or "").strip(),
+            "annotated_pdf_rev": int(annotated_pdf_rev),
+            "annotated_pdf_updated_at": _utc_iso(),
+        }
+        if updated_by is not None:
+            updates["updated_by"] = (updated_by or "")
+
+        self._update_cells("mark_sets", row_idx, updates)
+
     def clone_mark_set(self, mark_set_id: str, new_label: str, created_by: str | None) -> str:
         """
         Clone a QC mark set into a new QC mark set on the same document.
@@ -1208,6 +1276,10 @@ class SheetsAdapter(StorageAdapter):
                 "created_at": now,  # keep clone time
                 "updated_by": (created_by or src_ms.get("updated_by", "")),
                 "update_history": json.dumps(history),
+                "content_rev": "0",
+                "annotated_pdf_rev": "0",
+                "annotated_pdf_url": "",
+                "annotated_pdf_updated_at": "",
             },
         )
 

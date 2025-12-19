@@ -1,7 +1,7 @@
 # services/api/routers/groups.py
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from typing import Annotated, List, Optional
 from pydantic import BaseModel, Field
 
@@ -18,6 +18,61 @@ def get_storage():
 
 
 Storage = Annotated[object, Depends(get_storage)]
+
+def _safe_int(v, default: int = 0) -> int:
+    try:
+        if v is None:
+            return default
+        s = str(v).strip()
+        if not s:
+            return default
+        return int(float(s))
+    except Exception:
+        return default
+
+
+def _bump_content_rev(storage, mark_set_id: str, updated_by: str | None) -> int | None:
+    """
+    Increments mark_sets.content_rev by 1 and sets content_updated_at + updated_by.
+    Best-effort (does nothing if not Sheets backend).
+    """
+    if not hasattr(storage, "_find_row_by_value") or not hasattr(storage, "_update_cells"):
+        return None
+
+    row_idx = storage._find_row_by_value("mark_sets", "mark_set_id", mark_set_id)
+    if not row_idx:
+        return None
+
+    ms_row = None
+    if hasattr(storage, "get_mark_set_row"):
+        try:
+            ms_row = storage.get_mark_set_row(mark_set_id)
+        except Exception:
+            ms_row = None
+
+    if not ms_row and hasattr(storage, "_get_all_dicts"):
+        try:
+            ms_rows = storage._get_all_dicts("mark_sets")
+            ms_row = next((ms for ms in ms_rows if ms.get("mark_set_id") == mark_set_id), None)
+        except Exception:
+            ms_row = None
+
+    cur = _safe_int((ms_row or {}).get("content_rev"), 0)
+    new_rev = cur + 1
+
+    import time as _t
+    now_iso = _t.strftime("%Y-%m-%dT%H:%M:%SZ", _t.gmtime())
+
+    storage._update_cells(
+        "mark_sets",
+        row_idx,
+        {
+            "content_rev": new_rev,
+            "content_updated_at": now_iso,
+            "updated_by": (updated_by or "").strip(),
+        },
+    )
+    return new_rev
 
 
 class GroupCreate(BaseModel):
@@ -61,6 +116,7 @@ async def create_group(body: GroupCreate, storage: Storage):
             mark_ids=body.mark_ids,
             created_by=body.created_by or "",
         )
+        _bump_content_rev(storage, body.mark_set_id, body.created_by or "")
         return {"status": "created", "group_id": group_id}
     except ValueError as e:
         msg = str(e)
@@ -96,13 +152,22 @@ async def list_groups(mark_set_id: str, storage: Storage):
 
 
 @router.patch("/{group_id}", response_model=dict)
-async def update_group(group_id: str, body: GroupUpdate, storage: Storage):
+async def update_group(
+    group_id: str,
+    body: GroupUpdate,
+    storage: Storage,
+    user_mail: str | None = Query(default=None, description="User email performing the update"),
+):
     """
     Update group metadata or mark_ids.
     """
     try:
         updates = body.model_dump(exclude_unset=True)
         updated = storage.update_group(group_id, updates)
+        # Best-effort bump: resolve mark_set_id from returned row
+        msid = (updated.get("mark_set_id") or "").strip() if isinstance(updated, dict) else ""
+        if msid:
+            _bump_content_rev(storage, msid, user_mail)
         return updated
     except ValueError as e:
         if "GROUP_NOT_FOUND" in str(e):
@@ -113,12 +178,26 @@ async def update_group(group_id: str, body: GroupUpdate, storage: Storage):
 
 
 @router.delete("/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_group(group_id: str, storage: Storage):
+async def delete_group(
+    group_id: str,
+    storage: Storage,
+    user_mail: str | None = Query(default=None, description="User email performing the delete"),
+):
     """
     Delete a group by id.
     """
     try:
+        msid = ""
+        try:
+            if hasattr(storage, "_get_all_dicts"):
+                rows = storage._get_all_dicts("groups")
+                row = next((g for g in rows if g.get("group_id") == group_id), None)
+                msid = (row.get("mark_set_id") or "").strip() if row else ""
+        except Exception:
+            msid = ""
         storage.delete_group(group_id)
+        if msid:
+            _bump_content_rev(storage, msid, user_mail) 
     except ValueError as e:
         if "GROUP_NOT_FOUND" in str(e):
             raise HTTPException(status_code=404, detail="GROUP_NOT_FOUND")

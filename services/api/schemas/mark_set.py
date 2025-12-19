@@ -54,6 +54,11 @@ class MarkSetOut(MarkSetBase):
     is_master: bool = Field(False, description="Whether this is the master mark set")
     created_by: Optional[str] = None
     created_at: str = Field(..., description="Creation timestamp")
+    # ✅ Save & Finish versioning fields
+    content_rev: int = Field(0, description="Increments when marks/groups change")
+    annotated_pdf_rev: int = Field(0, description="Revision number for last uploaded annotated PDF")
+    annotated_pdf_url: Optional[str] = Field(None, description="Drive URL of latest annotated PDF")
+    annotated_pdf_updated_at: Optional[str] = Field(None, description="When annotated PDF was last uploaded")
 
     class Config:
         from_attributes = True

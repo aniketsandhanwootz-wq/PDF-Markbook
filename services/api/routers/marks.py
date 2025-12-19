@@ -52,6 +52,61 @@ def _user_can_edit_master(doc: Dict[str, Any], user_email: Optional[str]) -> boo
     allowed = {e.strip().lower() for e in editors_raw.split(",") if e.strip()}
     return user_email.strip().lower() in allowed
 
+def _safe_int(v: Any, default: int = 0) -> int:
+    try:
+        if v is None:
+            return default
+        s = str(v).strip()
+        if not s:
+            return default
+        return int(float(s))
+    except Exception:
+        return default
+
+
+def _bump_content_rev(storage: StorageAdapter, mark_set_id: str, updated_by: str | None) -> int | None:
+    """
+    Increments mark_sets.content_rev by 1 and sets content_updated_at + updated_by.
+    Best-effort: if backend is not Sheets or columns missing, it silently does nothing.
+    """
+    if not hasattr(storage, "_find_row_by_value") or not hasattr(storage, "_update_cells"):
+        return None
+
+    row_idx = storage._find_row_by_value("mark_sets", "mark_set_id", mark_set_id)
+    if not row_idx:
+        return None
+
+    # read current row (prefer fast helper if present)
+    ms_row = None
+    if hasattr(storage, "get_mark_set_row"):
+        try:
+            ms_row = storage.get_mark_set_row(mark_set_id)
+        except Exception:
+            ms_row = None
+
+    if not ms_row and hasattr(storage, "_get_all_dicts"):
+        try:
+            ms_rows = storage._get_all_dicts("mark_sets")
+            ms_row = next((ms for ms in ms_rows if ms.get("mark_set_id") == mark_set_id), None)
+        except Exception:
+            ms_row = None
+
+    cur = _safe_int((ms_row or {}).get("content_rev"), 0)
+    new_rev = cur + 1
+
+    import time as _t
+    now_iso = _t.strftime("%Y-%m-%dT%H:%M:%SZ", _t.gmtime())
+
+    storage._update_cells(
+        "mark_sets",
+        row_idx,
+        {
+            "content_rev": new_rev,
+            "content_updated_at": now_iso,
+            "updated_by": (updated_by or "").strip(),
+        },
+    )
+    return new_rev
 
 def _load_markset_and_doc(storage: StorageAdapter, mark_set_id: str) -> tuple[Dict[str, Any], Dict[str, Any]]:
     """
@@ -67,8 +122,13 @@ def _load_markset_and_doc(storage: StorageAdapter, mark_set_id: str) -> tuple[Di
             detail="This operation is only supported with the Google Sheets backend",
         )
 
-    ms_rows = storage._get_all_dicts("mark_sets")
-    target = next((ms for ms in ms_rows if ms.get("mark_set_id") == mark_set_id), None)
+    # Prefer adapter helper if available (faster, less sheet scanning)
+    if hasattr(storage, "get_mark_set_row"):
+        target = storage.get_mark_set_row(mark_set_id)
+    else:
+        ms_rows = storage._get_all_dicts("mark_sets")
+        target = next((ms for ms in ms_rows if ms.get("mark_set_id") == mark_set_id), None)
+
     if not target:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="MARK_SET_NOT_FOUND")
 
@@ -315,6 +375,7 @@ async def update_marks(
         )
         try:
             storage.update_marks(mark_set_id, marks_data)
+            _bump_content_rev(storage, mark_set_id, user_mail)
         except ValueError as e:
             if "MARK_SET_NOT_FOUND" in str(e):
                 raise HTTPException(status_code=404, detail="MARK_SET_NOT_FOUND")
@@ -442,6 +503,7 @@ async def update_marks(
 
     try:
         storage.update_marks(mark_set_id, combined)
+        _bump_content_rev(storage, mark_set_id, user_mail)
     except ValueError as e:
         if "MARK_SET_NOT_FOUND" in str(e):
             raise HTTPException(status_code=404, detail="MARK_SET_NOT_FOUND")
@@ -511,6 +573,7 @@ async def patch_mark(
         )
 
     updated_mark = storage.patch_mark(mark_id, patch.model_dump(exclude_unset=True))
+    _bump_content_rev(storage, mark_set_id, user_mail)
     return updated_mark
 
 

@@ -619,6 +619,9 @@ async def _do_generate_and_send_excel_bundle(
         if not pdf_url:
             logger.error(f"Missing pdf_url for doc {req.doc_id}, cannot build Excel")
             return
+        # ✅ Prefer Drive annotated PDF link for "View complete PDF" hyperlink in Excel
+        annotated_pdf_url = (qc_ms.get("annotated_pdf_url") or "").strip()
+        complete_pdf_url = annotated_pdf_url or pdf_url
 
         report_name = req.report_name or f"{doc.get('part_number') or 'inspection'}-QC"
 
@@ -626,6 +629,7 @@ async def _do_generate_and_send_excel_bundle(
         try:
             excel_bytes = await generate_report_excel(
                 pdf_url=pdf_url,
+                complete_pdf_url=complete_pdf_url,
                 marks=filtered_marks,
                 entries=mark_id_to_value,
                 user_email=req.submitted_by or req.email_to,

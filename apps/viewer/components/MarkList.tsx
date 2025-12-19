@@ -88,7 +88,7 @@ export default function MarkList({
   const handleClearSearch = () => setSearchQuery('');
 
   return (
-        <div
+    <div
       className="mark-list"
       ref={listRef}
       // Make this the scroll container so sticky header works
@@ -198,8 +198,8 @@ export default function MarkList({
                   border: isActive
                     ? '2px solid #D99E02'
                     : isFilled
-                    ? '1.5px solid #bbe58aff'
-                    : '1.5px solid #C9C9C9',
+                      ? '1.5px solid #bbe58aff'
+                      : '1.5px solid #C9C9C9',
                   boxShadow: 'none',
                   cursor: 'pointer',
                   transition:

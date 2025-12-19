@@ -27,3 +27,10 @@ class MarkSet:
     created_at: str = ""
     updated_by: Optional[str] = None
     update_history: Optional[str] = None  # JSON string in Sheets
+
+    # ✅ Save & Finish versioning fields
+    content_rev: int = 0
+    annotated_pdf_rev: int = 0
+    annotated_pdf_url: Optional[str] = None
+    annotated_pdf_updated_at: Optional[str] = None
+   

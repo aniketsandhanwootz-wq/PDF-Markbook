@@ -6,6 +6,7 @@ import json
 from io import BytesIO
 from typing import Optional
 from pathlib import Path
+import time
 
 from google.oauth2.credentials import Credentials as UserCredentials
 from google.auth.transport.requests import Request
@@ -256,4 +257,152 @@ def upload_report_excel_to_drive(
 
     except Exception as e:
         logger.exception("Failed to upload report Excel to Drive: %s", e)
+        return None
+
+def _extract_drive_file_id_from_url(url: str) -> Optional[str]:
+    """
+    Try to extract Drive file id from common URL formats:
+    - https://drive.google.com/uc?export=download&id=FILE_ID
+    - https://drive.google.com/file/d/FILE_ID/view
+    """
+    if not url:
+        return None
+    u = url.strip()
+
+    # uc?....&id=FILE_ID
+    if "id=" in u:
+        try:
+            part = u.split("id=", 1)[1]
+            file_id = part.split("&", 1)[0].strip()
+            return file_id or None
+        except Exception:
+            pass
+
+    # /file/d/FILE_ID/
+    if "/file/d/" in u:
+        try:
+            part = u.split("/file/d/", 1)[1]
+            file_id = part.split("/", 1)[0].strip()
+            return file_id or None
+        except Exception:
+            pass
+
+    return None
+
+
+def upload_annotated_pdf_to_drive(
+    *,
+    pdf_bytes: bytes,
+    project_name: str,
+    external_id: str,
+    part_number: str,
+    dwg_num: str,
+    mark_set_label: str,
+    user_email: str,
+    is_master: bool,
+    existing_annotated_pdf_url: Optional[str] = None,
+    content_rev: int = 0,
+) -> Optional[str]:
+    """
+    Upload annotated (balloon) PDF to Drive using folder structure:
+
+    Wootz_Markbook/
+        <part_number>__<external_id>__<project_name>/
+            <dwg_num>/
+                <Annotated_Maps>/
+                    QC: MAP-<markset>-rev<rev>-<timestamp>.pdf  (new file)
+                    MASTER: overwrite existing (optional) OR new file
+
+    Returns direct download URL or None on failure.
+    """
+    try:
+        settings = get_settings()
+        service = get_drive_service()
+
+        # 1) Root
+        root_folder_id = (
+            settings.gdrive_root_folder_id.strip()
+            if getattr(settings, "gdrive_root_folder_id", None)
+            else ""
+        )
+        if not root_folder_id:
+            root_name = getattr(settings, "gdrive_root_folder_name", None) or "Wootz_Markbook"
+            root_folder_id = _ensure_folder(service, root_name, parent_id=None)
+
+        # 2) Project folder
+        proj_segment = "__".join(
+            [
+                _safe_segment(part_number, "NO_PART"),
+                _safe_segment(external_id, "NO_EXT"),
+                _safe_segment(project_name, "NO_PROJECT"),
+            ]
+        )
+        proj_folder_id = _ensure_folder(service, proj_segment, parent_id=root_folder_id)
+
+        # 3) Drawing folder
+        dwg_segment = _safe_segment(dwg_num or "NO_DWG", "NO_DWG")
+        dwg_folder_id = _ensure_folder(service, dwg_segment, parent_id=proj_folder_id)
+
+        # 4) Annotated subfolder
+        subfolder = getattr(settings, "gdrive_annotated_maps_subfolder", None) or "Annotated_Maps"
+        ann_folder_id = _ensure_folder(service, _safe_segment(subfolder, "Annotated_Maps"), parent_id=dwg_folder_id)
+
+        # Build media
+        media = MediaIoBaseUpload(
+            BytesIO(pdf_bytes),
+            mimetype="application/pdf",
+            resumable=False,
+        )
+
+        # MASTER overwrite (optional)
+        overwrite_allowed = bool(getattr(settings, "gdrive_overwrite_master_annotated_pdf", True))
+        existing_file_id = _extract_drive_file_id_from_url(existing_annotated_pdf_url or "")
+
+        if is_master and overwrite_allowed and existing_file_id:
+            # overwrite same file id, keep same link
+            updated = service.files().update(
+                fileId=existing_file_id,
+                media_body=media,
+                fields="id, webViewLink, webContentLink",
+            ).execute()
+
+            file_id = updated["id"]
+            download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+            logger.info("Overwrote MASTER annotated PDF on Drive file_id=%s", file_id)
+            return download_url
+
+        # Else: create new file
+        ts = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+        safe_label = _safe_segment(mark_set_label or "Markset", "Markset")
+        file_name = f"MAP-{safe_label}-rev{int(content_rev)}-{ts}.pdf"
+
+        file_metadata = {
+            "name": file_name,
+            "parents": [ann_folder_id],
+        }
+
+        created = service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields="id, webViewLink, webContentLink",
+        ).execute()
+
+        file_id = created["id"]
+
+        # public read
+        try:
+            service.permissions().create(
+                fileId=file_id,
+                body={"role": "reader", "type": "anyone"},
+                fields="id",
+            ).execute()
+        except Exception as e:
+            logger.warning("Failed to set public permission for annotated pdf %s: %s", file_id, e)
+
+        download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+        logger.info("Uploaded annotated PDF to Drive file_id=%s", file_id)
+        return download_url
+
+    except Exception as e:
+        logger.exception("Failed to upload annotated PDF to Drive: %s", e)
         return None

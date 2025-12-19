@@ -71,8 +71,8 @@ function SlideToAct({ label, onComplete }: SlideToActProps) {
     }
   };
 
-// width of the filled area = knob + left+right padding
-const filledWidth = dragX + KNOB_SIZE + PADDING * 2;
+  // width of the filled area = knob + left+right padding
+  const filledWidth = dragX + KNOB_SIZE + PADDING * 2;
 
 
   return (
@@ -362,17 +362,31 @@ export default function InputPanel({
 
 
         <div
-          style={{
-            fontSize: 18,
-            whiteSpace: 'nowrap',
-            justifySelf: 'end',
-            color: showRequiredIcon ? '#EF4345' : 'transparent',
-            opacity: showRequiredIcon ? 0.95 : 0,
-            pointerEvents: 'none',
-          }}
-        >
-          ⓘ
-        </div>
+  style={{
+    whiteSpace: 'nowrap',
+    justifySelf: 'end',
+    opacity: showRequiredIcon ? 0.95 : 0,
+    pointerEvents: 'none',
+    display: 'flex',
+    alignItems: 'center',
+  }}
+  title={showRequiredIcon ? 'Critical' : undefined}
+>
+  <img
+    src="/icons/hash.png"
+    alt="Critical"
+    style={{
+      width: 20,
+      height: 20,
+      display: 'block',
+
+      // Yellow PNG ko red-ish banane ka best-effort
+      filter:
+        'hue-rotate(300deg) saturate(500%) brightness(1.05) contrast(1.1) drop-shadow(0 0 0.8px #EF4345) drop-shadow(0 0 0.8px #EF4345)',
+    }}
+  />
+</div>
+
 
 
       </div>
@@ -447,79 +461,79 @@ export default function InputPanel({
           />
 
           {/* PASS / FAIL / DOUBT selector */}
-<div
-  style={{
-    display: 'flex',
-    gap: 6,
-    marginTop: 2,
-  }}
->
-  {(['PASS', 'DOUBT', 'FAIL'] as const).map((opt) => {
-    const isSelected = (status || '') === opt;
+          <div
+            style={{
+              display: 'flex',
+              gap: 6,
+              marginTop: 2,
+            }}
+          >
+            {(['PASS', 'DOUBT', 'FAIL'] as const).map((opt) => {
+              const isSelected = (status || '') === opt;
 
-    return (
-      <button
-        key={opt}
-        type="button"
-        onClick={() => {
-          if (onStatusChange) onStatusChange(opt);
-        }}
-        style={{
-          flex: 1,
-          padding: '6px 8px',
-          fontSize: 13,
-          fontWeight: 600,
-          borderRadius: 8,
-          minHeight: 32,
-          // 🔁 same border behaviour as before
-          border: isSelected ? '2px solid #D99E02' : '2px solid #3B3B3B',
-          // 🎨 selected background now your colour:
-          background: isSelected ? '#352E1F' : '#1F1F1F',
-          color: '#FFFFFF',
-          cursor: 'pointer',
-          transition: 'all 0.15s ease',
-          textTransform: 'capitalize',
-        }}
-      >
-        {opt.toLowerCase()}
-      </button>
-    );
-  })}
-</div>
+              return (
+                <button
+                  key={opt}
+                  type="button"
+                  onClick={() => {
+                    if (onStatusChange) onStatusChange(opt);
+                  }}
+                  style={{
+                    flex: 1,
+                    padding: '6px 8px',
+                    fontSize: 13,
+                    fontWeight: 600,
+                    borderRadius: 8,
+                    minHeight: 32,
+                    // 🔁 same border behaviour as before
+                    border: isSelected ? '2px solid #D99E02' : '2px solid #3B3B3B',
+                    // 🎨 selected background now your colour:
+                    background: isSelected ? '#352E1F' : '#1F1F1F',
+                    color: '#FFFFFF',
+                    cursor: 'pointer',
+                    transition: 'all 0.15s ease',
+                    textTransform: 'capitalize',
+                  }}
+                >
+                  {opt.toLowerCase()}
+                </button>
+              );
+            })}
+          </div>
 
         </div>
       )}
 
 
       {/* Nav / Slide action */}
-{isGroupMode && showGroupSlide && onGroupSlideComplete ? (
-  <div
-    style={{
-      // top 8, left/right 10, bottom extra gap
-      padding: floating ? '8px 10px 10px' : '8px 10px 10px',
-      background: '#1F1F1F',
-      borderTop: '1px solid #3B3B3B',
-      flexShrink: 0,
-    }}
-  >
-    <SlideToAct
-      label={groupSlideLabel || 'Slide to start "this group"'}
-      onComplete={onGroupSlideComplete}
-    />
-  </div>
-) : (
+      {isGroupMode && showGroupSlide && onGroupSlideComplete ? (
+        <div
+          style={{
+            // top 8, left/right 10, bottom extra gap
+            padding: floating ? '8px 10px 10px' : '8px 10px 10px',
+            background: '#1F1F1F',
+            borderTop: '1px solid #3B3B3B',
+            flexShrink: 0,
+          }}
+        >
+          <SlideToAct
+            label={groupSlideLabel || 'Slide to start "this group"'}
+            onComplete={onGroupSlideComplete}
+          />
+        </div>
+      ) : (
 
-<div
-  style={{
-    // ↑ top/bottom dono taraf thoda zyada
-    padding: floating ? '8px 10px 10px' : '8px 10px 10px',
-    background: '#1F1F1F',
-    borderTop: '1px solid #3B3B3B',
-    display: 'flex',
-    gap: 6,
-    flexShrink: 0,
-  }}
->
+        <div
+          style={{
+            // ↑ top/bottom dono taraf thoda zyada
+            padding: floating ? '8px 10px 10px' : '8px 10px 10px',
+            background: '#1F1F1F',
+            borderTop: '1px solid #3B3B3B',
+            display: 'flex',
+            gap: 6,
+            flexShrink: 0,
+          }}
+        >
 
           <button
             onClick={onPrev}
