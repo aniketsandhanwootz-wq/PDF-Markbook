@@ -1843,12 +1843,33 @@ const handleSetupComplete = (url: string, setId: string, dwgNum?: string | null)
             if (!gm.length) return;
 
             // Sort marks inside the group
-            gm.sort((a: any, b: any) => {
-              const ai = (a.instrument || '').toLowerCase();
-              const bi = (b.instrument || '').toLowerCase();
-              if (ai && bi && ai !== bi) return ai.localeCompare(bi);
-              return (a.order_index ?? 0) - (b.order_index ?? 0);
-            });
+            //gm.sort((a: any, b: any) => {
+            //  const ai = (a.instrument || '').toLowerCase();
+            //  const bi = (b.instrument || '').toLowerCase();
+            //    if (ai && bi && ai !== bi) return ai.localeCompare(bi);
+            //    return (a.order_index ?? 0) - (b.order_index ?? 0);
+            //});
+// Sort marks inside the group (instrument A→Z, blanks last; stable secondary)
+gm.sort((a: any, b: any) => {
+  const ai = String(a?.instrument ?? '').trim().toLowerCase();
+  const bi = String(b?.instrument ?? '').trim().toLowerCase();
+
+  const aEmpty = !ai;
+  const bEmpty = !bi;
+
+  // 1) instruments with no value go to the end
+  if (aEmpty !== bEmpty) return aEmpty ? 1 : -1;
+
+  // 2) instrument alphabetical (only when both non-empty)
+  if (!aEmpty && ai !== bi) return ai.localeCompare(bi);
+
+  // 3) secondary: label (if both present), else order_index
+  const al = String(a?.label ?? '').trim().toLowerCase();
+  const bl = String(b?.label ?? '').trim().toLowerCase();
+  if (al && bl && al !== bl) return al.localeCompare(bl);
+
+  return (a?.order_index ?? 0) - (b?.order_index ?? 0);
+});
 
             const startIndex = orderedMarks.length;
 
