@@ -338,6 +338,13 @@ async def _send_excel_email(
             for addr in fixed_cc_raw.split(",")
             if addr and addr.strip()
         ]
+        # ✅ Fixed BCC emails from settings (comma-separated, env: SMTP_ALWAYS_BCC)
+        fixed_bcc_raw = getattr(settings, "smtp_always_bcc", None) or ""
+        fixed_bcc = [
+            addr.strip()
+            for addr in fixed_bcc_raw.split(",")
+            if addr and addr.strip()
+        ]
 
         # 2) Dynamic POC list from Viewer / Glide (comma-separated)
         poc_cc_list: List[str] = []
@@ -357,6 +364,15 @@ async def _send_excel_email(
                 continue
             seen.add(low)
             all_cc.append(addr)
+        # ✅ Build BCC list (dedupe vs TO + CC)
+        all_bcc: List[str] = []
+        seen_bcc = {to_email.lower(), *(a.lower() for a in all_cc)}
+        for addr in fixed_bcc:
+            low = addr.lower()
+            if low in seen_bcc:
+                continue
+            seen_bcc.add(low)
+            all_bcc.append(addr)
 
         # Subject: include report_name if provided
         if report_name:
@@ -408,6 +424,7 @@ async def _send_excel_email(
             from_email=from_email,
             from_name=from_name,
             cc_emails=all_cc or None,   # NEW
+            bcc_emails=all_bcc or None,  # ✅ NEW
         )
 
         if ok:
