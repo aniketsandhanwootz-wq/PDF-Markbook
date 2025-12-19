@@ -303,6 +303,7 @@ def _draw_marks_on_page_image(
 async def generate_report_excel(
     *,
     pdf_url: str,
+    complete_pdf_url: Optional[str] = None,
     marks: List[Dict[str, Any]],
     entries: Dict[str, str],
     user_email: Optional[str],
@@ -657,7 +658,7 @@ async def generate_report_excel(
         TARGET_W = 900
 
         # Fail-safe: skip right-side images for heavy reports (prevents Render OOM)
-        MAX_RIGHT_PAGES = 3
+        MAX_RIGHT_PAGES = 5
         HEAVY_MARKS_THRESHOLD = 150
 
         # Fail-safe fallback: skip right-side completely if too heavy
@@ -672,7 +673,8 @@ async def generate_report_excel(
 
         # 1) Hyperlink in K1 (your template text cell)
         try:
-            _write_merged(ws, "K1", _excel_hyperlink_formula(pdf_url, "To view complete PDF click"))
+            link_url = (complete_pdf_url or pdf_url or "").strip()  # ✅ annotated preferred
+            _write_merged(ws, "K1", _excel_hyperlink_formula(link_url, "To view complete PDF click"))
             c = ws["K1"]
             c.alignment = Alignment(wrap_text=True, vertical="center")
             c.font = Font(color="0000EE", underline="single")

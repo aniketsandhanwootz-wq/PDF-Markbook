@@ -41,9 +41,14 @@ async def generate_excel_report(body: ExcelReportBody, storage = Depends(get_sto
     if not doc:
         raise HTTPException(status_code=400, detail="DOCUMENT_NOT_FOUND")
 
-    pdf_url = body.pdf_url or doc.get("pdf_url")
+    pdf_url = (body.pdf_url or doc.get("pdf_url") or "").strip()
     if not pdf_url:
         raise HTTPException(status_code=400, detail="Missing pdf_url")
+
+    # ✅ Prefer annotated PDF (Drive) for the "view complete PDF" hyperlink
+    annotated_pdf_url = (ms.get("annotated_pdf_url") or "").strip()
+    complete_pdf_url = annotated_pdf_url or pdf_url
+
 
     marks = storage.list_marks(body.mark_set_id)
     entries = body.entries or {}
@@ -61,6 +66,7 @@ async def generate_excel_report(body: ExcelReportBody, storage = Depends(get_sto
     try:
         excel_bytes = await generate_report_excel(
             pdf_url=pdf_url,
+            complete_pdf_url=complete_pdf_url,
             marks=marks,
             entries=entries,
             user_email=body.user_email,

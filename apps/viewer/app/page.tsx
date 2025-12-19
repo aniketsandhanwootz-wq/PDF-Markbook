@@ -934,36 +934,36 @@ function ViewerSetupScreen({
                 >
                   <div style={{ fontWeight: 500 }}>Available Inspection Maps</div>
 
-<button
-  // ❌ temporarily disabled: no onClick
-  // onClick={handleDownloadMasterReport}
-  disabled={true}
-  style={{
-    padding: 0,
-    width: 34,
-    height: 34,
-    borderRadius: 8,
-    border: '1px solid #3B3B3B',
-    background: '#171717',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    cursor: 'default',     // pointer nahi dikhayenge
-    opacity: 0.35,         // thoda fade so it looks disabled
-  }}
-  title="Master report download will be enabled soon"
->
-  <img
-    src="/icons/spreadsheet.png"
-    alt="Master report (coming soon)"
-    style={{
-      width: 22,
-      height: 22,
-      display: 'block',
-      pointerEvents: 'none', // image pe click bhi ignore
-    }}
-  />
-</button>
+                  <button
+                    // ❌ temporarily disabled: no onClick
+                    // onClick={handleDownloadMasterReport}
+                    disabled={true}
+                    style={{
+                      padding: 0,
+                      width: 34,
+                      height: 34,
+                      borderRadius: 8,
+                      border: '1px solid #3B3B3B',
+                      background: '#171717',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: 'default',     // pointer nahi dikhayenge
+                      opacity: 0.35,         // thoda fade so it looks disabled
+                    }}
+                    title="Master report download will be enabled soon"
+                  >
+                    <img
+                      src="/icons/spreadsheet.png"
+                      alt="Master report (coming soon)"
+                      style={{
+                        width: 22,
+                        height: 22,
+                        display: 'block',
+                        pointerEvents: 'none', // image pe click bhi ignore
+                      }}
+                    />
+                  </button>
 
                 </div>
 
@@ -997,56 +997,56 @@ function ViewerSetupScreen({
                           gap: 12,
                         }}
                       >
-{groupedByType[typeName].map((cluster) => {
-  const count = cluster.marksets.length;
-  const dwgWithCount = `${cluster.dwgLabel} : ${String(count).padStart(2, '0')}`;
+                        {groupedByType[typeName].map((cluster) => {
+                          const count = cluster.marksets.length;
+                          const dwgWithCount = `${cluster.dwgLabel} : ${String(count).padStart(2, '0')}`;
 
-  return (
-    <button
-      key={cluster.dwgKey}
-      onClick={() => setActiveDwgKey(cluster.dwgKey)}
-      style={{
-        textAlign: 'left',
-        border: '1px solid #3B3B3B',
-        borderRadius: 12,
-        padding: '14px 18px',
-        background: '#1F1F1F',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: 12,
-        cursor: 'pointer',
-      }}
-    >
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'baseline',
-        }}
-      >
-        <span
-          style={{
-            fontSize: 14,
-            fontWeight: 600,
-            color: '#FFFFFF',
-          }}
-        >
-          {dwgWithCount}
-        </span>
-      </div>
+                          return (
+                            <button
+                              key={cluster.dwgKey}
+                              onClick={() => setActiveDwgKey(cluster.dwgKey)}
+                              style={{
+                                textAlign: 'left',
+                                border: '1px solid #3B3B3B',
+                                borderRadius: 12,
+                                padding: '14px 18px',
+                                background: '#1F1F1F',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                gap: 12,
+                                cursor: 'pointer',
+                              }}
+                            >
+                              <div
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'baseline',
+                                }}
+                              >
+                                <span
+                                  style={{
+                                    fontSize: 14,
+                                    fontWeight: 600,
+                                    color: '#FFFFFF',
+                                  }}
+                                >
+                                  {dwgWithCount}
+                                </span>
+                              </div>
 
-      <div
-        style={{
-          fontSize: 16,
-          color: '#FFFFFF',
-          opacity: 0.85,
-        }}
-      >
-        ›
-      </div>
-    </button>
-  );
-})}
+                              <div
+                                style={{
+                                  fontSize: 16,
+                                  color: '#FFFFFF',
+                                  opacity: 0.85,
+                                }}
+                              >
+                                ›
+                              </div>
+                            </button>
+                          );
+                        })}
 
                       </div>
                     </div>
@@ -1144,9 +1144,9 @@ function ViewerContent() {
   // Cache zoom level per group so we don’t recompute on every mark navigation
   const groupZoomCache = useRef<Map<number, number>>(new Map());
 
- // Report metadata
-const [reportTitle, setReportTitle] = useState(() => getDefaultReportTitle());
-const [showReportTitle, setShowReportTitle] = useState(true);
+  // Report metadata
+  const [reportTitle, setReportTitle] = useState(() => getDefaultReportTitle());
+  const [showReportTitle, setShowReportTitle] = useState(true);
 
 
   const setZoomQ = useCallback(
@@ -1526,22 +1526,22 @@ const [showReportTitle, setShowReportTitle] = useState(true);
   const qUser = searchParams?.get('user_mail') || '';
   const qAssembly = searchParams?.get('assembly_drawing') || '';
   // NEW: optional POC CC list from Glide (comma-separated emails)
-const qPocCc = searchParams?.get('poc_cc') || searchParams?.get('poc') || '';
+  const qPocCc = searchParams?.get('poc_cc') || searchParams?.get('poc') || '';
   const userEmail = (qUser || '').trim() || null;
 
   // ✅ PATCH: Save the initial querystring once (includes poc / poc_cc)
-// so that later "open markset" doesn't lose it.
-useEffect(() => {
-  if (typeof window === 'undefined') return;
+  // so that later "open markset" doesn't lose it.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
 
-  const cur = window.location.search.slice(1); // no '?'
-  if (!cur) return;
+    const cur = window.location.search.slice(1); // no '?'
+    if (!cur) return;
 
-  const existing = sessionStorage.getItem('viewerLastSetupParams');
-  if (!existing) {
-    sessionStorage.setItem('viewerLastSetupParams', cur);
-  }
-}, []);
+    const existing = sessionStorage.getItem('viewerLastSetupParams');
+    if (!existing) {
+      sessionStorage.setItem('viewerLastSetupParams', cur);
+    }
+  }, []);
 
   // Viewer only needs the business triple; assembly_drawing is optional
   const hasBootstrapKeys = !!(qProject && qExtId && qPartNumber);
@@ -1574,45 +1574,45 @@ useEffect(() => {
   const effectivePdfUrl = selectedPdfUrl || pdfUrlParam;
 
 
-const handleSetupComplete = (url: string, setId: string, dwgNum?: string | null) => {
-  // ✅ Always start from CURRENT URL first (most reliable),
-  // fallback to stored baseline only if needed.
-  const baseQs =
-    window.location.search.slice(1) ||
-    sessionStorage.getItem('viewerLastSetupParams') ||
-    '';
+  const handleSetupComplete = (url: string, setId: string, dwgNum?: string | null) => {
+    // ✅ Always start from CURRENT URL first (most reliable),
+    // fallback to stored baseline only if needed.
+    const baseQs =
+      window.location.search.slice(1) ||
+      sessionStorage.getItem('viewerLastSetupParams') ||
+      '';
 
-  const params = new URLSearchParams(baseQs);
+    const params = new URLSearchParams(baseQs);
 
-  // ✅ Support poc alias: if URL has poc but not poc_cc, convert it
-  if (!params.get('poc_cc') && params.get('poc')) {
-    params.set('poc_cc', params.get('poc')!);
-  }
+    // ✅ Support poc alias: if URL has poc but not poc_cc, convert it
+    if (!params.get('poc_cc') && params.get('poc')) {
+      params.set('poc_cc', params.get('poc')!);
+    }
 
-  // Keep existing bootstrap params + add viewer-specific params
-  params.set('pdf_url', url);
-  if (setId) params.set('mark_set_id', setId);
+    // Keep existing bootstrap params + add viewer-specific params
+    params.set('pdf_url', url);
+    if (setId) params.set('mark_set_id', setId);
 
-  if (dwgNum && dwgNum.trim()) {
-    params.set('dwg_num', dwgNum.trim());
-  } else {
-    params.delete('dwg_num');
-  }
+    if (dwgNum && dwgNum.trim()) {
+      params.set('dwg_num', dwgNum.trim());
+    } else {
+      params.delete('dwg_num');
+    }
 
-  const qsString = params.toString();
+    const qsString = params.toString();
 
-  // ✅ Update storage so future flows (submit/reset) retain poc_cc too
-  sessionStorage.setItem('viewerLastSetupParams', qsString);
+    // ✅ Update storage so future flows (submit/reset) retain poc_cc too
+    sessionStorage.setItem('viewerLastSetupParams', qsString);
 
-  // Stay on same page, switch to viewer mode
-  setSelectedPdfUrl(url);
-  setSelectedMarkSetId(setId || null);
-  setShowSetup(false);
+    // Stay on same page, switch to viewer mode
+    setSelectedPdfUrl(url);
+    setSelectedMarkSetId(setId || null);
+    setShowSetup(false);
 
-  // Keep URL sharable without full reload
-  const newUrl = `${window.location.pathname}?${qsString}`;
-  router.push(newUrl, { scroll: false });
-};
+    // Keep URL sharable without full reload
+    const newUrl = `${window.location.pathname}?${qsString}`;
+    router.push(newUrl, { scroll: false });
+  };
 
 
   const rawPdfUrl = cleanPdfUrl(
@@ -1651,7 +1651,7 @@ const handleSetupComplete = (url: string, setId: string, dwgNum?: string | null)
   const [showDraftDialog, setShowDraftDialog] = useState(false);
   const [hasHandledInitialDraft, setHasHandledInitialDraft] = useState(false);
 
-   // Decide once per markset: either show resume dialog, or enable autosave directly
+  // Decide once per markset: either show resume dialog, or enable autosave directly
   useEffect(() => {
     if (!markSetId || showSetup) return;
 
@@ -1686,9 +1686,9 @@ const handleSetupComplete = (url: string, setId: string, dwgNum?: string | null)
     setAutosaveEnabled(false);
     setHasHandledInitialDraft(false);
 
-      // Reset title for each new inspection session
-  setReportTitle(getDefaultReportTitle());
-  setShowReportTitle(true);
+    // Reset title for each new inspection session
+    setReportTitle(getDefaultReportTitle());
+    setShowReportTitle(true);
   }, [markSetId]);
 
 
@@ -1805,7 +1805,7 @@ const handleSetupComplete = (url: string, setId: string, dwgNum?: string | null)
           if (!res.ok) throw new Error('Failed to fetch master marks');
           const marksData: Mark[] = await res.json();
 
-           const sorted = [...marksData].sort((a, b) => a.order_index - b.order_index);
+          const sorted = [...marksData].sort((a, b) => a.order_index - b.order_index);
           setMarks(sorted);
 
           const initialEntries: Record<string, string> = {};
@@ -1849,27 +1849,27 @@ const handleSetupComplete = (url: string, setId: string, dwgNum?: string | null)
             //    if (ai && bi && ai !== bi) return ai.localeCompare(bi);
             //    return (a.order_index ?? 0) - (b.order_index ?? 0);
             //});
-// Sort marks inside the group (instrument A→Z, blanks last; stable secondary)
-gm.sort((a: any, b: any) => {
-  const ai = String(a?.instrument ?? '').trim().toLowerCase();
-  const bi = String(b?.instrument ?? '').trim().toLowerCase();
+            // Sort marks inside the group (instrument A→Z, blanks last; stable secondary)
+            gm.sort((a: any, b: any) => {
+              const ai = String(a?.instrument ?? '').trim().toLowerCase();
+              const bi = String(b?.instrument ?? '').trim().toLowerCase();
 
-  const aEmpty = !ai;
-  const bEmpty = !bi;
+              const aEmpty = !ai;
+              const bEmpty = !bi;
 
-  // 1) instruments with no value go to the end
-  if (aEmpty !== bEmpty) return aEmpty ? 1 : -1;
+              // 1) instruments with no value go to the end
+              if (aEmpty !== bEmpty) return aEmpty ? 1 : -1;
 
-  // 2) instrument alphabetical (only when both non-empty)
-  if (!aEmpty && ai !== bi) return ai.localeCompare(bi);
+              // 2) instrument alphabetical (only when both non-empty)
+              if (!aEmpty && ai !== bi) return ai.localeCompare(bi);
 
-  // 3) secondary: label (if both present), else order_index
-  const al = String(a?.label ?? '').trim().toLowerCase();
-  const bl = String(b?.label ?? '').trim().toLowerCase();
-  if (al && bl && al !== bl) return al.localeCompare(bl);
+              // 3) secondary: label (if both present), else order_index
+              const al = String(a?.label ?? '').trim().toLowerCase();
+              const bl = String(b?.label ?? '').trim().toLowerCase();
+              if (al && bl && al !== bl) return al.localeCompare(bl);
 
-  return (a?.order_index ?? 0) - (b?.order_index ?? 0);
-});
+              return (a?.order_index ?? 0) - (b?.order_index ?? 0);
+            });
 
             const startIndex = orderedMarks.length;
 
@@ -2779,7 +2779,7 @@ gm.sort((a: any, b: any) => {
     }
   }, [currentMarkIndex, marks]);
 
-    const handleStatusChange = useCallback(
+  const handleStatusChange = useCallback(
     (status: 'PASS' | 'FAIL' | 'DOUBT') => {
       const currentMark = marks[currentMarkIndex];
       if (currentMark?.mark_id) {
@@ -2832,26 +2832,26 @@ gm.sort((a: any, b: any) => {
         console.warn('Invalid email format, skipping email send');
       }
 
-const response = await fetch(`${apiBase}/reports/generate-bundle`, {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({
-    mark_set_id: markSetId,
-    entries: finalEntries,
-    statuses: finalStatuses,   // 🔥 NEW: per-mark PASS / FAIL / DOUBT / NA
-    pdf_url: rawPdfUrl,
-    user_email: userEmail,     // still accepted (alias user_mail also works server-side)
-    padding_pct: 0.25,
-    office_variant: 'o365',
+      const response = await fetch(`${apiBase}/reports/generate-bundle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mark_set_id: markSetId,
+          entries: finalEntries,
+          statuses: finalStatuses,   // 🔥 NEW: per-mark PASS / FAIL / DOUBT / NA
+          pdf_url: rawPdfUrl,
+          user_email: userEmail,     // still accepted (alias user_mail also works server-side)
+          padding_pct: 0.25,
+          office_variant: 'o365',
 
-    // viewer metadata
-    report_title: reportTitle.trim(),
-    report_id: reportId,
+          // viewer metadata
+          report_title: reportTitle.trim(),
+          report_id: reportId,
 
-    // POC CC list (comma-separated)
-    poc_cc: qPocCc || undefined,
-  }),
-});
+          // POC CC list (comma-separated)
+          poc_cc: qPocCc || undefined,
+        }),
+      });
 
 
       if (!response.ok) {
@@ -3155,8 +3155,8 @@ const response = await fetch(`${apiBase}/reports/generate-bundle`, {
     // Restore cursor index safely
     const safeIndex =
       typeof draft.currentMarkIndex === 'number' &&
-      draft.currentMarkIndex >= 0 &&
-      draft.currentMarkIndex < marks.length
+        draft.currentMarkIndex >= 0 &&
+        draft.currentMarkIndex < marks.length
         ? draft.currentMarkIndex
         : 0;
 
@@ -3209,7 +3209,7 @@ const response = await fetch(`${apiBase}/reports/generate-bundle`, {
 
 
   // Mobile input mode
-    if (isMobileInputMode && marks.length > 0) {
+  if (isMobileInputMode && marks.length > 0) {
     const currentMark = marks[currentMarkIndex];
     const currentValue = currentMark?.mark_id ? entries[currentMark.mark_id] || '' : '';
     const currentStatus =
@@ -3445,23 +3445,23 @@ const response = await fetch(`${apiBase}/reports/generate-bundle`, {
 
 
         {/* 🔹 Review overlay (mobile) */}
-{showReview && (
-  <ReviewScreen
-    marks={marks}
-    entries={entries}
-    onBack={() => {
-      // Just hide overlay; viewer state is preserved
-      setShowReview(false);
-    }}
-    onSubmit={handleSubmit}
-    isSubmitting={isSubmitting}
-    onJumpTo={(i) => {
-      setShowReview(false);
-      setTimeout(() => jumpDirectToMark(i), 120);
-    }}
-    statusByMarkId={statuses as Record<string, 'PASS' | 'FAIL' | 'DOUBT' | ''>}
-  />
-)}
+        {showReview && (
+          <ReviewScreen
+            marks={marks}
+            entries={entries}
+            onBack={() => {
+              // Just hide overlay; viewer state is preserved
+              setShowReview(false);
+            }}
+            onSubmit={handleSubmit}
+            isSubmitting={isSubmitting}
+            onJumpTo={(i) => {
+              setShowReview(false);
+              setTimeout(() => jumpDirectToMark(i), 120);
+            }}
+            statusByMarkId={statuses as Record<string, 'PASS' | 'FAIL' | 'DOUBT' | ''>}
+          />
+        )}
 
       </div>
     );
@@ -3496,7 +3496,7 @@ const response = await fetch(`${apiBase}/reports/generate-bundle`, {
       })()
       : '';
 
-        const currentStatusDesktop =
+  const currentStatusDesktop =
     marks[currentMarkIndex]?.mark_id
       ? (statuses[marks[currentMarkIndex]!.mark_id!] as 'PASS' | 'FAIL' | 'DOUBT' | undefined) || ''
       : '';
@@ -3687,22 +3687,22 @@ const response = await fetch(`${apiBase}/reports/generate-bundle`, {
         onResultFound={handleSearchResult}
       />
       {/* 🔹 Review overlay (desktop) */}
-{showReview && (
-  <ReviewScreen
-    marks={marks}
-    entries={entries}
-    onBack={() => {
-      setShowReview(false);
-    }}
-    onSubmit={handleSubmit}
-    isSubmitting={isSubmitting}
-    onJumpTo={(i) => {
-      setShowReview(false);
-      setTimeout(() => jumpDirectToMark(i), 120);
-    }}
-    statusByMarkId={statuses as Record<string, 'PASS' | 'FAIL' | 'DOUBT' | ''>}
-  />
-)}
+      {showReview && (
+        <ReviewScreen
+          marks={marks}
+          entries={entries}
+          onBack={() => {
+            setShowReview(false);
+          }}
+          onSubmit={handleSubmit}
+          isSubmitting={isSubmitting}
+          onJumpTo={(i) => {
+            setShowReview(false);
+            setTimeout(() => jumpDirectToMark(i), 120);
+          }}
+          statusByMarkId={statuses as Record<string, 'PASS' | 'FAIL' | 'DOUBT' | ''>}
+        />
+      )}
 
     </div>
   );

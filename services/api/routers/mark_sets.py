@@ -1,7 +1,7 @@
 # services/api/routers/mark_sets.py
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request, UploadFile, File
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 
@@ -21,6 +21,63 @@ router = APIRouter(prefix="/mark-sets", tags=["mark-sets"])
 def _bool(val: str | None) -> bool:
     return (val or "").strip().upper() == "TRUE"
 
+def _safe_int(v: Any, default: int = 0) -> int:
+    try:
+        if v is None:
+            return default
+        s = str(v).strip()
+        if not s:
+            return default
+        return int(float(s))
+    except Exception:
+        return default
+
+def _bump_content_rev(storage, mark_set_id: str, updated_by: str | None) -> int | None:
+    """
+    Increments mark_sets.content_rev by 1 and sets content_updated_at + updated_by.
+    Best-effort (Sheets only).
+    """
+    if not hasattr(storage, "_find_row_by_value") or not hasattr(storage, "_update_cells"):
+        return None
+
+    row_idx = storage._find_row_by_value("mark_sets", "mark_set_id", mark_set_id)
+    if not row_idx:
+        return None
+
+    # fetch row (best effort)
+    ms_row = None
+    if hasattr(storage, "get_mark_set_row"):
+        try:
+            ms_row = storage.get_mark_set_row(mark_set_id)
+        except Exception:
+            ms_row = None
+
+    if not ms_row and hasattr(storage, "_get_all_dicts"):
+        try:
+            rows = storage._get_all_dicts("mark_sets")
+            ms_row = next((r for r in rows if r.get("mark_set_id") == mark_set_id), None)
+        except Exception:
+            ms_row = None
+
+    cur = _safe_int((ms_row or {}).get("content_rev"), 0)
+    new_rev = cur + 1
+
+    try:
+        now_iso = storage._utc_iso()  # type: ignore
+    except Exception:
+        import time as _t
+        now_iso = _t.strftime("%Y-%m-%dT%H:%M:%SZ", _t.gmtime())
+
+    storage._update_cells(
+        "mark_sets",
+        row_idx,
+        {
+            "content_rev": new_rev,
+            "content_updated_at": now_iso,
+            "updated_by": (updated_by or "").strip(),
+        },
+    )
+    return new_rev
 
 def _user_can_edit_master(doc: Dict[str, Any], user_email: Optional[str]) -> bool:
     """
@@ -56,8 +113,13 @@ def _load_markset_and_doc(storage, mark_set_id: str) -> tuple[Dict[str, Any], Di
             detail="This operation is only supported with the Google Sheets backend",
         )
 
-    ms_rows = storage._get_all_dicts("mark_sets")
-    target = next((ms for ms in ms_rows if ms.get("mark_set_id") == mark_set_id), None)
+    # Prefer adapter helper if available (faster, less sheet scanning)
+    if hasattr(storage, "get_mark_set_row"):
+        target = storage.get_mark_set_row(mark_set_id)
+    else:
+        ms_rows = storage._get_all_dicts("mark_sets")
+        target = next((ms for ms in ms_rows if ms.get("mark_set_id") == mark_set_id), None)
+
     if not target:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="MARK_SET_NOT_FOUND")
 
@@ -76,6 +138,17 @@ def _load_markset_and_doc(storage, mark_set_id: str) -> tuple[Dict[str, Any], Di
 
 
 # ---------- Schemas ----------
+class MarkSetRevsOut(BaseModel):
+    mark_set_id: str
+    doc_id: str
+    name: str | None = None
+    is_master: bool = False
+
+    content_rev: int = 0
+    annotated_pdf_rev: int = 0
+    annotated_pdf_url: str | None = None
+    annotated_pdf_updated_at: str | None = None
+
 
 class MarkSetPatch(BaseModel):
     label: str | None = Field(default=None, min_length=1, max_length=200)
@@ -268,6 +341,122 @@ class GroupOut(BaseModel):
     nh: float
     mark_ids: List[str] = Field(default_factory=list)
 
+@router.get("/{mark_set_id}", response_model=MarkSetRevsOut)
+async def get_mark_set_revs(
+    mark_set_id: str,
+    storage = Depends(get_storage),
+):
+    """
+    Return markset rev fields used for Save & Finish versioning:
+      - content_rev
+      - annotated_pdf_rev
+      - annotated_pdf_url
+    """
+    try:
+        ms_row, _doc = _load_markset_and_doc(storage, mark_set_id)
+
+        return MarkSetRevsOut(
+            mark_set_id=ms_row.get("mark_set_id") or mark_set_id,
+            doc_id=ms_row.get("doc_id") or "",
+            name=ms_row.get("name") or "",
+            is_master=_bool(ms_row.get("is_master")),
+            content_rev=_safe_int(ms_row.get("content_rev"), 0),
+            annotated_pdf_rev=_safe_int(ms_row.get("annotated_pdf_rev"), 0),
+            annotated_pdf_url=(ms_row.get("annotated_pdf_url") or "").strip() or None,
+            annotated_pdf_updated_at=(ms_row.get("annotated_pdf_updated_at") or "").strip() or None,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch mark set: {e}")
+
+
+@router.post("/{mark_set_id}/annotated-pdf")
+async def upload_annotated_pdf(
+    mark_set_id: str,
+    request: Request,
+    uploaded_by: str = Query(..., min_length=3),
+    rev: int = Query(..., ge=0, description="content_rev that this annotated PDF corresponds to"),
+    file: UploadFile | None = File(default=None),
+    storage = Depends(get_storage),
+):
+    """
+    Upload annotated (balloon) PDF to Drive and update mark_sets:
+      annotated_pdf_url, annotated_pdf_rev, annotated_pdf_updated_at
+
+    Supports:
+      - multipart/form-data with `file`
+      - OR raw PDF bytes in request body (if file is not provided)
+    """
+    try:
+        ms_row, doc = _load_markset_and_doc(storage, mark_set_id)
+
+        # Read bytes
+        pdf_bytes: bytes
+        if file is not None:
+            pdf_bytes = await file.read()
+        else:
+            pdf_bytes = await request.body()
+
+        if not pdf_bytes:
+            raise HTTPException(status_code=400, detail="EMPTY_PDF_BYTES")
+
+        from core.drive_client import upload_annotated_pdf_to_drive
+
+        is_master = _bool(ms_row.get("is_master"))
+        existing_url = (ms_row.get("annotated_pdf_url") or "").strip()
+
+        drive_url = upload_annotated_pdf_to_drive(
+            pdf_bytes=pdf_bytes,
+            project_name=(doc.get("project_name") or ""),
+            external_id=(doc.get("external_id") or ""),
+            part_number=(doc.get("part_number") or ""),
+            dwg_num=(doc.get("dwg_num") or ""),
+            mark_set_label=(ms_row.get("name") or ms_row.get("label") or "Markset"),
+            user_email=uploaded_by,
+            is_master=is_master,
+            existing_annotated_pdf_url=existing_url or None,
+            content_rev=int(rev),
+        )
+
+        if not drive_url:
+            raise HTTPException(status_code=500, detail="DRIVE_UPLOAD_FAILED")
+
+        # Update Sheets mark_sets row
+        if not hasattr(storage, "_find_row_by_value") or not hasattr(storage, "_update_cells"):
+            raise HTTPException(
+                status_code=501,
+                detail="This operation is only supported with the Google Sheets backend",
+            )
+
+        row_idx = storage._find_row_by_value("mark_sets", "mark_set_id", mark_set_id)
+        if not row_idx:
+            raise HTTPException(status_code=404, detail="MARK_SET_NOT_FOUND")
+
+        # Use adapter's utc helper if available; else fall back
+        try:
+            now_iso = storage._utc_iso()  # type: ignore
+        except Exception:
+            import time as _t
+            now_iso = _t.strftime("%Y-%m-%dT%H:%M:%SZ", _t.gmtime())
+
+        storage._update_cells(
+            "mark_sets",
+            row_idx,
+            {
+                "annotated_pdf_url": drive_url,
+                "annotated_pdf_rev": int(rev),
+                "annotated_pdf_updated_at": now_iso,
+                "updated_by": uploaded_by,
+            },
+        )
+
+        return {"status": "ok", "annotated_pdf_url": drive_url, "annotated_pdf_rev": int(rev)}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to upload annotated pdf: {e}")
 
 @router.post("/{mark_set_id}/groups", status_code=status.HTTP_201_CREATED)
 async def create_group_for_mark_set(
@@ -298,6 +487,8 @@ async def create_group_for_mark_set(
             mark_ids=body.mark_ids,
             created_by=body.created_by or "",
         )
+        # ✅ IMPORTANT: bump content_rev for this QC markset
+        _bump_content_rev(storage, mark_set_id, body.created_by or "")
         return {"status": "created", "group_id": group_id}
     except ValueError as e:
         msg = str(e)

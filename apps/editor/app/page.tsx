@@ -14,7 +14,12 @@ import PDFSearch from '../components/PDFSearch';
 import { applyLabels, indexToLabel } from '../lib/labels';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import GroupEditor from '../components/GroupEditor';
-import { bootstrapPagesForDoc } from '../lib/pagesApi';
+import {
+  bootstrapPagesForDoc,
+  fetchMarkSetRevInfo,
+  uploadAnnotatedPdf,
+} from '../lib/pagesApi';
+
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 // Clean nested Cloudinary URLs
@@ -488,12 +493,12 @@ function SetupScreen({ onStart }: { onStart: (pdfUrl: string, markSetId: string,
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <button
               onClick={() =>
-  handleOpenMarkset(
-    ms.mark_set_id,
-    ms.is_master,
-    ms.is_master ? 'MASTER' : ms.label
-  )
-}
+                handleOpenMarkset(
+                  ms.mark_set_id,
+                  ms.is_master,
+                  ms.is_master ? 'MASTER' : ms.label
+                )
+              }
 
               style={btn}
             >
@@ -804,7 +809,7 @@ function EditorContent() {
   const partNumberFromUrl = searchParams?.get('part_number') || '';
   const dwgNumFromUrl = searchParams?.get('dwg_num') || '';   // 🔥 NEW
 
-    // ✅ Used for Map PDF filename
+  // ✅ Used for Map PDF filename
   const extIdFromUrl = searchParams?.get('id') || '';
   const inspectionMapNameFromUrl = searchParams?.get('inspection_map_name') || '';
 
@@ -1334,15 +1339,15 @@ function EditorContent() {
   );
 
 
-  const saveMarks = useCallback(async () => {
+const saveMarks = useCallback(async (): Promise<boolean> => {
     if (isDemo) {
       addToast('Demo mode - changes not saved', 'info');
-      return;
+      return false;
     }
 
     if (marks.length === 0) {
       addToast('No marks to save', 'info');
-      return;
+      return false;
     }
 
     const apiBase =
@@ -1356,7 +1361,7 @@ function EditorContent() {
 
     if (!targetId) {
       addToast('No master mark-set id found to save into. Please reopen this document from the setup screen.', 'error');
-      return;
+      return false;
     }
 
 
@@ -1367,12 +1372,12 @@ function EditorContent() {
         }`;
 
       // ✅ Ensure required_value_* keys are ALWAYS present in JSON (prevents refresh-loss)
-     const payload = applyLabels(marks).map((m) => ({
-       ...m,
-       required_value_ocr: m.required_value_ocr ?? '',
-      required_value_conf: m.required_value_conf ?? 0,
-      required_value_final: m.required_value_final ?? '',
-     }));
+      const payload = applyLabels(marks).map((m) => ({
+        ...m,
+        required_value_ocr: m.required_value_ocr ?? '',
+        required_value_conf: m.required_value_conf ?? 0,
+        required_value_final: m.required_value_final ?? '',
+      }));
       const res = await fetch(url, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -1390,22 +1395,24 @@ function EditorContent() {
         } else {
           addToast('Failed to save marks', 'error');
         }
-        return;
+        return false;
       }
 
-      addToast('Saved successfully', 'success');
 
       // ✅ After a QC save, everything in `marks` is now part of the universal pool
       if (!isMasterMarkSet) {
         originalMarksRef.current = normalizeMarks(marks);
       }
+      addToast('Saved successfully', 'success');
+      return true;
     } catch (err) {
       console.error('Save error:', err);
       addToast('Failed to save marks', 'error');
+      return false;
     }
   }, [marks, isDemo, addToast, isMasterMarkSet, userMail]);
 
-    // ✅ PATCH 4: used by GroupEditor to persist FULL marks array into MASTER pool
+  // ✅ PATCH 4: used by GroupEditor to persist FULL marks array into MASTER pool
   const persistMasterMarks = useCallback(async () => {
     if (isDemo) return;
 
@@ -1444,19 +1451,171 @@ function EditorContent() {
       throw new Error(txt || 'PUT marks failed');
     }
   }, [marks, isDemo, isMasterMarkSet, userMail]);
+  // Build annotated PDF bytes (same drawing logic as finalizeAndDownload),
+  // but returns Uint8Array instead of downloading.
+  const buildAnnotatedPdfBytes = useCallback(async (): Promise<Uint8Array> => {
+    const res = await fetch(pdfUrl.current);
+    const srcBytes: ArrayBuffer = await res.arrayBuffer();
 
-  // Save marks + close window (old "Save & Submit" behaviour)
-  const saveAndSubmit = useCallback(async () => {
-    await saveMarks();
+    const doc = await PDFDocument.load(srcBytes);
+    const font = await doc.embedFont(StandardFonts.Helvetica);
 
-    // If save failed, we already showed a toast, just don't close
-    try {
-      localStorage.setItem('markset_notice', '✅ Mark set created.');
-    } catch {
-      // ignore storage errors
+    // ✅ Export marks:
+    // - MASTER: export all marks
+    // - QC: export ONLY marks that are included in this Inspection Map (union of group.mark_ids)
+    let exportMarks: Mark[] = marks;
+
+    if (!isMasterMarkSet) {
+      const allowed = new Set<string>();
+      for (const g of groups) {
+        for (const id of (g.mark_ids || [])) allowed.add(id);
+      }
+      exportMarks = marks.filter(m => allowed.has(m.mark_id));
     }
+
+    if (!exportMarks.length) {
+      throw new Error('No Balloons found for this Inspection Map to export.');
+    }
+
+    const toDraw = applyLabels(exportMarks);
+
+    toDraw.forEach(m => {
+      const page = doc.getPage(m.page_index);
+      const { width, height } = page.getSize();
+
+      const x = m.nx * width;
+      const w = m.nw * width;
+      const y = (1 - m.ny - m.nh) * height;
+      const h = m.nh * height;
+
+      page.drawRectangle({
+        x, y, width: w, height: h,
+        borderWidth: 2,
+        color: undefined,
+        borderColor: rgb(0.0, 0.55, 0.2)
+      });
+
+      const stroke = 2;
+      const r = Math.max(8, Math.min(12, Math.min(w, h) * 0.06));
+      const PAD_PDF = 0.75;
+
+      const cornerX = x;
+      const cornerY = y + h;
+
+      const circleCX = cornerX - r - PAD_PDF + stroke / 2;
+      const circleCY = cornerY + r + PAD_PDF - stroke / 2;
+
+      page.drawCircle({
+        x: circleCX,
+        y: circleCY,
+        size: r,
+        borderWidth: 1.5,
+        borderColor: rgb(0, 0, 0),
+        color: undefined,
+      });
+
+      const label = m.label ?? indexToLabel(m.order_index);
+      const textSize = r;
+      const textWidth = font.widthOfTextAtSize(label, textSize);
+      const textX = circleCX - textWidth / 2;
+      const textY = circleCY - textSize / 3;
+
+      page.drawText(label, {
+        x: textX,
+        y: textY,
+        size: textSize,
+        font,
+        color: rgb(0, 0, 0),
+      });
+    });
+
+    return await doc.save();
+  }, [marks, groups, isMasterMarkSet]);
+  // Save marks + close window (old "Save & Submit" behaviour)
+  // Save & Finish:
+  // 1) Save marks (backend should increment content_rev when marks/groups saved)
+  // 2) Fetch mark-set revs
+  // 3) If content_rev > annotated_pdf_rev -> generate annotated PDF bytes + upload + DB update
+  // 4) Close
+  const saveAndSubmit = useCallback(async () => {
+    const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
+
+    const ok = await saveMarks();
+    if (!ok) return; // don't close if save failed
+
+    // No mark-set id => nothing to version
+    const msId = markSetId.current;
+    if (!msId) {
+      try {
+        localStorage.setItem('markset_notice', '✅ Saved.');
+      } catch {}
+      window.history.back();
+      return;
+    }
+
+    try {
+      addToast('Checking latest version...', 'info');
+
+      const rev = await fetchMarkSetRevInfo(apiBase, msId);
+
+      const contentRev = Number(rev.content_rev ?? 0);
+      const annotatedRev = Number(rev.annotated_pdf_rev ?? 0);
+
+if (contentRev > annotatedRev) {
+  addToast('Generating annotated PDF...', 'info');
+
+  const bytes = await buildAnnotatedPdfBytes();
+
+  const safe = (s: string) =>
+    (s || '')
+      .replace(/[\/\\?%*:|"<>]/g, '-')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+  const idPart = safe(extIdFromUrl || partNumberFromUrl || 'ID');
+  const mapPart = safe(inspectionMapNameFromUrl || 'Inspection Map');
+
+  const ts = new Date().toISOString().replace(/[:.]/g, '-');
+  const filename = isMasterMarkSet
+    ? `${idPart}[${mapPart}].pdf`
+    : `${idPart}[${mapPart}]_${ts}.pdf`;
+
+  // ✅ rev must match latest content_rev AFTER save
+  const revInfo = await fetchMarkSetRevInfo(apiBase, msId);
+  const contentRev2 = Number(revInfo.content_rev ?? 0);
+
+  await uploadAnnotatedPdf(apiBase, msId, bytes, filename, {
+    uploaded_by: userMail || 'system',
+    rev: contentRev2,
+  });
+
+  addToast('Annotated PDF uploaded ✅', 'success');
+} else {
+  addToast('Already up-to-date ✅', 'success');
+}
+
+    } catch (e) {
+      console.error('Save&Finish versioning failed', e);
+      addToast('Saved, but annotated upload failed', 'error');
+      // Still close (your call). Keeping close because marks/groups already saved.
+    }
+
+    try {
+      localStorage.setItem('markset_notice', '✅ Saved & finished.');
+    } catch {}
+
     window.history.back();
-  }, [saveMarks]);
+  }, [
+    saveMarks,
+    addToast,
+    buildAnnotatedPdfBytes,
+    isMasterMarkSet,
+    userMail,
+    extIdFromUrl,
+    inspectionMapNameFromUrl,
+    partNumberFromUrl,
+  ]);
+
 
   // ✅ NEW: Check for duplicate names and overlapping areas (client-side only - NO API calls)
   // Allow duplicate names; only warn (optionally) on heavy overlap
@@ -1731,6 +1890,9 @@ function EditorContent() {
       setZoom(clampZoom(newZoom));
     });
   }, [pdf]);
+
+
+
   // Finalize PDF with marks and trigger download
   const finalizeAndDownload = useCallback(async () => {
     try {
@@ -1740,7 +1902,7 @@ function EditorContent() {
       const doc = await PDFDocument.load(srcBytes);
       const font = await doc.embedFont(StandardFonts.Helvetica);
 
-            // ✅ Export marks:
+      // ✅ Export marks:
       // - MASTER: export all marks
       // - QC: export ONLY marks that are included in this Inspection Map (union of group.mark_ids)
       let exportMarks: Mark[] = marks;
@@ -1826,7 +1988,7 @@ function EditorContent() {
       const blob = new Blob([pdfBytes as unknown as BlobPart], { type: 'application/pdf' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-            // ✅ Filename: ID[Inspection Map Name].pdf
+      // ✅ Filename: ID[Inspection Map Name].pdf
       const safe = (s: string) =>
         (s || '')
           .replace(/[\/\\?%*:|"<>]/g, '-')  // Windows-safe
@@ -1847,7 +2009,7 @@ function EditorContent() {
       console.error(e);
       addToast('Failed to generate PDF', 'error');
     }
-}, [marks, groups, isMasterMarkSet, addToast, extIdFromUrl, inspectionMapNameFromUrl, partNumberFromUrl]);
+  }, [marks, groups, isMasterMarkSet, addToast, extIdFromUrl, inspectionMapNameFromUrl, partNumberFromUrl]);
 
 
 
@@ -2211,27 +2373,27 @@ function EditorContent() {
     );
   }
 
-const includedMarkIdSet: Set<string> | null = (() => {
-  if (isMasterMarkSet) return null; // master shows everything
-  const s = new Set<string>();
-  for (const g of groups) {
-    for (const id of (g.mark_ids || [])) {
-      if (id) s.add(id);
+  const includedMarkIdSet: Set<string> | null = (() => {
+    if (isMasterMarkSet) return null; // master shows everything
+    const s = new Set<string>();
+    for (const g of groups) {
+      for (const id of (g.mark_ids || [])) {
+        if (id) s.add(id);
+      }
     }
-  }
-  return s;
-})();
+    return s;
+  })();
 
 
-// QC with no groups: don't show marks yet
-const hideMarksForQcWithoutGroups = !isMasterMarkSet && groups.length === 0;
+  // QC with no groups: don't show marks yet
+  const hideMarksForQcWithoutGroups = !isMasterMarkSet && groups.length === 0;
 
-// Sidebar: show only included marks in QC (safer + consistent)
-const marksForSidebar = hideMarksForQcWithoutGroups
-  ? []
-  : isMasterMarkSet
-    ? marks
-    : marks.filter(m => (includedMarkIdSet ? includedMarkIdSet.has(m.mark_id) : false));
+  // Sidebar: show only included marks in QC (safer + consistent)
+  const marksForSidebar = hideMarksForQcWithoutGroups
+    ? []
+    : isMasterMarkSet
+      ? marks
+      : marks.filter(m => (includedMarkIdSet ? includedMarkIdSet.has(m.mark_id) : false));
 
 
   return (
@@ -2363,22 +2525,22 @@ const marksForSidebar = hideMarksForQcWithoutGroups
                 )}
                 {markOverlays
                   .filter((overlay) => overlay.pageIndex === pageNum - 1)
-                    .filter((overlay) => {
-    // QC mark-set with no groups yet → hide all marks
-    if (!isMasterMarkSet && groups.length === 0) return false;
+                  .filter((overlay) => {
+                    // QC mark-set with no groups yet → hide all marks
+                    if (!isMasterMarkSet && groups.length === 0) return false;
 
-    // ✅ QC mode: if no group selected, show ONLY marks included in ANY group
-    if (!isMasterMarkSet && !selectedGroupId) {
-      return includedMarkIdSet ? includedMarkIdSet.has(overlay.markId) : false;
-    }
+                    // ✅ QC mode: if no group selected, show ONLY marks included in ANY group
+                    if (!isMasterMarkSet && !selectedGroupId) {
+                      return includedMarkIdSet ? includedMarkIdSet.has(overlay.markId) : false;
+                    }
 
-    // In QC mode, if a group is selected, only show that group's marks
-    if (isMasterMarkSet) return true;
+                    // In QC mode, if a group is selected, only show that group's marks
+                    if (isMasterMarkSet) return true;
 
-    const g = groups.find((gg) => gg.group_id === selectedGroupId);
-    if (!g) return false; // if selected group not found, show nothing
-    return (g.mark_ids || []).includes(overlay.markId);
-  })
+                    const g = groups.find((gg) => gg.group_id === selectedGroupId);
+                    if (!g) return false; // if selected group not found, show nothing
+                    return (g.mark_ids || []).includes(overlay.markId);
+                  })
 
                   .map((overlay) => {
 

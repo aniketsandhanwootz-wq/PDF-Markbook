@@ -90,8 +90,8 @@ type GroupEditorProps = {
     originalMarkIds?: string[];
     onClose: () => void;
     onSaved: () => void;
-onPersistMarks?: () => Promise<void>; // 👈 NEW: persist master marks
- 
+    onPersistMarks?: () => Promise<void>; // 👈 NEW: persist master marks
+
     onUpdateMark: (markId: string, updates: Partial<Mark>) => void;
     onFocusMark: (markId: string) => void;
     // Optional: create marks directly from the preview
@@ -137,49 +137,49 @@ type DrawRect = { x: number; y: number; w: number; h: number } | null;
 //           [-1, 5, -1],
 //           [0, -1, 0]]
 function applySharpenFilter(
-  ctx: CanvasRenderingContext2D,
-  width: number,
-  height: number
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number
 ) {
-  const imageData = ctx.getImageData(0, 0, width, height);
-  const src = imageData.data;
-  const out = new Uint8ClampedArray(src.length);
+    const imageData = ctx.getImageData(0, 0, width, height);
+    const src = imageData.data;
+    const out = new Uint8ClampedArray(src.length);
 
-  const w = width;
-  const h = height;
-  const kernel = [0, -1, 0, -1, 5, -1, 0, -1, 0];
-  const kSize = 3;
-  const half = 1;
+    const w = width;
+    const h = height;
+    const kernel = [0, -1, 0, -1, 5, -1, 0, -1, 0];
+    const kSize = 3;
+    const half = 1;
 
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      let r = 0,
-        g = 0,
-        b = 0;
+    for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+            let r = 0,
+                g = 0,
+                b = 0;
 
-      for (let ky = -half; ky <= half; ky++) {
-        const yy = Math.min(h - 1, Math.max(0, y + ky));
-        for (let kx = -half; kx <= half; kx++) {
-          const xx = Math.min(w - 1, Math.max(0, x + kx));
-          const weight = kernel[(ky + half) * kSize + (kx + half)];
-          const idx = (yy * w + xx) * 4;
+            for (let ky = -half; ky <= half; ky++) {
+                const yy = Math.min(h - 1, Math.max(0, y + ky));
+                for (let kx = -half; kx <= half; kx++) {
+                    const xx = Math.min(w - 1, Math.max(0, x + kx));
+                    const weight = kernel[(ky + half) * kSize + (kx + half)];
+                    const idx = (yy * w + xx) * 4;
 
-          r += src[idx] * weight;
-          g += src[idx + 1] * weight;
-          b += src[idx + 2] * weight;
+                    r += src[idx] * weight;
+                    g += src[idx + 1] * weight;
+                    b += src[idx + 2] * weight;
+                }
+            }
+
+            const outIdx = (y * w + x) * 4;
+            out[outIdx] = Math.min(255, Math.max(0, r));
+            out[outIdx + 1] = Math.min(255, Math.max(0, g));
+            out[outIdx + 2] = Math.min(255, Math.max(0, b));
+            out[outIdx + 3] = src[outIdx + 3]; // keep alpha
         }
-      }
-
-      const outIdx = (y * w + x) * 4;
-      out[outIdx] = Math.min(255, Math.max(0, r));
-      out[outIdx + 1] = Math.min(255, Math.max(0, g));
-      out[outIdx + 2] = Math.min(255, Math.max(0, b));
-      out[outIdx + 3] = src[outIdx + 3]; // keep alpha
     }
-  }
 
-  imageData.data.set(out);
-  ctx.putImageData(imageData, 0, 0);
+    imageData.data.set(out);
+    ctx.putImageData(imageData, 0, 0);
 }
 
 type InstrumentComboProps = {
@@ -358,7 +358,7 @@ export default function GroupEditor({
     initialName,
     initialSelectedMarkIds,
     originalMarkIds,
-    onClose, 
+    onClose,
     onSaved,
     onPersistMarks,
     onUpdateMark,
@@ -406,42 +406,42 @@ export default function GroupEditor({
     const [allInstruments, setAllInstruments] = useState<string[]>([]);
 
 
-const runOcrForMark = useCallback(
-    async (
-        markId: string,
-        normRect: { nx: number; ny: number; nw: number; nh: number }
-    ) => {
-        if (!ownerMarkSetId) {
-            return;
-        }
+    const runOcrForMark = useCallback(
+        async (
+            markId: string,
+            normRect: { nx: number; ny: number; nw: number; nh: number }
+        ) => {
+            if (!ownerMarkSetId) {
+                return;
+            }
 
-        try {
-            const resp = await runRequiredValueOCR(apiBase, {
-                mark_set_id: ownerMarkSetId,
-                page_index: pageIndex,
-                nx: normRect.nx,
-                ny: normRect.ny,
-                nw: normRect.nw,
-                nh: normRect.nh,
-            });
-// Always store something in state so it survives until PUT save.
-// If OCR returns nothing, keep empty string and 0 confidence.
-const requiredValue = (resp.required_value_ocr ?? "").toString();
-const conf = Number(resp.required_value_conf ?? 0);
+            try {
+                const resp = await runRequiredValueOCR(apiBase, {
+                    mark_set_id: ownerMarkSetId,
+                    page_index: pageIndex,
+                    nx: normRect.nx,
+                    ny: normRect.ny,
+                    nw: normRect.nw,
+                    nh: normRect.nh,
+                });
+                // Always store something in state so it survives until PUT save.
+                // If OCR returns nothing, keep empty string and 0 confidence.
+                const requiredValue = (resp.required_value_ocr ?? "").toString();
+                const conf = Number(resp.required_value_conf ?? 0);
 
-onUpdateMark(markId, {
-    required_value_ocr: requiredValue,
-    required_value_conf: conf,               // <-- keep 0, don't make it undefined
-    required_value_final: requiredValue,     // <-- user can edit later
-});
+                onUpdateMark(markId, {
+                    required_value_ocr: requiredValue,
+                    required_value_conf: conf,               // <-- keep 0, don't make it undefined
+                    required_value_final: requiredValue,     // <-- user can edit later
+                });
 
-        } catch (e) {
-            console.warn('OCR for required value failed', e);
-            // If OCR fails, we simply leave it blank and user can type manually
-        }
-    },
-    [ownerMarkSetId, pageIndex, onUpdateMark]
-);
+            } catch (e) {
+                console.warn('OCR for required value failed', e);
+                // If OCR fails, we simply leave it blank and user can type manually
+            }
+        },
+        [ownerMarkSetId, pageIndex, onUpdateMark]
+    );
 
     useEffect(() => {
         if (!isOpen) return;
@@ -461,25 +461,25 @@ onUpdateMark(markId, {
                 return next;
             }
 
-// Before user interaction → initial selection
-if (mode === 'edit') {
-    // Edit mode:
-    // 1) If backend provided initialSelectedMarkIds -> trust it
-    if (initialSelectedMarkIds && initialSelectedMarkIds.length > 0) {
-        return new Set(initialSelectedMarkIds.filter((id) => idsInArea.has(id)));
-    }
+            // Before user interaction → initial selection
+            if (mode === 'edit') {
+                // Edit mode:
+                // 1) If backend provided initialSelectedMarkIds -> trust it
+                if (initialSelectedMarkIds && initialSelectedMarkIds.length > 0) {
+                    return new Set(initialSelectedMarkIds.filter((id) => idsInArea.has(id)));
+                }
 
-    // 2) If not provided, do NOT auto-select everything.
-    // Keep whatever selection we already had (prev), but drop ids not in this area.
-    const next = new Set<string>();
-    prev.forEach((id) => {
-        if (idsInArea.has(id)) next.add(id);
-    });
-    return next;
-}
+                // 2) If not provided, do NOT auto-select everything.
+                // Keep whatever selection we already had (prev), but drop ids not in this area.
+                const next = new Set<string>();
+                prev.forEach((id) => {
+                    if (idsInArea.has(id)) next.add(id);
+                });
+                return next;
+            }
 
-// Create mode default: everything in area selected
-return new Set(idsInArea);
+            // Create mode default: everything in area selected
+            return new Set(idsInArea);
 
         });
     }, [isOpen, marksInArea, initialSelectedMarkIds]);
@@ -634,25 +634,25 @@ return new Set(idsInArea);
                 ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
                 ctx.clearRect(0, 0, cssWidth, cssHeight);
 
-// --- 5) Crop from offscreen page → visible preview ---
-ctx.drawImage(
-  offCanvas,
-  gx * dpr,
-  gy * dpr,
-  gw * dpr,
-  gh * dpr,
-  0,
-  0,
-  cssWidth,
-  cssHeight
-);
+                // --- 5) Crop from offscreen page → visible preview ---
+                ctx.drawImage(
+                    offCanvas,
+                    gx * dpr,
+                    gy * dpr,
+                    gw * dpr,
+                    gh * dpr,
+                    0,
+                    0,
+                    cssWidth,
+                    cssHeight
+                );
 
-// 🔍 Apply a light sharpen filter to make the preview crisper
-// Use the real canvas buffer size (already scaled by dpr)
-applySharpenFilter(ctx, canvas.width, canvas.height);
+                // 🔍 Apply a light sharpen filter to make the preview crisper
+                // Use the real canvas buffer size (already scaled by dpr)
+                applySharpenFilter(ctx, canvas.width, canvas.height);
 
-// Overlay (green mark boxes) uses this size
-setOverlaySize({ w: cssWidth, h: cssHeight });
+                // Overlay (green mark boxes) uses this size
+                setOverlaySize({ w: cssWidth, h: cssHeight });
 
             } catch (e) {
                 if (!cancelled) {
@@ -829,18 +829,18 @@ setOverlaySize({ w: cssWidth, h: cssHeight });
 
         try {
             setSaving(true);
-// 1) Persist marks first (so instrument/required_value changes survive refresh)
-if (onPersistMarks) {
-    try {
-        await onPersistMarks();
-    } catch (e) {
-        console.error('Persist marks failed', e);
-        window.alert('Failed to save mark changes (instrument / required value). Group not saved.');
-        return;
-    }
-} else {
-    console.warn('onPersistMarks not provided — mark edits will not persist on refresh.');
-}
+            // 1) Persist marks first (so instrument/required_value changes survive refresh)
+            if (onPersistMarks) {
+                try {
+                    await onPersistMarks();
+                } catch (e) {
+                    console.error('Persist marks failed', e);
+                    window.alert('Failed to save mark changes (instrument / required value). Group not saved.');
+                    return;
+                }
+            } else {
+                console.warn('onPersistMarks not provided — mark edits will not persist on refresh.');
+            }
 
             const payload: any = {
                 page_index: pageIndex,
@@ -935,20 +935,20 @@ if (onPersistMarks) {
                 >
                     <div>
                         <div style={{ fontSize: 16, fontWeight: 700 }}>
-  {mode === 'edit' ? (
-    <>
-      <span style={{ color: '#1976d2' }}>Edit Group</span>
-      <span>{' - Select/Deselect balloons'}</span>
-    </>
-  ) : (
-    <>
-      <span style={{ color: '#1976d2' }}>Select dimensions</span>
-      <span>{' to create balloons for'}</span>
-    </>
-  )}
-  {/* – Page{' '} */}
-  {/* {pageIndex + 1} */}
-</div>
+                            {mode === 'edit' ? (
+                                <>
+                                    <span style={{ color: '#1976d2' }}>Edit Group</span>
+                                    <span>{' - Select/Deselect balloons'}</span>
+                                </>
+                            ) : (
+                                <>
+                                    <span style={{ color: '#1976d2' }}>Select dimensions</span>
+                                    <span>{' to create balloons for'}</span>
+                                </>
+                            )}
+                            {/* – Page{' '} */}
+                            {/* {pageIndex + 1} */}
+                        </div>
 
                         {/* <div
               style={{
@@ -1246,9 +1246,9 @@ if (onPersistMarks) {
 
                                 // mark is "new" if it's NOT in the original DB mark list
                                 // Delete icon should ONLY show for marks that are explicitly deletable.
-// This prevents "stale edit-mode state" from showing cross even after saving.
-const isDeletable =
-    Array.isArray(deletableMarkIds) && deletableMarkIds.includes(m.mark_id);
+                                // This prevents "stale edit-mode state" from showing cross even after saving.
+                                const isDeletable =
+                                    Array.isArray(deletableMarkIds) && deletableMarkIds.includes(m.mark_id);
 
 
                                 // 🔢 OCR helpers (NEW)
@@ -1285,107 +1285,107 @@ const isDeletable =
                                     >
                                         {/* Checkbox */}
                                         {/* Select toggle (Eye icon) */}
-<button
-  type="button"
-  onClick={(e) => {
-    e.stopPropagation();
-    toggleMarkSelected(m.mark_id);
-  }}
-  title={isSelected ? 'Selected' : 'Not selected'}
-  style={{
-    border: 'none',
-    background: 'transparent',
-    padding: 0,
-    cursor: 'pointer',
-    width: 22,
-    height: 22,
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-  }}
->
-  <img
-    src="/icons/eye.png"
-    alt="Select"
-    style={{
-      width: 18,
-      height: 18,
-      filter: isSelected
-    ? 'invert(33%) sepia(93%) saturate(1770%) hue-rotate(189deg) brightness(93%) contrast(92%)' // blue-ish (#1976d2 feel)
-    : 'grayscale(100%) opacity(0.55)',
-    }}
-  />
-</button>
+                                        <button
+                                            type="button"
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                toggleMarkSelected(m.mark_id);
+                                            }}
+                                            title={isSelected ? 'Selected' : 'Not selected'}
+                                            style={{
+                                                border: 'none',
+                                                background: 'transparent',
+                                                padding: 0,
+                                                cursor: 'pointer',
+                                                width: 22,
+                                                height: 22,
+                                                display: 'inline-flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                            }}
+                                        >
+                                            <img
+                                                src="/icons/eye.png"
+                                                alt="Select"
+                                                style={{
+                                                    width: 18,
+                                                    height: 18,
+                                                    filter: isSelected
+                                                        ? 'invert(33%) sepia(93%) saturate(1770%) hue-rotate(189deg) brightness(93%) contrast(92%)' // blue-ish (#1976d2 feel)
+                                                        : 'grayscale(100%) opacity(0.55)',
+                                                }}
+                                            />
+                                        </button>
 
 
-        {/* Label + required value + instrument + actions all on one line */}
-    <div
-        style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 6,
-            flex: 1,
-    minWidth: 0,  
-        }}
-    >
-        <span
-            style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                minWidth: 20,
-                height: 20,
-                borderRadius: '999px',
-                border: '1px solid #000',
-                fontSize: 12,
-                fontWeight: 700,
-            }}
-        >
-            {m.label || '—'}
-        </span>
+                                        {/* Label + required value + instrument + actions all on one line */}
+                                        <div
+                                            style={{
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: 6,
+                                                flex: 1,
+                                                minWidth: 0,
+                                            }}
+                                        >
+                                            <span
+                                                style={{
+                                                    display: 'inline-flex',
+                                                    alignItems: 'center',
+                                                    justifyContent: 'center',
+                                                    minWidth: 20,
+                                                    height: 20,
+                                                    borderRadius: '999px',
+                                                    border: '1px solid #000',
+                                                    fontSize: 12,
+                                                    fontWeight: 700,
+                                                }}
+                                            >
+                                                {m.label || '—'}
+                                            </span>
 
-        {/* 🔢 Required Value input (left of instrument) */}
-        <input
-            type="text"
-            value={initialRequiredValue}
-            onChange={(e) => {
-                const v = e.target.value;
-                onUpdateMark(m.mark_id, {
-                    required_value_final: v,
-                });
+                                            {/* 🔢 Required Value input (left of instrument) */}
+                                            <input
+                                                type="text"
+                                                value={initialRequiredValue}
+                                                onChange={(e) => {
+                                                    const v = e.target.value;
+                                                    onUpdateMark(m.mark_id, {
+                                                        required_value_final: v,
+                                                    });
 
-            }}
-            placeholder="Req. value"
-            style={{
-                border: '1px solid',
-                borderColor: lowConfidence
-                    ? '#ff9800' // orange for low confidence
-                    : '#ddd',
-                borderRadius: 4,
-                fontSize: 12,
-                padding: '4px 6px',
-                minWidth: 50,
-                flex: '0 0 30%',
-                maxWidth: '30%',
-                boxSizing: 'border-box',
-            }}
-            title={
-                conf !== null
-                    ? `OCR confidence: ${conf.toFixed(1)}%`
-                    : 'Required value'
-            }
-        />
+                                                }}
+                                                placeholder="Req. value"
+                                                style={{
+                                                    border: '1px solid',
+                                                    borderColor: lowConfidence
+                                                        ? '#ff9800' // orange for low confidence
+                                                        : '#ddd',
+                                                    borderRadius: 4,
+                                                    fontSize: 12,
+                                                    padding: '4px 6px',
+                                                    minWidth: 50,
+                                                    flex: '0 0 30%',
+                                                    maxWidth: '30%',
+                                                    boxSizing: 'border-box',
+                                                }}
+                                                title={
+                                                    conf !== null
+                                                        ? `OCR confidence: ${conf.toFixed(1)}%`
+                                                        : 'Required value'
+                                                }
+                                            />
 
-         <InstrumentCombo
-            value={m.instrument || ''}
-            allInstruments={allInstruments}
-            onChange={(val) => {
-                onUpdateMark(m.mark_id, {
-                    instrument: val || undefined,
-                });
-            }}
-            onAddNewLocal={rememberInstrumentLocally}
-        />
+                                            <InstrumentCombo
+                                                value={m.instrument || ''}
+                                                allInstruments={allInstruments}
+                                                onChange={(val) => {
+                                                    onUpdateMark(m.mark_id, {
+                                                        instrument: val || undefined,
+                                                    });
+                                                }}
+                                                onAddNewLocal={rememberInstrumentLocally}
+                                            />
 
 
                                             {/* Cross immediately after instrument box, only for NEW balloons */}
@@ -1416,38 +1416,38 @@ const isDeletable =
 
                                             {/* Required toggle at far right of the line */}
                                             <button
-  type="button"
-  onClick={(e) => {
-    e.stopPropagation();
-    onUpdateMark(m.mark_id, {
-      is_required: !required,
-    });
-  }}
-  title={required ? 'Required measurement' : 'Optional measurement'}
-  style={{
-    border: 'none',
-    background: 'transparent',
-    cursor: 'pointer',
-    padding: 0,
-    width: 22,
-    height: 22,
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-  }}
->
-  <img
-    src="/icons/hash.png"
-    alt="Critical"
-    style={{
-      width: 16,
-      height: 16,
-      filter: required
-        ? 'invert(14%) sepia(98%) saturate(5000%) hue-rotate(350deg) brightness(90%) contrast(95%)'
-        : 'grayscale(100%) opacity(0.45)',
-    }}
-  />
-</button>
+                                                type="button"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    onUpdateMark(m.mark_id, {
+                                                        is_required: !required,
+                                                    });
+                                                }}
+                                                title={required ? 'Required measurement' : 'Optional measurement'}
+                                                style={{
+                                                    border: 'none',
+                                                    background: 'transparent',
+                                                    cursor: 'pointer',
+                                                    padding: 0,
+                                                    width: 22,
+                                                    height: 22,
+                                                    display: 'inline-flex',
+                                                    alignItems: 'center',
+                                                    justifyContent: 'center',
+                                                }}
+                                            >
+                                                <img
+                                                    src="/icons/hash.png"
+                                                    alt="Critical"
+                                                    style={{
+                                                        width: 16,
+                                                        height: 16,
+                                                        filter: required
+                                                            ? 'invert(14%) sepia(98%) saturate(5000%) hue-rotate(350deg) brightness(90%) contrast(95%)'
+                                                            : 'grayscale(100%) opacity(0.45)',
+                                                    }}
+                                                />
+                                            </button>
 
                                         </div>
                                     </div>

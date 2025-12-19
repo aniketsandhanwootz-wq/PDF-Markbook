@@ -101,3 +101,79 @@ export async function runRequiredValueOCR(
 
   return (await res.json()) as RequiredValueOCRResponse;
 }
+
+
+// ---------- Mark-set revision + annotated PDF upload ----------
+
+export type MarkSetRevInfo = {
+  mark_set_id: string;
+  content_rev: number; // increments on marks/groups save (backend)
+  annotated_pdf_rev: number; // last uploaded annotated PDF revision
+  annotated_pdf_url: string | null;
+  annotated_pdf_updated_at?: string | null;
+};
+
+/**
+ * Fetch revision counters + current annotated PDF URL for a mark-set.
+ * Backend should return the above fields.
+ */
+export async function fetchMarkSetRevInfo(
+  apiBaseUrl: string,
+  markSetId: string
+): Promise<MarkSetRevInfo> {
+  const res = await fetch(`${apiBaseUrl}/mark-sets/${encodeURIComponent(markSetId)}`);
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`fetchMarkSetRevInfo failed: HTTP ${res.status} ${text}`);
+  }
+  return (await res.json()) as MarkSetRevInfo;
+}
+
+export type UploadAnnotatedPdfResponse = {
+  annotated_pdf_url: string;
+  annotated_pdf_rev: number;
+};
+
+/**
+ * Upload annotated PDF bytes for a mark-set.
+ * Uses multipart/form-data so backend can easily accept files.
+ *
+ * Expected backend endpoint:
+ *   POST /mark-sets/{id}/annotated-pdf
+ * It should upload to Drive and update DB annotated_pdf_* fields.
+ */
+export async function uploadAnnotatedPdf(
+  apiBaseUrl: string,
+  markSetId: string,
+  pdfBytes: Uint8Array,
+  filename: string,
+  opts: {
+    uploaded_by: string; // ✅ required by backend
+    rev: number;         // ✅ required by backend
+  }
+): Promise<UploadAnnotatedPdfResponse> {
+  const qs = new URLSearchParams();
+  qs.set("uploaded_by", opts.uploaded_by);
+  qs.set("rev", String(opts.rev));
+
+  const form = new FormData();
+  form.append(
+    "file",
+    new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }),
+    filename
+  );
+
+  const url = `${apiBaseUrl}/mark-sets/${encodeURIComponent(markSetId)}/annotated-pdf?${qs.toString()}`;
+
+  const res = await fetch(url, {
+    method: "POST",
+    body: form,
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`uploadAnnotatedPdf failed: HTTP ${res.status} ${text}`);
+  }
+
+  return (await res.json()) as UploadAnnotatedPdfResponse;
+}
