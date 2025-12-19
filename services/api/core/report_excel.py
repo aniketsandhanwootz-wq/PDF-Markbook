@@ -23,6 +23,8 @@ import gc
 from PIL import Image, ImageDraw, ImageFont
 from settings import get_settings
 
+import logging
+logger = logging.getLogger(__name__)
 
 def _bytes_to_tempfile(data: bytes, suffix: str = ".png") -> str:
     f = NamedTemporaryFile(delete=False, suffix=suffix)
@@ -180,11 +182,12 @@ def _draw_marks_on_page_image(
         # last resort
         return ImageFont.load_default()
 
-    # Slightly thinner boxes, but still visible after Excel scaling
+    # Lighter overlay = less work + still readable in Excel
     base = min(W, H)
-    rect_stroke = max(2, int(base * 0.0020))      # slightly thinner box
-    leader_stroke = max(2, int(base * 0.0020))
-    circle_stroke = max(3, int(base * 0.0032))    # thicker circle border
+    rect_stroke = max(1, int(base * 0.0012))
+    leader_stroke = max(1, int(base * 0.0012))
+    circle_stroke = max(2, int(base * 0.0018))
+
 
 
     green = (0, 180, 0)
@@ -229,8 +232,9 @@ def _draw_marks_on_page_image(
         # --- Bubble sizing (bigger + editor-like) ---
         # Tie bubble size to mark size so it stays visible even after resize
         #r = max(18, min(40, int(min(rw, rh) * 0.45)))  # smaller bubble
-        r = 12
-        pad = 6
+        r = 10
+        pad = 5
+
 
 
         # Candidate positions like editor: outside top-left, else top-right, else mid-left
@@ -289,9 +293,8 @@ def _draw_marks_on_page_image(
             label,
             fill=black,
             font=font,
-            stroke_width=max(1, int(r * 0.04)),  # reduce stroke so bold font shows
-            stroke_fill=(255, 255, 255),
         )
+
 
 
     return img
@@ -648,6 +651,25 @@ async def generate_report_excel(
 
         pages_with_filled_marks = sorted(filled_marks_by_page.keys())
 
+        right_row = 2
+
+        # Lower width = lower pixels = lower RAM
+        TARGET_W = 900
+
+        # Fail-safe: skip right-side images for heavy reports (prevents Render OOM)
+        MAX_RIGHT_PAGES = 3
+        HEAVY_MARKS_THRESHOLD = 150
+
+        # Fail-safe fallback: skip right-side completely if too heavy
+        if len(marks_sorted) > HEAVY_MARKS_THRESHOLD or len(pages_with_filled_marks) > MAX_RIGHT_PAGES:
+            logger.warning(
+                f"RIGHT_SIDE_SKIPPED_HEAVY_REPORT: marks={len(marks_sorted)} "
+                f"pages_with_filled={len(pages_with_filled_marks)} "
+                f"threshold_marks={HEAVY_MARKS_THRESHOLD} max_pages={MAX_RIGHT_PAGES}"
+            )
+            pages_with_filled_marks = []
+
+
         # 1) Hyperlink in K1 (your template text cell)
         try:
             _write_merged(ws, "K1", _excel_hyperlink_formula(pdf_url, "To view complete PDF click"))
@@ -660,17 +682,27 @@ async def generate_report_excel(
         # 2) Setup right side columns
         _setup_right_side_area(ws)
 
-        # 3) Insert annotated pages starting from K2
-        right_row = 2
-        TARGET_W = 1100 # standard width for page image
+
 
         if pages_with_filled_marks:
             for pidx in pages_with_filled_marks:
                 try:
                     page = doc[pidx]
-                    # Render right-side pages at higher scale so Excel image stays crisp
-                    RIGHT_RENDER_ZOOM = max(render_zoom, 20.0)
-                    full_img = page.render(scale=RIGHT_RENDER_ZOOM).to_pil()
+
+                    # Render directly near TARGET_W to avoid huge bitmaps (prevents RAM spikes)
+                    try:
+                        w_pt, h_pt = page.get_size()  # PDF points (1/72 inch)
+                        w_pt = float(w_pt) if w_pt else 0.0
+                    except Exception:
+                        w_pt = 0.0
+
+                    if w_pt > 0:
+                        right_scale = max(1.0, min(6.0, TARGET_W / w_pt))
+                    else:
+                        # Fallback: safe default, not huge
+                        right_scale = max(1.0, min(3.0, render_zoom))
+
+                    page_img = page.render(scale=right_scale).to_pil()
 
                 except Exception as e:
                     print(f"Failed to render full page {pidx}: {e}")
@@ -680,22 +712,26 @@ async def generate_report_excel(
                 try:
                     marks_for_overlay = filled_marks_by_page.get(pidx, [])
 
-                    # ✅ Resize FIRST to final width (keeps quality + text won't vanish)
-                    if full_img.size[0] != TARGET_W:
-                        ratio = TARGET_W / float(full_img.size[0])
-                        target_h = max(50, int(full_img.size[1] * ratio))
-                        page_for_excel = full_img.resize((TARGET_W, target_h), resample=Image.LANCZOS)
-                    else:
-                        page_for_excel = full_img
+                    # If width differs slightly, do a small resize to consistent TARGET_W
+                    if page_img.size[0] != TARGET_W:
+                        ratio = TARGET_W / float(page_img.size[0])
+                        target_h = max(50, int(page_img.size[1] * ratio))
+                        page_img = page_img.resize((TARGET_W, target_h), resample=Image.LANCZOS)
 
-                    # ✅ Draw overlays on the resized image (final resolution)
-                    annotated = _draw_marks_on_page_image(page_for_excel, marks_for_overlay)
+                    annotated = _draw_marks_on_page_image(page_img, marks_for_overlay)
 
+                    # Save as JPEG (much smaller than PNG)
                     bio = io.BytesIO()
-                    annotated.save(bio, format="PNG")
-                    png_bytes = bio.getvalue()
+                    annotated.convert("RGB").save(
+                        bio,
+                        format="JPEG",
+                        quality=70,
+                        optimize=True,
+                        progressive=True,
+                    )
+                    jpg_bytes = bio.getvalue()
 
-                    page_img_path = _bytes_to_tempfile(png_bytes, suffix=".png")
+                    page_img_path = _bytes_to_tempfile(jpg_bytes, suffix=".jpg")
                     _tempfiles.append(page_img_path)
 
                     ximg = OpenpyxlImage(page_img_path)
@@ -710,17 +746,16 @@ async def generate_report_excel(
                     del annotated
                     del ximg
                     del bio
-                    if page_for_excel is not full_img:
-                        del page_for_excel
                 except Exception as e:
                     print(f"Right-side insert failed for page {pidx}: {e}")
                     right_row += 5
                 finally:
                     try:
-                        del full_img
+                        del page_img
                     except Exception:
                         pass
                     gc.collect()
+
 
         # =====================================================
         # =====================================================
