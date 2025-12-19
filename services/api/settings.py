@@ -48,6 +48,14 @@ class Settings(BaseSettings):
         description="Comma-separated emails that will be CC'ed on every inspection report",
     )
 
+    # 🔴 NEW: comma-separated list of emails that should be BCC'd on every inspection mail
+    # Example in .env:
+    # SMTP_ALWAYS_BCC=person1@wootz.work,person2@wootz.work,person3@wootz.work
+    smtp_always_bcc: Optional[str] = Field(
+        default=None,
+        description="Comma-separated emails that will be BCC'ed on every inspection report",
+    )
+
     # Google Drive settings
     gdrive_root_folder_name: str = "Wootz_Markbook"
     # Optional: if you create the root folder manually & share it, put its ID here

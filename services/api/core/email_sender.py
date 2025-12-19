@@ -21,7 +21,8 @@ async def send_email_with_attachments(
     smtp_password: str,
     from_email: str,
     from_name: str,
-    cc_emails: Optional[List[str]] = None,   # NEW optional CC list
+    cc_emails: Optional[List[str]] = None,   # optional CC list
+    bcc_emails: Optional[List[str]] = None,  # ✅ NEW optional BCC list
 ) -> bool:
 
     """
@@ -34,9 +35,9 @@ async def send_email_with_attachments(
         msg['From'] = f"{from_name} <{from_email}>"
         msg['To'] = to_email
         msg['Subject'] = subject
-        # Optional CC header
+        # Optional CC header (shown to recipients)
+        clean_cc: List[str] = []
         if cc_emails:
-            # normalize + deduplicate against primary TO
             clean_cc = sorted(
                 {
                     addr.strip()
@@ -45,7 +46,24 @@ async def send_email_with_attachments(
                 }
             )
             if clean_cc:
-                msg['Cc'] = ", ".join(clean_cc)
+                msg["Cc"] = ", ".join(clean_cc)
+
+        # Optional BCC (NOT shown in headers)
+        clean_bcc: List[str] = []
+        if bcc_emails:
+            # dedupe vs TO and CC
+            seen = {to_email.lower(), *(a.lower() for a in clean_cc)}
+            tmp = []
+            for addr in bcc_emails:
+                if not addr or not addr.strip():
+                    continue
+                a = addr.strip()
+                if a.lower() in seen:
+                    continue
+                seen.add(a.lower())
+                tmp.append(a)
+            clean_bcc = sorted(set(tmp))
+
        
         # Attach HTML body
         msg.attach(MIMEText(body_html, 'html'))
@@ -66,15 +84,30 @@ async def send_email_with_attachments(
             part.add_header('Content-Disposition', f'attachment; filename="{filename}"')
             msg.attach(part)
         
-        # Send via SMTP
-        await aiosmtplib.send(
-            msg,
-            hostname=smtp_host,
-            port=smtp_port,
-            username=smtp_user,
-            password=smtp_password,
-            start_tls=True,
-        )
+        # Send via SMTP (ensure BCC recipients actually receive mail)
+        recipients = [to_email] + clean_cc + clean_bcc
+
+        try:
+            await aiosmtplib.send(
+                msg,
+                hostname=smtp_host,
+                port=smtp_port,
+                username=smtp_user,
+                password=smtp_password,
+                start_tls=True,
+                recipients=recipients,   # ✅ critical for BCC
+            )
+        except TypeError:
+            # fallback for older aiosmtplib versions (BCC may not work here)
+            await aiosmtplib.send(
+                msg,
+                hostname=smtp_host,
+                port=smtp_port,
+                username=smtp_user,
+                password=smtp_password,
+                start_tls=True,
+            )
+
         
         logger.info(f"✓ Email sent to {to_email} with {len(attachments)} attachments")
         return True
