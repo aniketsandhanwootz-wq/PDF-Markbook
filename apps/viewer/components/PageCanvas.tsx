@@ -11,6 +11,7 @@ type PageCanvasProps = {
   pageNumber: number;
   zoom: number;
   onReady?: (pageHeightPx: number) => void;
+    onRenderedZoom?: (pageNumber: number, zoom: number) => void;
   flashRect?: { x: number; y: number; w: number; h: number } | null;
   selectedRect?: { x: number; y: number; w: number; h: number } | null;
   // NEW: optional list of rects to show when we are in "group overview"
@@ -32,6 +33,7 @@ function PageCanvas({
   pageNumber,
   zoom,
   onReady,
+  onRenderedZoom,
   flashRect,
   selectedRect,
   groupRects,
@@ -152,9 +154,14 @@ function PageCanvas({
           }
 
           setIsLoading(false);
-          lastRenderedZoomRef.current = zoom;
-          onReady?.(viewport.height);
-          return;
+lastRenderedZoomRef.current = zoom;
+onReady?.(viewport.height);
+
+// 🔥 Notify: this page is ready at this zoom (important for pinch handoff)
+onRenderedZoom?.(pageNumber, zoom);
+
+return;
+
         }
 
         // Fresh render needed
@@ -200,8 +207,12 @@ function PageCanvas({
         }
 
         setIsLoading(false);
-        lastRenderedZoomRef.current = zoom;
-        onReady?.(viewport.height);
+lastRenderedZoomRef.current = zoom;
+onReady?.(viewport.height);
+
+// 🔥 Notify: this page is ready at this zoom (important for pinch handoff)
+onRenderedZoom?.(pageNumber, zoom);
+
       } catch (error: any) {
         if (error?.name !== 'RenderingCancelledException') {
           console.error('Page render error:', error);

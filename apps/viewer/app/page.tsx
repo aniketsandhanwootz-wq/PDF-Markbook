@@ -1110,6 +1110,7 @@ function ViewerContent() {
   const router = useRouter();
 
   const [showSetup, setShowSetup] = useState(true);
+const pinchCommitReadyRef = useRef<((pageNumber: number, zoom: number) => void) | null>(null);
 
   // NEW: keep chosen PDF URL + markset in local state
   const [selectedPdfUrl, setSelectedPdfUrl] = useState<string | null>(null);
@@ -3147,6 +3148,7 @@ usePinchZoom({
   containerRef,
   contentRef: surfaceRef,
   zoomRef,
+  commitReadyRef: pinchCommitReadyRef,
   setZoomOnly,
   clampZoom,
   getAnchorFromContentPoint: getPinchAnchorFromContentPoint,
@@ -3474,6 +3476,7 @@ usePinchZoom({
                         pdf={pdf}
                         pageNumber={pageNum}
                         zoom={zoom}
+                        onRenderedZoom={(pn, z) => pinchCommitReadyRef.current?.(pn, z)}
                         flashRect={
                           flashRect?.pageNumber === pageNum
                             ? { x: flashRect.x, y: flashRect.y, w: flashRect.w, h: flashRect.h }
@@ -3711,6 +3714,7 @@ usePinchZoom({
                   pdf={pdf}
                   pageNumber={pageNum}
                   zoom={zoom}
+                  onRenderedZoom={(pn, z) => pinchCommitReadyRef.current?.(pn, z)}
                   flashRect={
                     flashRect?.pageNumber === pageNum
                       ? { x: flashRect.x, y: flashRect.y, w: flashRect.w, h: flashRect.h }

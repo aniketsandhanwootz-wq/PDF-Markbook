@@ -14,25 +14,31 @@ type UsePinchZoomOptions = {
   contentRef: MutableRefObject<HTMLDivElement | null>;
   zoomRef: MutableRefObject<number>;
 
-  // Commit zoom ONCE at gesture end (prevents pdf.js re-render vibration)
+  // Commit zoom ONCE at gesture end (pdf.js render happens here)
   setZoomOnly: (nextZoom: number) => void;
 
   clampZoom: (z: number) => number;
 
-  // Convert a content point (scroll coords) to stable document anchor
   getAnchorFromContentPoint: (
     contentX: number,
     contentY: number,
     baseZoom: number
   ) => PinchAnchor | null;
 
-  // Convert stable anchor back to scrollLeft/scrollTop for a zoom + viewport center
   getScrollFromAnchor: (
     anchor: PinchAnchor,
     zoom: number,
     centerXInEl: number,
     centerYInEl: number
   ) => { left: number; top: number } | null;
+
+  /**
+   * Page.tsx will forward PageCanvas render events into this ref.
+   * We set commitReadyRef.current during pinch-end commit; when PageCanvas reports
+   * a page rendered at the committed zoom, we do a seamless handoff:
+   * scroll-correct + clear transform in the same tick.
+   */
+  commitReadyRef: MutableRefObject<((pageNumber: number, zoom: number) => void) | null>;
 
   enabled: boolean;
 };
@@ -45,6 +51,7 @@ export default function usePinchZoom({
   clampZoom,
   getAnchorFromContentPoint,
   getScrollFromAnchor,
+  commitReadyRef,
   enabled,
 }: UsePinchZoomOptions) {
   useEffect(() => {
@@ -65,18 +72,24 @@ export default function usePinchZoom({
     let baseZoom = 1;
     let baseDistance = 0;
 
-    // During pinch we scale the surface (visual) without committing zoom.
-    // lastScale = (visualZoom / baseZoom)
+    // Visual scale applied to surface during pinch
     let lastScale = 1;
 
     let lastTargetZoom = 1;
 
-    // We keep the pinch center in element coords for final commit.
+    // Pinch center (element coords) for final anchor/scroll
     let lastCenterX = 0;
     let lastCenterY = 0;
 
+    // Pending commit bookkeeping (to avoid “shiver”)
+    let pendingAnchor: PinchAnchor | null = null;
+    let pendingCommitZoom = 1;
+    let pendingBaseZoom = 1;
+    let pendingTimeout: number | null = null;
+    let pendingActive = false;
+
     const PINCH_START_THRESHOLD = 8;  // px
-    const MIN_ZOOM_CHANGE = 0.0025;   // ~0.25% (prevents jitter)
+    const MIN_ZOOM_CHANGE = 0.0025;   // ~0.25%
 
     const distance = (p1: { x: number; y: number }, p2: { x: number; y: number }) =>
       Math.hypot(p2.x - p1.x, p2.y - p1.y);
@@ -94,6 +107,59 @@ export default function usePinchZoom({
     const clearVisualScale = () => {
       surface.style.transformOrigin = '';
       surface.style.transform = '';
+    };
+
+    const clampScroll = (left: number, top: number) => {
+      const maxL = Math.max(0, el.scrollWidth - el.clientWidth);
+      const maxT = Math.max(0, el.scrollHeight - el.clientHeight);
+      el.scrollLeft = Math.max(0, Math.min(left, maxL));
+      el.scrollTop = Math.max(0, Math.min(top, maxT));
+    };
+
+    const startPendingHandoff = () => {
+      // Setup a one-shot handler that will be triggered by PageCanvas via page.tsx.
+      // When a visible page finishes rendering at the committed zoom, we:
+      // 1) compute correct scroll at committed zoom
+      // 2) clear transform (so we stop double-scaling)
+      // This eliminates the pinch-end “snap”.
+      commitReadyRef.current = (_pageNumber: number, renderedZoom: number) => {
+        if (!pendingActive) return;
+        if (Math.abs(renderedZoom - pendingCommitZoom) > 0.0005) return;
+
+        // Do the final scroll correction in committed-zoom space
+        if (pendingAnchor) {
+          const next = getScrollFromAnchor(pendingAnchor, pendingCommitZoom, lastCenterX, lastCenterY);
+          if (next) {
+            // IMPORTANT order:
+            // - Clear transform first so scroll math matches DOM dimensions at committed zoom
+            clearVisualScale();
+            clampScroll(next.left, next.top);
+          } else {
+            clearVisualScale();
+          }
+        } else {
+          clearVisualScale();
+        }
+
+        pendingActive = false;
+        pendingAnchor = null;
+
+        if (pendingTimeout != null) {
+          window.clearTimeout(pendingTimeout);
+          pendingTimeout = null;
+        }
+
+        commitReadyRef.current = null;
+      };
+
+      // Fallback: if render-ready never comes (rare), don’t get stuck scaled.
+      pendingTimeout = window.setTimeout(() => {
+        if (!pendingActive) return;
+        clearVisualScale();
+        pendingActive = false;
+        pendingAnchor = null;
+        commitReadyRef.current = null;
+      }, 350);
     };
 
     const onPointerDown = (e: PointerEvent) => {
@@ -129,7 +195,6 @@ export default function usePinchZoom({
       if (!pointers.has(e.pointerId)) return;
 
       pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-
       if (pointers.size !== 2) return;
 
       const [p1, p2] = Array.from(pointers.values());
@@ -138,8 +203,6 @@ export default function usePinchZoom({
       if (!isPinching) {
         if (Math.abs(currDist - baseDistance) > PINCH_START_THRESHOLD) {
           isPinching = true;
-
-          // During pinch: we own the gesture.
           el.style.touchAction = 'none';
           el.style.overflow = 'hidden';
         } else {
@@ -167,8 +230,7 @@ export default function usePinchZoom({
 
       const nextScale = (targetZoom / (baseZoom || 1)) || 1;
 
-      // Keep the *same document point* under the pinch center when scale changes.
-      // Convert current visual scroll to "unscaled" content coords using lastScale.
+      // Keep same doc point under fingers while visual scale changes
       const docX = (el.scrollLeft + centerX) / (lastScale || 1);
       const docY = (el.scrollTop + centerY) / (lastScale || 1);
 
@@ -186,37 +248,28 @@ export default function usePinchZoom({
     const finishPinch = () => {
       if (!isPinching) return;
 
-      const container = el;
       const committedBaseZoom = baseZoom;
       const committedTargetZoom = lastTargetZoom;
 
-      // Compute the doc point currently under the pinch center in *base layout coords*
-      const docX = (container.scrollLeft + lastCenterX) / (lastScale || 1);
-      const docY = (container.scrollTop + lastCenterY) / (lastScale || 1);
+      // doc point currently under center in base-layout coords
+      const docX = (el.scrollLeft + lastCenterX) / (lastScale || 1);
+      const docY = (el.scrollTop + lastCenterY) / (lastScale || 1);
 
-      // Convert to stable anchor at scale=1 (page index + coords)
-      const anchor = getAnchorFromContentPoint(docX, docY, committedBaseZoom);
+      pendingBaseZoom = committedBaseZoom;
+      pendingCommitZoom = committedTargetZoom;
 
-      // Clear visual transform BEFORE committing zoom
-      clearVisualScale();
+      // Convert to stable anchor (page + coords at scale=1)
+      pendingAnchor = getAnchorFromContentPoint(docX, docY, pendingBaseZoom);
 
-      // Commit zoom ONCE (pdf.js re-render happens here only)
+      // IMPORTANT:
+      // Do NOT clear transform here. Keep the old bitmap scaled while the new render happens.
+      pendingActive = true;
+      startPendingHandoff();
+
+      // Commit zoom once (pdf.js render begins; old canvas stays visible until swap)
       setZoomOnly(committedTargetZoom);
 
-      // After commit, scroll so the same anchor stays under the same finger center
-      requestAnimationFrame(() => {
-        if (!anchor) return;
-        const next = getScrollFromAnchor(anchor, committedTargetZoom, lastCenterX, lastCenterY);
-        if (!next) return;
-
-        // Clamp to container bounds
-        const maxL = Math.max(0, container.scrollWidth - container.clientWidth);
-        const maxT = Math.max(0, container.scrollHeight - container.clientHeight);
-
-        container.scrollLeft = Math.max(0, Math.min(next.left, maxL));
-        container.scrollTop = Math.max(0, Math.min(next.top, maxT));
-      });
-
+      // Gesture cleanup (allow normal scroll again even while we keep transform temporarily)
       isPinching = false;
       pointers.clear();
       baseDistance = 0;
@@ -227,16 +280,12 @@ export default function usePinchZoom({
 
     const onPointerUp = (e: PointerEvent) => {
       pointers.delete(e.pointerId);
-      if (pointers.size < 2) {
-        finishPinch();
-      }
+      if (pointers.size < 2) finishPinch();
     };
 
     const onPointerCancel = (e: PointerEvent) => {
       pointers.delete(e.pointerId);
-      if (pointers.size < 2) {
-        finishPinch();
-      }
+      if (pointers.size < 2) finishPinch();
     };
 
     el.addEventListener('pointerdown', onPointerDown, { passive: false });
@@ -247,6 +296,12 @@ export default function usePinchZoom({
     return () => {
       el.style.touchAction = prevTouchAction;
       el.style.overflow = prevOverflow;
+
+      if (pendingTimeout != null) window.clearTimeout(pendingTimeout);
+      pendingTimeout = null;
+
+      pendingActive = false;
+      commitReadyRef.current = null;
 
       clearVisualScale();
 
@@ -264,5 +319,6 @@ export default function usePinchZoom({
     clampZoom,
     getAnchorFromContentPoint,
     getScrollFromAnchor,
+    commitReadyRef,
   ]);
 }
