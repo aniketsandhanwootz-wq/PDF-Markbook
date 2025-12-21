@@ -338,11 +338,12 @@ body {
 }
 
 
-/* Swipeable area */
 .swipeable-pdf {
-  touch-action: pan-y pinch-zoom;
+  /* Do NOT allow browser pinch-zoom; we handle it via PointerEvents in usePinchZoom */
+  touch-action: pan-x pan-y;
   -webkit-overflow-scrolling: touch;
 }
+
 
 /* Mobile optimizations */
 @media (max-width: 768px) {

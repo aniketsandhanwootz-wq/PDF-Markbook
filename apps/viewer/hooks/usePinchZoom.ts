@@ -6,7 +6,20 @@ import { useEffect, MutableRefObject } from 'react';
 type UsePinchZoomOptions = {
   containerRef: MutableRefObject<HTMLDivElement | null>;
   zoomRef: MutableRefObject<number>;
-  zoomAt: (nextZoomRaw: number, clientX: number, clientY: number) => void;
+
+  /**
+   * Preferred path for touch: set the zoom value only (no scroll math inside).
+   * This hook will compute scrollLeft/scrollTop to keep the pinch center stable.
+   * Should return the *actual* zoom after clamp/quantize.
+   */
+  setZoomOnly?: (nextZoomRaw: number) => number;
+
+  /**
+   * Back-compat: existing API that sets zoom and also adjusts scroll.
+   * If setZoomOnly isn't provided, the hook will fall back to this.
+   */
+  zoomAt?: (nextZoomRaw: number, clientX: number, clientY: number) => void;
+
   clampZoom: (z: number) => number;
   enabled: boolean;
 };
@@ -14,6 +27,7 @@ type UsePinchZoomOptions = {
 export default function usePinchZoom({
   containerRef,
   zoomRef,
+  setZoomOnly,
   zoomAt,
   clampZoom,
   enabled,
@@ -25,26 +39,38 @@ export default function usePinchZoom({
     const el = containerRef.current;
     if (!el) return;
 
-    // ✅ Allow vertical scroll, but still let us handle custom pinch zoom.
+    // ✅ Default: allow normal one-finger scroll.
+    // During 2-finger gestures we temporarily switch to touch-action:none.
     const prevTouchAction = el.style.touchAction;
+    const prevOverflow = el.style.overflow;
+    const prevOverflowX = el.style.overflowX;
+    const prevOverflowY = el.style.overflowY;
     el.style.touchAction = 'pan-x pan-y';
 
-    const pointers = new Map<number, { x: number; y: number; t: number }>();
+    const pointers = new Map<number, { x: number; y: number }>();
 
+    // --- Pinch state (gesture-wide baseline) ---
     let isPinching = false;
-
-    // Baseline for the WHOLE gesture (no per-frame reset)
     let baseZoom = 1;
     let baseDistance = 0;
+    let baseContentX = 0;
+    let baseContentY = 0;
+    let baseCenterClientX = 0;
+    let baseCenterClientY = 0;
 
-    // Last known center (for anchoring)
-    let pinchCenter = { x: 0, y: 0 };
+    // Smoothing / filtering
+    let lastAppliedZoom = zoomRef.current || 1;
+    let smoothedCenterX = 0;
+    let smoothedCenterY = 0;
 
-    // Local zoom “emitter” to smooth jitter
-    let lastEmittedZoom = zoomRef.current || 1;
+    // rAF throttle so we only apply one update per frame
+    let raf: number | null = null;
+    let latestP1: { x: number; y: number } | null = null;
+    let latestP2: { x: number; y: number } | null = null;
 
-    const PINCH_START_THRESHOLD = 8;  // px change before we consider it a real pinch
-    const MIN_ZOOM_CHANGE = 0.01;     // ~1% step → less jittery than before
+    const MIN_ZOOM_CHANGE = 0.004; // ~0.4% steps (prevents micro-jitter)
+    const CENTER_SMOOTHING = 0.35;
+    const ZOOM_SMOOTHING = 0.25;
 
     const distance = (p1: { x: number; y: number }, p2: { x: number; y: number }) =>
       Math.hypot(p2.x - p1.x, p2.y - p1.y);
@@ -54,74 +80,152 @@ export default function usePinchZoom({
       y: (p1.y + p2.y) / 2,
     });
 
+    const getTwoPointers = () => {
+      const it = pointers.values();
+      const p1 = it.next().value as { x: number; y: number } | undefined;
+      const p2 = it.next().value as { x: number; y: number } | undefined;
+      if (!p1 || !p2) return null;
+      return { p1, p2 };
+    };
+
+    const beginPinchIfReady = () => {
+      if (isPinching) return;
+      if (pointers.size < 2) return;
+
+      const two = getTwoPointers();
+      if (!two) return;
+      const { p1, p2 } = two;
+
+      // Gesture baseline: lock reference zoom + reference content point
+      baseZoom = zoomRef.current || 1;
+      baseDistance = distance(p1, p2) || 1;
+
+      const c = center(p1, p2);
+      baseCenterClientX = c.x;
+      baseCenterClientY = c.y;
+
+      const rect = el.getBoundingClientRect();
+      const centerXInEl = baseCenterClientX - rect.left;
+      const centerYInEl = baseCenterClientY - rect.top;
+
+      // This is the KEY: lock the content point under the fingers at gesture-start.
+      baseContentX = el.scrollLeft + centerXInEl;
+      baseContentY = el.scrollTop + centerYInEl;
+
+      lastAppliedZoom = baseZoom;
+      smoothedCenterX = centerXInEl;
+      smoothedCenterY = centerYInEl;
+
+      // Own the 2-finger gesture (prevents browser scroll/zoom fights)
+      isPinching = true;
+      el.style.touchAction = 'none';
+      // Disable direct scrolling while pinching (we will set scrollLeft/Top manually)
+      el.style.overflow = 'hidden';
+      el.style.overflowX = 'hidden';
+      el.style.overflowY = 'hidden';
+    };
+
+    const endPinch = () => {
+      if (!isPinching) return;
+      isPinching = false;
+      baseDistance = 0;
+
+      // Restore styles
+      el.style.touchAction = prevTouchAction;
+      el.style.overflow = prevOverflow;
+      el.style.overflowX = prevOverflowX;
+      el.style.overflowY = prevOverflowY;
+    };
+
+    const applyPinchFrame = () => {
+      raf = null;
+      if (!isPinching) return;
+      if (!latestP1 || !latestP2) return;
+      if (!baseDistance) return;
+
+      const p1 = latestP1;
+      const p2 = latestP2;
+
+      const currDist = distance(p1, p2);
+      const c = center(p1, p2);
+
+      const rect = el.getBoundingClientRect();
+      const centerXInEl = c.x - rect.left;
+      const centerYInEl = c.y - rect.top;
+
+      // Smooth center movement (reduces jitter from natural finger micro-moves)
+      smoothedCenterX = smoothedCenterX + (centerXInEl - smoothedCenterX) * CENTER_SMOOTHING;
+      smoothedCenterY = smoothedCenterY + (centerYInEl - smoothedCenterY) * CENTER_SMOOTHING;
+
+      const rawFactor = currDist / baseDistance;
+      const desiredZoom = clampZoom(baseZoom * rawFactor);
+
+      // Smooth zoom change (prevents 'snap')
+      const smoothedZoom = lastAppliedZoom + (desiredZoom - lastAppliedZoom) * ZOOM_SMOOTHING;
+      const nextZoom = clampZoom(smoothedZoom);
+
+      if (Math.abs(nextZoom - lastAppliedZoom) < MIN_ZOOM_CHANGE) {
+        // Still update scroll to follow center movement even if zoom doesn't change much
+        const scale = lastAppliedZoom / baseZoom;
+        el.scrollLeft = baseContentX * scale - smoothedCenterX;
+        el.scrollTop = baseContentY * scale - smoothedCenterY;
+        return;
+      }
+
+      // Update zoom (preferred) + compute scroll so the original content point stays under the current center
+      const appliedZoom =
+        typeof setZoomOnly === 'function'
+          ? setZoomOnly(nextZoom)
+          : (zoomAt ? (zoomAt(nextZoom, c.x, c.y), nextZoom) : nextZoom);
+
+      lastAppliedZoom = appliedZoom;
+
+      const scale = appliedZoom / baseZoom;
+      el.scrollLeft = baseContentX * scale - smoothedCenterX;
+      el.scrollTop = baseContentY * scale - smoothedCenterY;
+    };
+
     const onPointerDown = (e: PointerEvent) => {
       if (e.pointerType === 'mouse') return;
       if (!el.contains(e.target as Node)) return;
 
-      pointers.set(e.pointerId, {
-        x: e.clientX,
-        y: e.clientY,
-        t: performance.now(),
-      });
+      // Capture so we keep receiving events even if fingers drift off the element.
+      try {
+        el.setPointerCapture(e.pointerId);
+      } catch {
+        // ignore
+      }
 
-      if (pointers.size === 2) {
-        const [p1, p2] = Array.from(pointers.values());
-        baseDistance = distance(p1, p2) || 1;
-        baseZoom = zoomRef.current || 1;
-        lastEmittedZoom = baseZoom;
-        pinchCenter = center(p1, p2);
-        isPinching = false; // will flip true once threshold is crossed
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+      // As soon as 2 fingers are down, start pinch ownership (standard PDF/map viewer behavior)
+      if (pointers.size >= 2) {
+        beginPinchIfReady();
+        // Stop any scroll momentum as early as possible
+        e.preventDefault();
+        e.stopPropagation();
       }
     };
 
     const onPointerMove = (e: PointerEvent) => {
       if (!pointers.has(e.pointerId)) return;
 
-      pointers.set(e.pointerId, {
-        x: e.clientX,
-        y: e.clientY,
-        t: performance.now(),
-      });
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
-      // Only care about pinch (2 fingers)
-      if (pointers.size !== 2) return;
+      if (pointers.size < 2) return;
 
-      const [p1, p2] = Array.from(pointers.values());
-      const currDist = distance(p1, p2);
+      beginPinchIfReady();
+      if (!isPinching) return;
 
-      if (!isPinching) {
-        if (Math.abs(currDist - baseDistance) > PINCH_START_THRESHOLD) {
-          isPinching = true;
-          // Lock scroll during the *actual* pinch so browser doesn’t fight us
-          el.style.overflowY = 'hidden';
-        } else {
-          return;
-        }
-      }
+      // rAF-throttle the heavy work
+      const two = getTwoPointers();
+      if (!two) return;
 
-      if (!baseDistance) return;
+      latestP1 = two.p1;
+      latestP2 = two.p2;
 
-      // Keep anchor at the current finger center
-      pinchCenter = center(p1, p2);
+      if (raf == null) raf = requestAnimationFrame(applyPinchFrame);
 
-      // Scale relative to gesture-start distance
-      const rawFactor = currDist / baseDistance;
-      const rawZoom = baseZoom * rawFactor;
-      const targetZoom = clampZoom(rawZoom);
-
-      // Ignore microscopic zoom changes
-      if (Math.abs(targetZoom - lastEmittedZoom) < MIN_ZOOM_CHANGE) return;
-
-      // 🔥 Smoothing: move 35% towards target each frame (low-pass filter)
-      const SMOOTHING = 0.35;
-      const smoothedZoom =
-        lastEmittedZoom + (targetZoom - lastEmittedZoom) * SMOOTHING;
-      lastEmittedZoom = smoothedZoom;
-
-      zoomAt(smoothedZoom, pinchCenter.x, pinchCenter.y);
-
-      // During the pinch we "own" the gesture to prevent weirdness,
-      // but this only applies while two fingers are down.
       e.preventDefault();
       e.stopPropagation();
     };
@@ -129,15 +233,14 @@ export default function usePinchZoom({
     const onPointerEnd = (e: PointerEvent) => {
       pointers.delete(e.pointerId);
 
-      if (isPinching && pointers.size < 2) {
-        isPinching = false;
-        // Restore scroll after pinch ends
-        el.style.overflowY = '';
-      }
-
-      if (pointers.size === 0) {
-        isPinching = false;
-        baseDistance = 0;
+      if (pointers.size < 2) {
+        if (raf != null) {
+          cancelAnimationFrame(raf);
+          raf = null;
+        }
+        latestP1 = null;
+        latestP2 = null;
+        endPinch();
       }
     };
 
@@ -147,13 +250,21 @@ export default function usePinchZoom({
     el.addEventListener('pointercancel', onPointerEnd, { passive: true });
 
     return () => {
+      if (raf != null) cancelAnimationFrame(raf);
+      raf = null;
+      latestP1 = null;
+      latestP2 = null;
+
+      // Restore styles
       el.style.touchAction = prevTouchAction;
-      el.style.overflowY = '';
+      el.style.overflow = prevOverflow;
+      el.style.overflowX = prevOverflowX;
+      el.style.overflowY = prevOverflowY;
 
       el.removeEventListener('pointerdown', onPointerDown as any);
       el.removeEventListener('pointermove', onPointerMove as any);
       el.removeEventListener('pointerup', onPointerEnd as any);
       el.removeEventListener('pointercancel', onPointerEnd as any);
     };
-  }, [enabled, zoomAt, clampZoom, containerRef, zoomRef]);
+  }, [enabled, setZoomOnly, zoomAt, clampZoom, containerRef, zoomRef]);
 }

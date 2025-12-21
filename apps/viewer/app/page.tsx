@@ -3021,11 +3021,19 @@ function ViewerContent() {
       if (raf) cancelAnimationFrame(raf);
     };
   }, [zoomAt, clampZoom]);
+// IMPORTANT: for pinch we pass a "setZoomOnly" callback so the hook can keep
+// the pinch center stable (standard PDF viewer behavior) without fighting our
+// existing zoomAt() scroll math.
+const setZoomOnly = useCallback(
+  (nextZoomRaw: number) => setZoomQ(nextZoomRaw, zoomRef),
+  [setZoomQ]
+);
 
   // Touch pan (1 finger) + pinch-zoom (2 fingers) on the PDF container (mobile only)
   usePinchZoom({
     containerRef,
     zoomRef,
+    setZoomOnly,
     zoomAt,
     clampZoom,
     enabled: TOUCH_GESTURES_ENABLED,
