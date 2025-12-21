@@ -16,7 +16,7 @@ import ReportTitlePanel from '../components/ReportTitlePanel';
 import { clampZoom, downloadMasterReport, computeZoomForRect } from '../lib/pdf';
 import PDFSearch from '../components/PDFSearch';
 import SlideSidebar from '../components/SlideSidebar';
-import usePinchZoom from '../hooks/usePinchZoom';
+import usePinchZoom, { type PinchAnchor } from '../hooks/usePinchZoom';
 import DrawingSheetPanel from '../components/DrawingSheetPanel'; // ✅ NEW
 import DraftResumeDialog from '../components/DraftResumeDialog';
 import { useQCDraft } from '../hooks/useQCDraft';
@@ -1237,7 +1237,8 @@ function ViewerContent() {
 
 
   // Refs used by the viewer and smooth zoom
-  const containerRef = useRef<HTMLDivElement>(null);
+const containerRef = useRef<HTMLDivElement>(null);
+const surfaceRef = useRef<HTMLDivElement>(null);
   const pageHeightsRef = useRef<number[]>([]);
   const pageElsRef = useRef<Array<HTMLDivElement | null>>([]);
   const basePageSizeRef = useRef<Array<{ w: number; h: number }>>([]);
@@ -1285,6 +1286,55 @@ function ViewerContent() {
     while (l < r) { const m = (l + r) >> 1; a[m] <= x ? (l = m + 1) : (r = m); }
     return l;
   }
+
+    // Pinch-zoom: convert finger point -> stable document anchor (page + coords at scale=1)
+  const getPinchAnchorFromContentPoint = useCallback(
+    (contentX: number, contentY: number, baseZoom: number): PinchAnchor | null => {
+      const pref = prefixHeightsRef.current || [];
+      const base = basePageSizeRef.current || [];
+      const n = base.length;
+      if (!n || !pref.length) return null;
+
+      let i = upperBound(pref, contentY) - 1;
+      if (i < 0) i = 0;
+      if (i >= n) i = n - 1;
+
+      const pageTop = pref[i] ?? 0;
+      const yInPageZ = contentY - pageTop;
+      const xInPageZ = contentX; // pages are positioned at left:0 in your layout
+
+      const bz = baseZoom || 1;
+      return { pageIndex: i, xAt1: xInPageZ / bz, yAt1: yInPageZ / bz };
+    },
+    []
+  );
+
+  // Pinch-zoom: anchor -> scrollLeft/scrollTop for the target zoom (accounts for constant GUTTER)
+  const getScrollFromPinchAnchor = useCallback(
+    (a: PinchAnchor, zoom: number, centerXInEl: number, centerYInEl: number) => {
+      const base = basePageSizeRef.current || [];
+      if (!base.length) return null;
+
+      const z = zoom || 1;
+
+      let run = 0;
+      for (let i = 0; i < a.pageIndex; i++) {
+        run += (base[i]?.h || 0) * z + GUTTER;
+      }
+
+      return {
+        left: a.xAt1 * z - centerXInEl,
+        top: run + a.yAt1 * z - centerYInEl,
+      };
+    },
+    []
+  );
+
+  // Pinch commits zoom once at gesture end (prevents pdf.js re-render vibration)
+  const setZoomOnly = useCallback(
+    (nextZoomRaw: number) => setZoomQ(nextZoomRaw, zoomRef),
+    [setZoomQ]
+  );
 
   /** Recompute prefix tops from *base* page sizes (scale=1) and the current zoom. */
   const recomputePrefix = useCallback(() => {
@@ -3021,23 +3071,20 @@ function ViewerContent() {
       if (raf) cancelAnimationFrame(raf);
     };
   }, [zoomAt, clampZoom]);
-// IMPORTANT: for pinch we pass a "setZoomOnly" callback so the hook can keep
-// the pinch center stable (standard PDF viewer behavior) without fighting our
-// existing zoomAt() scroll math.
-const setZoomOnly = useCallback(
-  (nextZoomRaw: number) => setZoomQ(nextZoomRaw, zoomRef),
-  [setZoomQ]
-);
+
 
   // Touch pan (1 finger) + pinch-zoom (2 fingers) on the PDF container (mobile only)
-  usePinchZoom({
-    containerRef,
-    zoomRef,
-    setZoomOnly,
-    zoomAt,
-    clampZoom,
-    enabled: TOUCH_GESTURES_ENABLED,
-  });
+usePinchZoom({
+  containerRef,
+  contentRef: surfaceRef,
+  zoomRef,
+  setZoomOnly,
+  clampZoom,
+  getAnchorFromContentPoint: getPinchAnchorFromContentPoint,
+  getScrollFromAnchor: getScrollFromPinchAnchor,
+  enabled: TOUCH_GESTURES_ENABLED,
+});
+
 
 
   useEffect(() => {
@@ -3339,9 +3386,11 @@ const setZoomOnly = useCallback(
               ref={containerRef}
             >
               <div
-                className="pdf-surface"
-                style={{ position: 'relative', height: totalHeightRef.current }}
-              >
+  className="pdf-surface"
+  ref={surfaceRef}
+  style={{ position: 'relative', height: totalHeightRef.current }}
+>
+
                 {pagesToRender.map((pageNum) => {
                   const top = prefixHeightsRef.current[pageNum - 1] || 0;
                   return (
@@ -3573,10 +3622,12 @@ const setZoomOnly = useCallback(
         className="pdf-surface-wrap"
         ref={containerRef}
       >
-        <div
-          className="pdf-surface"
-          style={{ position: 'relative', height: totalHeightRef.current }}
-        >
+       <div
+  className="pdf-surface"
+  ref={surfaceRef}
+  style={{ position: 'relative', height: totalHeightRef.current }}
+>
+
           {pagesToRender.map((pageNum) => {
             const top = prefixHeightsRef.current[pageNum - 1] || 0;
             return (

@@ -339,10 +339,11 @@ body {
 
 
 .swipeable-pdf {
-  /* Do NOT allow browser pinch-zoom; we handle it via PointerEvents in usePinchZoom */
+  /* Browser pinch-zoom fights our custom pinch; keep native panning only */
   touch-action: pan-x pan-y;
   -webkit-overflow-scrolling: touch;
 }
+
 
 
 /* Mobile optimizations */
@@ -412,7 +413,10 @@ body {
 
 .pdf-surface {
   will-change: transform;
+  transform-origin: 0 0;
+  backface-visibility: hidden;
 }
+
 
 .page-canvas {
   image-rendering: auto;
