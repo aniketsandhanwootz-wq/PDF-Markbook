@@ -5,44 +5,29 @@ import { useEffect, MutableRefObject } from 'react';
 
 export type PinchAnchor = {
   pageIndex: number; // 0-based
-  xAt1: number; // x inside page at scale=1
-  yAt1: number; // y inside page at scale=1
+  xAt1: number;      // page-space at scale=1
+  yAt1: number;      // page-space at scale=1
 };
 
 type UsePinchZoomOptions = {
   containerRef: MutableRefObject<HTMLDivElement | null>;
-
-  /**
-   * Element that contains all pages/overlays.
-   * We apply a temporary GPU scale transform here during an active pinch.
-   */
-  contentRef: MutableRefObject<HTMLElement | null>;
-
-  /** Current committed zoom (render zoom). */
+  contentRef: MutableRefObject<HTMLDivElement | null>;
   zoomRef: MutableRefObject<number>;
 
-  /**
-   * Commit zoom (updates React state + zoomRef via your setZoomQ).
-   * Called ONLY once when pinch ends.
-   */
-  setZoomOnly: (nextZoomRaw: number) => number;
+  // Commit zoom ONCE at gesture end (prevents pdf.js re-render vibration)
+  setZoomOnly: (nextZoom: number) => void;
 
   clampZoom: (z: number) => number;
 
-  /**
-   * Optional: improve correctness when your layout includes constant gutters that do not scale.
-   * Converts the touch point (in content coords at baseZoom) into a stable document anchor.
-   */
-  getAnchorFromContentPoint?: (
+  // Convert a content point (scroll coords) to stable document anchor
+  getAnchorFromContentPoint: (
     contentX: number,
     contentY: number,
     baseZoom: number
   ) => PinchAnchor | null;
 
-  /**
-   * Optional: convert stable anchor back into scroll coords for a given zoom + center point.
-   */
-  getScrollFromAnchor?: (
+  // Convert stable anchor back to scrollLeft/scrollTop for a zoom + viewport center
+  getScrollFromAnchor: (
     anchor: PinchAnchor,
     zoom: number,
     centerXInEl: number,
@@ -67,50 +52,31 @@ export default function usePinchZoom({
     if (typeof window === 'undefined' || !(window as any).PointerEvent) return;
 
     const el = containerRef.current;
-    const contentEl = contentRef.current;
-    if (!el || !contentEl) return;
+    const surface = contentRef.current;
+    if (!el || !surface) return;
 
-    // Save original styles (we restore on cleanup/end)
     const prevTouchAction = el.style.touchAction;
-
-    const prevTransform = contentEl.style.transform;
-    const prevTransformOrigin = contentEl.style.transformOrigin;
-    const prevWillChange = contentEl.style.willChange;
-
-    // Default: allow 1-finger scroll.
-    el.style.touchAction = 'pan-x pan-y';
+    const prevOverflow = el.style.overflow;
 
     const pointers = new Map<number, { x: number; y: number }>();
 
-    // --- Pinch baseline (captured once per gesture) ---
     let isPinching = false;
+
     let baseZoom = 1;
     let baseDistance = 0;
 
-    // Content-space point under fingers at pinch-start (content coords at baseZoom)
-    let baseContentX = 0;
-    let baseContentY = 0;
+    // During pinch we scale the surface (visual) without committing zoom.
+    // lastScale = (visualZoom / baseZoom)
+    let lastScale = 1;
 
-    // Stable anchor (pageIndex + x/y at scale=1) used for perfect commit w/ constant gutters
-    let anchor: PinchAnchor | null = null;
+    let lastTargetZoom = 1;
 
-    // Smoothed pinch center (relative to container)
-    let centerXInEl = 0;
-    let centerYInEl = 0;
+    // We keep the pinch center in element coords for final commit.
+    let lastCenterX = 0;
+    let lastCenterY = 0;
 
-    // Latest computed values
-    let latestVisualScale = 1;
-    let latestFinalZoom = 1;
-
-    // rAF throttle
-    let raf: number | null = null;
-    let latestP1: { x: number; y: number } | null = null;
-    let latestP2: { x: number; y: number } | null = null;
-
-    // Tune for “standard viewer feel”
-    const CENTER_SMOOTHING = 0.28; // center wobble smoothing
-    const MIN_SCALE_CHANGE = 0.0012; // dead-zone to remove micro jitter
-    const ZOOM_SMOOTHING = 0.08; // small zoom smoothing helps a lot on phones
+    const PINCH_START_THRESHOLD = 8;  // px
+    const MIN_ZOOM_CHANGE = 0.0025;   // ~0.25% (prevents jitter)
 
     const distance = (p1: { x: number; y: number }, p2: { x: number; y: number }) =>
       Math.hypot(p2.x - p1.x, p2.y - p1.y);
@@ -120,151 +86,14 @@ export default function usePinchZoom({
       y: (p1.y + p2.y) / 2,
     });
 
-    const getTwoPointers = () => {
-      const it = pointers.values();
-      const p1 = it.next().value as { x: number; y: number } | undefined;
-      const p2 = it.next().value as { x: number; y: number } | undefined;
-      if (!p1 || !p2) return null;
-      return { p1, p2 };
+    const applyVisualScale = (scale: number) => {
+      surface.style.transformOrigin = '0 0';
+      surface.style.transform = `scale(${scale})`;
     };
 
-    const beginPinch = () => {
-      if (isPinching) return;
-      if (pointers.size < 2) return;
-
-      const two = getTwoPointers();
-      if (!two) return;
-
-      const { p1, p2 } = two;
-
-      baseZoom = zoomRef.current || 1;
-      baseDistance = distance(p1, p2) || 1;
-
-      const c = center(p1, p2);
-      const rect = el.getBoundingClientRect();
-      const cx = c.x - rect.left;
-      const cy = c.y - rect.top;
-
-      centerXInEl = cx;
-      centerYInEl = cy;
-
-      baseContentX = el.scrollLeft + cx;
-      baseContentY = el.scrollTop + cy;
-
-      anchor =
-        typeof getAnchorFromContentPoint === 'function'
-          ? getAnchorFromContentPoint(baseContentX, baseContentY, baseZoom)
-          : null;
-
-      latestVisualScale = 1;
-      latestFinalZoom = baseZoom;
-
-      isPinching = true;
-
-      // Own the gesture
-      el.style.touchAction = 'none';
-
-      // Smooth visual scaling during pinch
-      contentEl.style.transformOrigin = '0 0';
-      contentEl.style.willChange = 'transform';
-    };
-
-    const applyScrollClamped = (left: number, top: number) => {
-      const maxL = Math.max(0, el.scrollWidth - el.clientWidth);
-      const maxT = Math.max(0, el.scrollHeight - el.clientHeight);
-      el.scrollLeft = Math.max(0, Math.min(left, maxL));
-      el.scrollTop = Math.max(0, Math.min(top, maxT));
-    };
-
-    const applyFrame = () => {
-      raf = null;
-      if (!isPinching) return;
-      if (!latestP1 || !latestP2) return;
-      if (!baseDistance) return;
-
-      const p1 = latestP1;
-      const p2 = latestP2;
-
-      const currDist = distance(p1, p2);
-      const c = center(p1, p2);
-
-      const rect = el.getBoundingClientRect();
-      const rawCx = c.x - rect.left;
-      const rawCy = c.y - rect.top;
-
-      // Smooth center to reduce “vibration”
-      centerXInEl = centerXInEl + (rawCx - centerXInEl) * CENTER_SMOOTHING;
-      centerYInEl = centerYInEl + (rawCy - centerYInEl) * CENTER_SMOOTHING;
-
-      const rawZoom = clampZoom(baseZoom * (currDist / baseDistance));
-      latestFinalZoom = rawZoom;
-
-      // Visual scale (smoothed)
-      const desiredScale = rawZoom / baseZoom;
-      const nextScale =
-        ZOOM_SMOOTHING > 0
-          ? latestVisualScale + (desiredScale - latestVisualScale) * ZOOM_SMOOTHING
-          : desiredScale;
-
-      if (Math.abs(nextScale - latestVisualScale) < MIN_SCALE_CHANGE) {
-        // still pan smoothly with center movement
-        const s = latestVisualScale || 1;
-        applyScrollClamped(baseContentX - centerXInEl / s, baseContentY - centerYInEl / s);
-        return;
-      }
-
-      latestVisualScale = nextScale;
-
-      // Apply GPU transform (no pdf.js re-render during pinch)
-      contentEl.style.transform = `translate3d(0,0,0) scale(${latestVisualScale})`;
-
-      // Keep the same content point under the pinch center:
-      // screen = (content - scroll) * scale  => scroll = content - center/scale
-      applyScrollClamped(
-        baseContentX - centerXInEl / latestVisualScale,
-        baseContentY - centerYInEl / latestVisualScale
-      );
-    };
-
-    const endPinch = () => {
-      if (!isPinching) return;
-      isPinching = false;
-      baseDistance = 0;
-
-      // Clear temporary transform
-      contentEl.style.transform = prevTransform;
-      contentEl.style.transformOrigin = prevTransformOrigin;
-      contentEl.style.willChange = prevWillChange;
-
-      // Restore default behavior
-      el.style.touchAction = prevTouchAction;
-
-      // Commit zoom ONCE (this stops the “vibration”)
-      const committed = setZoomOnly(latestFinalZoom);
-
-      // After layout updates at committed zoom, correct scroll precisely
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          const rect = el.getBoundingClientRect();
-          const cx = Math.max(0, Math.min(rect.width, centerXInEl));
-          const cy = Math.max(0, Math.min(rect.height, centerYInEl));
-
-          let targetLeft: number;
-          let targetTop: number;
-
-          if (anchor && typeof getScrollFromAnchor === 'function') {
-            const v = getScrollFromAnchor(anchor, committed, cx, cy);
-            targetLeft = v?.left ?? 0;
-            targetTop = v?.top ?? 0;
-          } else {
-            const scale = committed / baseZoom;
-            targetLeft = baseContentX * scale - cx;
-            targetTop = baseContentY * scale - cy;
-          }
-
-          applyScrollClamped(targetLeft, targetTop);
-        });
-      });
+    const clearVisualScale = () => {
+      surface.style.transformOrigin = '';
+      surface.style.transform = '';
     };
 
     const onPointerDown = (e: PointerEvent) => {
@@ -272,17 +101,27 @@ export default function usePinchZoom({
       if (!el.contains(e.target as Node)) return;
 
       try {
-        el.setPointerCapture(e.pointerId);
+        (e.target as HTMLElement)?.setPointerCapture?.(e.pointerId);
       } catch {
         // ignore
       }
 
       pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
-      if (pointers.size >= 2) {
-        beginPinch();
-        e.preventDefault();
-        e.stopPropagation();
+      if (pointers.size === 2) {
+        const [p1, p2] = Array.from(pointers.values());
+        baseDistance = distance(p1, p2) || 1;
+        baseZoom = zoomRef.current || 1;
+
+        lastScale = 1;
+        lastTargetZoom = baseZoom;
+
+        const rect = el.getBoundingClientRect();
+        const c = center(p1, p2);
+        lastCenterX = c.x - rect.left;
+        lastCenterY = c.y - rect.top;
+
+        isPinching = false;
       }
     };
 
@@ -290,55 +129,131 @@ export default function usePinchZoom({
       if (!pointers.has(e.pointerId)) return;
 
       pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-      if (pointers.size < 2) return;
 
-      beginPinch();
-      if (!isPinching) return;
+      if (pointers.size !== 2) return;
 
-      const two = getTwoPointers();
-      if (!two) return;
+      const [p1, p2] = Array.from(pointers.values());
+      const currDist = distance(p1, p2);
 
-      latestP1 = two.p1;
-      latestP2 = two.p2;
+      if (!isPinching) {
+        if (Math.abs(currDist - baseDistance) > PINCH_START_THRESHOLD) {
+          isPinching = true;
 
-      if (raf == null) raf = requestAnimationFrame(applyFrame);
+          // During pinch: we own the gesture.
+          el.style.touchAction = 'none';
+          el.style.overflow = 'hidden';
+        } else {
+          return;
+        }
+      }
+
+      const rect = el.getBoundingClientRect();
+      const c = center(p1, p2);
+      const centerX = c.x - rect.left;
+      const centerY = c.y - rect.top;
+
+      lastCenterX = centerX;
+      lastCenterY = centerY;
+
+      const rawZoom = baseZoom * (currDist / (baseDistance || 1));
+      const targetZoom = clampZoom(rawZoom);
+
+      if (Math.abs(targetZoom - lastTargetZoom) < MIN_ZOOM_CHANGE) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      lastTargetZoom = targetZoom;
+
+      const nextScale = (targetZoom / (baseZoom || 1)) || 1;
+
+      // Keep the *same document point* under the pinch center when scale changes.
+      // Convert current visual scroll to "unscaled" content coords using lastScale.
+      const docX = (el.scrollLeft + centerX) / (lastScale || 1);
+      const docY = (el.scrollTop + centerY) / (lastScale || 1);
+
+      applyVisualScale(nextScale);
+
+      el.scrollLeft = docX * nextScale - centerX;
+      el.scrollTop = docY * nextScale - centerY;
+
+      lastScale = nextScale;
 
       e.preventDefault();
       e.stopPropagation();
     };
 
-    const onPointerEnd = (e: PointerEvent) => {
-      pointers.delete(e.pointerId);
+    const finishPinch = () => {
+      if (!isPinching) return;
 
+      const container = el;
+      const committedBaseZoom = baseZoom;
+      const committedTargetZoom = lastTargetZoom;
+
+      // Compute the doc point currently under the pinch center in *base layout coords*
+      const docX = (container.scrollLeft + lastCenterX) / (lastScale || 1);
+      const docY = (container.scrollTop + lastCenterY) / (lastScale || 1);
+
+      // Convert to stable anchor at scale=1 (page index + coords)
+      const anchor = getAnchorFromContentPoint(docX, docY, committedBaseZoom);
+
+      // Clear visual transform BEFORE committing zoom
+      clearVisualScale();
+
+      // Commit zoom ONCE (pdf.js re-render happens here only)
+      setZoomOnly(committedTargetZoom);
+
+      // After commit, scroll so the same anchor stays under the same finger center
+      requestAnimationFrame(() => {
+        if (!anchor) return;
+        const next = getScrollFromAnchor(anchor, committedTargetZoom, lastCenterX, lastCenterY);
+        if (!next) return;
+
+        // Clamp to container bounds
+        const maxL = Math.max(0, container.scrollWidth - container.clientWidth);
+        const maxT = Math.max(0, container.scrollHeight - container.clientHeight);
+
+        container.scrollLeft = Math.max(0, Math.min(next.left, maxL));
+        container.scrollTop = Math.max(0, Math.min(next.top, maxT));
+      });
+
+      isPinching = false;
+      pointers.clear();
+      baseDistance = 0;
+
+      el.style.touchAction = prevTouchAction;
+      el.style.overflow = prevOverflow;
+    };
+
+    const onPointerUp = (e: PointerEvent) => {
+      pointers.delete(e.pointerId);
       if (pointers.size < 2) {
-        if (raf != null) {
-          cancelAnimationFrame(raf);
-          raf = null;
-        }
-        latestP1 = null;
-        latestP2 = null;
-        endPinch();
+        finishPinch();
+      }
+    };
+
+    const onPointerCancel = (e: PointerEvent) => {
+      pointers.delete(e.pointerId);
+      if (pointers.size < 2) {
+        finishPinch();
       }
     };
 
     el.addEventListener('pointerdown', onPointerDown, { passive: false });
     el.addEventListener('pointermove', onPointerMove, { passive: false });
-    el.addEventListener('pointerup', onPointerEnd, { passive: true });
-    el.addEventListener('pointercancel', onPointerEnd, { passive: true });
+    el.addEventListener('pointerup', onPointerUp, { passive: true });
+    el.addEventListener('pointercancel', onPointerCancel, { passive: true });
 
     return () => {
-      if (raf != null) cancelAnimationFrame(raf);
-
       el.style.touchAction = prevTouchAction;
+      el.style.overflow = prevOverflow;
 
-      contentEl.style.transform = prevTransform;
-      contentEl.style.transformOrigin = prevTransformOrigin;
-      contentEl.style.willChange = prevWillChange;
+      clearVisualScale();
 
       el.removeEventListener('pointerdown', onPointerDown as any);
       el.removeEventListener('pointermove', onPointerMove as any);
-      el.removeEventListener('pointerup', onPointerEnd as any);
-      el.removeEventListener('pointercancel', onPointerEnd as any);
+      el.removeEventListener('pointerup', onPointerUp as any);
+      el.removeEventListener('pointercancel', onPointerCancel as any);
     };
   }, [
     enabled,

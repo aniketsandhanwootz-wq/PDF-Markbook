@@ -1288,47 +1288,116 @@ const surfaceRef = useRef<HTMLDivElement>(null);
   }
 
     // Pinch-zoom: convert finger point -> stable document anchor (page + coords at scale=1)
-  const getPinchAnchorFromContentPoint = useCallback(
-    (contentX: number, contentY: number, baseZoom: number): PinchAnchor | null => {
-      const pref = prefixHeightsRef.current || [];
-      const base = basePageSizeRef.current || [];
-      const n = base.length;
-      if (!n || !pref.length) return null;
+ const getPinchAnchorFromContentPoint = useCallback(
+  (contentX: number, contentY: number, baseZoom: number): PinchAnchor | null => {
+    const pref = prefixHeightsRef.current || [];
+    const base = basePageSizeRef.current || [];
+    const n = base.length;
+    if (!n || !pref.length) return null;
 
-      let i = upperBound(pref, contentY) - 1;
-      if (i < 0) i = 0;
-      if (i >= n) i = n - 1;
+    const container = containerRef.current;
+    const surface = surfaceRef.current;
 
-      const pageTop = pref[i] ?? 0;
-      const yInPageZ = contentY - pageTop;
-      const xInPageZ = contentX; // pages are positioned at left:0 in your layout
+    // Account for .pdf-surface padding (your CSS has padding: 16px)
+    let padL = 0;
+    let padT = 0;
+    if (surface) {
+      const cs = getComputedStyle(surface);
+      padL = parseFloat(cs.paddingLeft || '0') || 0;
+      padT = parseFloat(cs.paddingTop || '0') || 0;
+    }
 
-      const bz = baseZoom || 1;
-      return { pageIndex: i, xAt1: xInPageZ / bz, yAt1: yInPageZ / bz };
-    },
-    []
-  );
+    // Work in "surface content box" coords
+    const cx = contentX - padL;
+    const cy = contentY - padT;
+
+    // Pick page by virtual prefix tops (also in surface-content coords)
+    let i = upperBound(pref, cy) - 1;
+    if (i < 0) i = 0;
+    if (i >= n) i = n - 1;
+
+    const pageTop = pref[i] ?? 0;
+
+    // True page wrapper offset inside the absolute page slot
+    // (captures margin-top + centering offsets exactly as DOM is doing)
+    let wrapperLeft = 0;
+    let wrapperTop = 0;
+
+    const pageEl = pageElsRef.current[i];
+    const wrapper = pageEl?.querySelector('.page-wrapper') as HTMLElement | null;
+
+    if (wrapper) {
+      wrapperLeft = wrapper.offsetLeft || 0;
+      wrapperTop = wrapper.offsetTop || 0;
+    } else {
+      // Fallback if pageEl isn't in the window (rare during pinch)
+      const cw = container?.clientWidth || 0;
+      const pageWZ = (base[i]?.w || 0) * (baseZoom || 1);
+      wrapperLeft = Math.max(0, (cw - pageWZ) / 2);
+      wrapperTop = 16; // matches your CSS margin-top vibe
+    }
+
+    // Convert finger point to page-local coords (at current zoom)
+    let xInPageZ = cx - wrapperLeft;
+    let yInPageZ = (cy - pageTop) - wrapperTop;
+
+    // Clamp inside the page area (prevents gray-margin pinches from jumping)
+    const pageWZ = (base[i]?.w || 0) * (baseZoom || 1);
+    const pageHZ = (base[i]?.h || 0) * (baseZoom || 1);
+
+    xInPageZ = Math.max(0, Math.min(xInPageZ, pageWZ));
+    yInPageZ = Math.max(0, Math.min(yInPageZ, pageHZ));
+
+    const bz = baseZoom || 1;
+    return { pageIndex: i, xAt1: xInPageZ / bz, yAt1: yInPageZ / bz };
+  },
+  []
+);
 
   // Pinch-zoom: anchor -> scrollLeft/scrollTop for the target zoom (accounts for constant GUTTER)
-  const getScrollFromPinchAnchor = useCallback(
-    (a: PinchAnchor, zoom: number, centerXInEl: number, centerYInEl: number) => {
-      const base = basePageSizeRef.current || [];
-      if (!base.length) return null;
+const getScrollFromPinchAnchor = useCallback(
+  (a: PinchAnchor, zoom: number, centerXInEl: number, centerYInEl: number) => {
+    const base = basePageSizeRef.current || [];
+    if (!base.length) return null;
 
-      const z = zoom || 1;
+    const container = containerRef.current;
+    const surface = surfaceRef.current;
 
-      let run = 0;
-      for (let i = 0; i < a.pageIndex; i++) {
-        run += (base[i]?.h || 0) * z + GUTTER;
-      }
+    let padL = 0;
+    let padT = 0;
+    if (surface) {
+      const cs = getComputedStyle(surface);
+      padL = parseFloat(cs.paddingLeft || '0') || 0;
+      padT = parseFloat(cs.paddingTop || '0') || 0;
+    }
 
-      return {
-        left: a.xAt1 * z - centerXInEl,
-        top: run + a.yAt1 * z - centerYInEl,
-      };
-    },
-    []
-  );
+    const z = zoom || 1;
+
+    // Virtual top of page slot (surface-content coords)
+    let run = 0;
+    for (let i = 0; i < a.pageIndex; i++) {
+      run += (base[i]?.h || 0) * z + GUTTER;
+    }
+
+    // Page wrapper offsets at the *target zoom*
+    // Horiz: centered within container width (works because we’ll set slot width:100%)
+    const cw = container?.clientWidth || 0;
+    const pageWZ = (base[a.pageIndex]?.w || 0) * z;
+    const wrapperLeft = Math.max(0, (cw - pageWZ) / 2);
+
+    // Vert: use actual wrapper offset if available, else fallback to ~16
+    let wrapperTop = 16;
+    const pageEl = pageElsRef.current[a.pageIndex];
+    const wrapper = pageEl?.querySelector('.page-wrapper') as HTMLElement | null;
+    if (wrapper) wrapperTop = wrapper.offsetTop || wrapperTop;
+
+    return {
+      left: padL + wrapperLeft + a.xAt1 * z - centerXInEl,
+      top: padT + run + wrapperTop + a.yAt1 * z - centerYInEl,
+    };
+  },
+  []
+);
 
   // Pinch commits zoom once at gesture end (prevents pdf.js re-render vibration)
   const setZoomOnly = useCallback(
@@ -3396,7 +3465,7 @@ usePinchZoom({
                   return (
                     <div
                       key={pageNum}
-                      style={{ position: 'absolute', top, left: 0 }}
+                      style={{ position: 'absolute', top, left: 0, width: '100%' }}
                       ref={(el) => {
                         pageElsRef.current[pageNum - 1] = el;
                       }}
@@ -3633,7 +3702,7 @@ usePinchZoom({
             return (
               <div
                 key={pageNum}
-                style={{ position: 'absolute', top, left: 0 }}
+                style={{ position: 'absolute', top, left: 0, width: '100%' }}
                 ref={(el) => {
                   pageElsRef.current[pageNum - 1] = el;
                 }}
