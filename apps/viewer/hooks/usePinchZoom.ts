@@ -34,7 +34,7 @@ type UsePinchZoomOptions = {
 
   commitReadyRef: MutableRefObject<((pageNumber: number, zoom: number) => void) | null>;
 
-  // NEW: lets page.tsx freeze windowing while pinch/commit is in-flight
+  // lets page.tsx freeze windowing while pinch/commit is in-flight
   interactionRef?: MutableRefObject<boolean>;
   onHandoffComplete?: () => void;
 
@@ -83,6 +83,7 @@ export default function usePinchZoom({
 
     // Pending commit bookkeeping (to avoid “shiver”)
     let pendingAnchor: PinchAnchor | null = null;
+    let pendingAnchorPageNumber: number | null = null; // 1-based pageNumber of anchor page
     let pendingCommitZoom = 1;
     let pendingBaseZoom = 1;
     let pendingTimeout: number | null = null;
@@ -100,6 +101,8 @@ export default function usePinchZoom({
     });
 
     const applyVisualScale = (scale: number) => {
+      // compositor hint: reduces flicker on some mobile GPUs
+      surface.style.willChange = 'transform';
       surface.style.transformOrigin = '0 0';
       surface.style.transform = `scale(${scale})`;
     };
@@ -107,6 +110,7 @@ export default function usePinchZoom({
     const clearVisualScale = () => {
       surface.style.transformOrigin = '';
       surface.style.transform = '';
+      surface.style.willChange = '';
     };
 
     const clampScroll = (left: number, top: number) => {
@@ -127,24 +131,31 @@ export default function usePinchZoom({
 
     const startPendingHandoff = () => {
       // One-shot handler triggered by PageCanvas render event
-      commitReadyRef.current = (_pageNumber: number, renderedZoom: number) => {
+      commitReadyRef.current = (pageNumber: number, renderedZoom: number) => {
         if (!pendingActive) return;
         if (Math.abs(renderedZoom - pendingCommitZoom) > 0.0005) return;
 
+        // Only complete handoff when the page under the fingers (anchor page) is rendered.
+        // Otherwise we clear transform too early and you see a blink.
+        if (pendingAnchorPageNumber != null && pageNumber !== pendingAnchorPageNumber) return;
+
         if (pendingAnchor) {
-          const next = getScrollFromAnchor(pendingAnchor, pendingCommitZoom, lastCenterX, lastCenterY);
-          if (next) {
-            clearVisualScale();
-            clampScroll(next.left, next.top);
-          } else {
-            clearVisualScale();
-          }
+          const next = getScrollFromAnchor(
+            pendingAnchor,
+            pendingCommitZoom,
+            lastCenterX,
+            lastCenterY
+          );
+          // Clear transform first (stop double scaling), then clamp scroll
+          clearVisualScale();
+          if (next) clampScroll(next.left, next.top);
         } else {
           clearVisualScale();
         }
 
         pendingActive = false;
         pendingAnchor = null;
+        pendingAnchorPageNumber = null;
 
         if (pendingTimeout != null) {
           window.clearTimeout(pendingTimeout);
@@ -164,6 +175,7 @@ export default function usePinchZoom({
         clearVisualScale();
         pendingActive = false;
         pendingAnchor = null;
+        pendingAnchorPageNumber = null;
         commitReadyRef.current = null;
 
         finishInteracting();
@@ -200,7 +212,13 @@ export default function usePinchZoom({
     const onPointerMove = (e: PointerEvent) => {
       if (!pointers.has(e.pointerId)) return;
 
-      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      // Use coalesced events when available (helps on fast pinches)
+      const coalesced = (e as any).getCoalescedEvents?.();
+      const lastEvt =
+        coalesced && coalesced.length ? coalesced[coalesced.length - 1] : e;
+
+      pointers.set(e.pointerId, { x: lastEvt.clientX, y: lastEvt.clientY });
+
       if (pointers.size !== 2) return;
 
       const [p1, p2] = Array.from(pointers.values());
@@ -269,6 +287,7 @@ export default function usePinchZoom({
       pendingCommitZoom = committedTargetZoom;
 
       pendingAnchor = getAnchorFromContentPoint(docX, docY, pendingBaseZoom);
+      pendingAnchorPageNumber = pendingAnchor ? pendingAnchor.pageIndex + 1 : null;
 
       // Keep transform until new render is ready (prevents snap/blink)
       pendingActive = true;
@@ -285,12 +304,44 @@ export default function usePinchZoom({
       el.style.overflow = prevOverflow;
     };
 
+    const recomputeFinalFromCurrentPointers = () => {
+      if (!isPinching) return;
+      if (pointers.size !== 2) return;
+      if (!baseDistance) return;
+
+      const [p1, p2] = Array.from(pointers.values());
+      const currDist = distance(p1, p2);
+
+      const rawZoom = baseZoom * (currDist / (baseDistance || 1));
+      lastTargetZoom = clampZoom(rawZoom);
+
+      const rect = el.getBoundingClientRect();
+      const c = center(p1, p2);
+      lastCenterX = c.x - rect.left;
+      lastCenterY = c.y - rect.top;
+    };
+
     const onPointerUp = (e: PointerEvent) => {
+      // Update pointer with final coords (fast pinch often misses last move)
+      if (pointers.has(e.pointerId)) {
+        pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      }
+
+      // If we still have both pointers right now, recompute final center+zoom once
+      recomputeFinalFromCurrentPointers();
+
       pointers.delete(e.pointerId);
       if (pointers.size < 2) finishPinch();
     };
 
     const onPointerCancel = (e: PointerEvent) => {
+      // Update pointer with final coords first
+      if (pointers.has(e.pointerId)) {
+        pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      }
+
+      recomputeFinalFromCurrentPointers();
+
       pointers.delete(e.pointerId);
       if (pointers.size < 2) finishPinch();
     };
