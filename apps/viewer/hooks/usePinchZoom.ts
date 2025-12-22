@@ -32,13 +32,11 @@ type UsePinchZoomOptions = {
     centerYInEl: number
   ) => { left: number; top: number } | null;
 
-  /**
-   * Page.tsx will forward PageCanvas render events into this ref.
-   * We set commitReadyRef.current during pinch-end commit; when PageCanvas reports
-   * a page rendered at the committed zoom, we do a seamless handoff:
-   * scroll-correct + clear transform in the same tick.
-   */
   commitReadyRef: MutableRefObject<((pageNumber: number, zoom: number) => void) | null>;
+
+  // NEW: lets page.tsx freeze windowing while pinch/commit is in-flight
+  interactionRef?: MutableRefObject<boolean>;
+  onHandoffComplete?: () => void;
 
   enabled: boolean;
 };
@@ -52,6 +50,8 @@ export default function usePinchZoom({
   getAnchorFromContentPoint,
   getScrollFromAnchor,
   commitReadyRef,
+  interactionRef,
+  onHandoffComplete,
   enabled,
 }: UsePinchZoomOptions) {
   useEffect(() => {
@@ -116,22 +116,24 @@ export default function usePinchZoom({
       el.scrollTop = Math.max(0, Math.min(top, maxT));
     };
 
+    const setInteracting = (v: boolean) => {
+      if (interactionRef) interactionRef.current = v;
+    };
+
+    const finishInteracting = () => {
+      setInteracting(false);
+      onHandoffComplete?.();
+    };
+
     const startPendingHandoff = () => {
-      // Setup a one-shot handler that will be triggered by PageCanvas via page.tsx.
-      // When a visible page finishes rendering at the committed zoom, we:
-      // 1) compute correct scroll at committed zoom
-      // 2) clear transform (so we stop double-scaling)
-      // This eliminates the pinch-end “snap”.
+      // One-shot handler triggered by PageCanvas render event
       commitReadyRef.current = (_pageNumber: number, renderedZoom: number) => {
         if (!pendingActive) return;
         if (Math.abs(renderedZoom - pendingCommitZoom) > 0.0005) return;
 
-        // Do the final scroll correction in committed-zoom space
         if (pendingAnchor) {
           const next = getScrollFromAnchor(pendingAnchor, pendingCommitZoom, lastCenterX, lastCenterY);
           if (next) {
-            // IMPORTANT order:
-            // - Clear transform first so scroll math matches DOM dimensions at committed zoom
             clearVisualScale();
             clampScroll(next.left, next.top);
           } else {
@@ -150,15 +152,21 @@ export default function usePinchZoom({
         }
 
         commitReadyRef.current = null;
+
+        // windowing freeze off + recompute visible pages
+        finishInteracting();
       };
 
-      // Fallback: if render-ready never comes (rare), don’t get stuck scaled.
+      // Fallback: don’t get stuck scaled
       pendingTimeout = window.setTimeout(() => {
         if (!pendingActive) return;
+
         clearVisualScale();
         pendingActive = false;
         pendingAnchor = null;
         commitReadyRef.current = null;
+
+        finishInteracting();
       }, 350);
     };
 
@@ -168,9 +176,7 @@ export default function usePinchZoom({
 
       try {
         (e.target as HTMLElement)?.setPointerCapture?.(e.pointerId);
-      } catch {
-        // ignore
-      }
+      } catch {}
 
       pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
@@ -203,6 +209,10 @@ export default function usePinchZoom({
       if (!isPinching) {
         if (Math.abs(currDist - baseDistance) > PINCH_START_THRESHOLD) {
           isPinching = true;
+
+          // Freeze windowing immediately
+          setInteracting(true);
+
           el.style.touchAction = 'none';
           el.style.overflow = 'hidden';
         } else {
@@ -258,18 +268,15 @@ export default function usePinchZoom({
       pendingBaseZoom = committedBaseZoom;
       pendingCommitZoom = committedTargetZoom;
 
-      // Convert to stable anchor (page + coords at scale=1)
       pendingAnchor = getAnchorFromContentPoint(docX, docY, pendingBaseZoom);
 
-      // IMPORTANT:
-      // Do NOT clear transform here. Keep the old bitmap scaled while the new render happens.
+      // Keep transform until new render is ready (prevents snap/blink)
       pendingActive = true;
       startPendingHandoff();
 
-      // Commit zoom once (pdf.js render begins; old canvas stays visible until swap)
+      // Commit zoom once (pdf.js render begins)
       setZoomOnly(committedTargetZoom);
 
-      // Gesture cleanup (allow normal scroll again even while we keep transform temporarily)
       isPinching = false;
       pointers.clear();
       baseDistance = 0;
@@ -305,6 +312,9 @@ export default function usePinchZoom({
 
       clearVisualScale();
 
+      // safety: never leave it frozen
+      setInteracting(false);
+
       el.removeEventListener('pointerdown', onPointerDown as any);
       el.removeEventListener('pointermove', onPointerMove as any);
       el.removeEventListener('pointerup', onPointerUp as any);
@@ -320,5 +330,7 @@ export default function usePinchZoom({
     getAnchorFromContentPoint,
     getScrollFromAnchor,
     commitReadyRef,
+    interactionRef,
+    onHandoffComplete,
   ]);
 }

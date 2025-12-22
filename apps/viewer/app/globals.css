@@ -551,7 +551,8 @@ body {
 .hud-btn.hud-review-btn {
   min-width: 44px;
   height: 44px;
-  padding: 0 12px;               /* only horizontal padding */
+  padding: 0 12px;
+  /* only horizontal padding */
   display: flex;
   align-items: center;
   justify-content: center;
@@ -584,7 +585,7 @@ body {
   pointer-events: none;
 }
 
-.hud-bottom-zoom > * {
+.hud-bottom-zoom>* {
   pointer-events: auto;
 }
 
